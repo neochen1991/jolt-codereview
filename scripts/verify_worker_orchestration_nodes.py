@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,9 +41,11 @@ from orchestration.nodes.run_targeted_debate import run_targeted_debate
 from orchestration.nodes.summarize_pr import make_summarize_pr_node
 from orchestration.nodes.verify_findings import verify_candidate_findings
 from orchestration.state import EXECUTED_GRAPH_NODE_KEYS, TARGET_GRAPH_NODE_KEYS
+from orchestration.deepagents_runner import OpenAICompatibleToolChatModel
 from prompts.builder import build_prompt
 from tools.registry import findings_to_observations
 from tools.tree_sitter_tool import build_diff_graph
+from langchain_core.messages import HumanMessage
 
 node_dir = ROOT / "worker" / "orchestration" / "nodes"
 required_node_files = [
@@ -103,6 +106,48 @@ assert "request_timeout_seconds" in deepagents_text
 assert "def read_file(path: str)" in deepagents_text
 assert "def read_diff_patch(path: str)" in deepagents_text
 assert "min(max_tool_calls, 16)" in deepagents_text
+assert "trace_callback" in deepagents_text
+
+deepagent_llm_traces = []
+
+class FakeDeepAgentResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return json.dumps(
+            {
+                "id": "deep_req_1",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "上下文摘要"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 7, "completion_tokens": 3},
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+original_urlopen = urllib.request.urlopen
+urllib.request.urlopen = lambda *_args, **_kwargs: FakeDeepAgentResponse()
+try:
+    traced_model = OpenAICompatibleToolChatModel(
+        provider="test-provider",
+        model_name="test-model",
+        base_url="http://llm.local",
+        api_key="secret",
+        trace_callback=lambda fields: deepagent_llm_traces.append(fields),
+    )
+    traced_model._generate([HumanMessage(content="读取规则并检视 diff")])
+finally:
+    urllib.request.urlopen = original_urlopen
+assert deepagent_llm_traces, "DeepAgents model must emit LLM trace records"
+assert deepagent_llm_traces[0]["request_messages"][0]["content"] == "读取规则并检视 diff", deepagent_llm_traces
+assert "上下文摘要" in deepagent_llm_traces[0]["response_text"], deepagent_llm_traces
 assert "semgrep_config_values" in runtime_text
 assert "static.semgrep.aggregate" in runtime_text
 assert "output_path.parent.mkdir(parents=True, exist_ok=True)" in runtime_text

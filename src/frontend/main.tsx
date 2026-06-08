@@ -1389,6 +1389,9 @@ function ConfigWorkspace({
   const [queueSummary, setQueueSummary] = useState<Record<string, unknown> | null>(null);
   const [deadLetters, setDeadLetters] = useState<Record<string, unknown>[]>([]);
   const [effectiveConfig, setEffectiveConfig] = useState<Record<string, unknown> | null>(null);
+  const [configLoading, setConfigLoading] = useState(false);
+  const [configLoadError, setConfigLoadError] = useState("");
+  const [settingsLoadedKey, setSettingsLoadedKey] = useState("");
   const [llmForm, setLlmForm] = useState<LlmSettingsForm>({
     default_provider: "dashscope-openai-compatible",
     default_base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
@@ -1459,57 +1462,65 @@ function ConfigWorkspace({
     "4. 每个 finding 必须包含 covered_rules、精确行号和 suggested_code。"
   ].join("\n"));
   const [memberName, setMemberName] = useState("");
+  const currentSettingsKey = `${projectId}:settings`;
+  const settingsReady = view !== "settings" || settingsLoadedKey === currentSettingsKey;
 
   async function loadConfigView() {
+    const isSettingsView = view === "settings";
+    if (isSettingsView) {
+      setConfigLoading(true);
+      setConfigLoadError("");
+      setToolchain(null);
+      setStaticToolAvailability(null);
+    }
     setRows([]);
-    if (view === "rules") setRows(await api<Record<string, unknown>[]>(`/api/projects/${projectId}/rule-sets`));
-    else if (view === "agents") {
-      const [profiles, rules, bindings, expertRuleBindings, skills, assets, expertSkillBindings, qualityData] = await Promise.all([
-        api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-profiles`),
-        api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/rule-documents`),
-        api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-tool-bindings`),
-        api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-rule-bindings`),
-        api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/custom-skills`),
-        api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/custom-skill-assets`),
-        api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-skill-bindings`),
-        api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/agents/quality`)
-      ]);
-      setRows(listItems(profiles));
-      setRuleDocs(listItems(rules));
-      setToolBindings(listItems(bindings));
-      setRuleBindings(listItems(expertRuleBindings));
-      setCustomSkills(listItems(skills));
-      setSkillAssets(listItems(assets));
-      setSkillBindings(listItems(expertSkillBindings));
-      setAgentQuality(listItems(qualityData));
-    }
-    else if (view === "users") setRows(await api<Record<string, unknown>[]>(`/api/projects/${projectId}/members`));
-    else if (view === "policy") setRows([await api<Record<string, unknown>>(`/api/projects/${projectId}/review-policy`)]);
-    else if (view === "tools") {
-      const [data, availability] = await Promise.all([
-        api<Record<string, unknown>>(`/api/projects/${projectId}/toolchain/status`),
-        api<StaticToolAvailability>(`/api/projects/${projectId}/static-tools/availability`)
-      ]);
-      setToolchain(data);
-      setStaticToolAvailability(availability);
-      setRows((data.tool_calls as Record<string, unknown>[] | undefined) ?? []);
-    }
-    else if (view === "queue") {
-      const [data, deadLetterData] = await Promise.all([
-        api<Record<string, unknown>>(`/api/projects/${projectId}/queue/summary`),
-        api<{ items: Record<string, unknown>[] }>(`/api/mr-review/projects/${projectId}/dead-letters`)
-      ]);
-      setQueueSummary(data);
-      setDeadLetters(deadLetterData.items);
-      setRows((data.running as Record<string, unknown>[] | undefined) ?? []);
-    }
-    else if (view === "settings") {
-      const [settings, effective, toolStatus, availability] = await Promise.all([
-        api<Record<string, unknown>>(`/api/projects/${projectId}/settings`),
-        api<Record<string, unknown>>(`/api/projects/${projectId}/effective-config`),
-        api<Record<string, unknown>>(`/api/projects/${projectId}/toolchain/status`),
-        api<StaticToolAvailability>(`/api/projects/${projectId}/static-tools/availability`)
-      ]);
+    try {
+      if (view === "rules") setRows(await api<Record<string, unknown>[]>(`/api/projects/${projectId}/rule-sets`));
+      else if (view === "agents") {
+        const [profiles, rules, bindings, expertRuleBindings, skills, assets, expertSkillBindings, qualityData] = await Promise.all([
+          api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-profiles`),
+          api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/rule-documents`),
+          api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-tool-bindings`),
+          api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-rule-bindings`),
+          api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/custom-skills`),
+          api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/custom-skill-assets`),
+          api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-skill-bindings`),
+          api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/agents/quality`)
+        ]);
+        setRows(listItems(profiles));
+        setRuleDocs(listItems(rules));
+        setToolBindings(listItems(bindings));
+        setRuleBindings(listItems(expertRuleBindings));
+        setCustomSkills(listItems(skills));
+        setSkillAssets(listItems(assets));
+        setSkillBindings(listItems(expertSkillBindings));
+        setAgentQuality(listItems(qualityData));
+      }
+      else if (view === "users") setRows(await api<Record<string, unknown>[]>(`/api/projects/${projectId}/members`));
+      else if (view === "policy") setRows([await api<Record<string, unknown>>(`/api/projects/${projectId}/review-policy`)]);
+      else if (view === "tools") {
+        const [data, availability] = await Promise.all([
+          api<Record<string, unknown>>(`/api/projects/${projectId}/toolchain/status`),
+          api<StaticToolAvailability>(`/api/projects/${projectId}/static-tools/availability`)
+        ]);
+        setToolchain(data);
+        setStaticToolAvailability(availability);
+        setRows((data.tool_calls as Record<string, unknown>[] | undefined) ?? []);
+      }
+      else if (view === "queue") {
+        const [data, deadLetterData] = await Promise.all([
+          api<Record<string, unknown>>(`/api/projects/${projectId}/queue/summary`),
+          api<{ items: Record<string, unknown>[] }>(`/api/mr-review/projects/${projectId}/dead-letters`)
+        ]);
+        setQueueSummary(data);
+        setDeadLetters(deadLetterData.items);
+        setRows((data.running as Record<string, unknown>[] | undefined) ?? []);
+      }
+      else if (view === "settings") {
+        const [settings, effective] = await Promise.all([
+          api<Record<string, unknown>>(`/api/projects/${projectId}/settings`),
+          api<Record<string, unknown>>(`/api/projects/${projectId}/effective-config`)
+        ]);
       const items = listItems(settings as { items?: Record<string, unknown>[] });
       setRows(items);
       const settingsMap = recordValue((settings as Record<string, unknown>).settings);
@@ -1583,9 +1594,23 @@ function ConfigWorkspace({
       setLlmTest({ status: "idle", message: "" });
       setToolSave({ status: "idle", message: "" });
       setEffectiveConfig(effective);
-      setToolchain(toolStatus);
-      setStaticToolAvailability(availability);
-    } else setRows([]);
+        setSettingsLoadedKey(currentSettingsKey);
+        Promise.all([
+          api<Record<string, unknown>>(`/api/projects/${projectId}/toolchain/status`),
+          api<StaticToolAvailability>(`/api/projects/${projectId}/static-tools/availability`)
+        ])
+          .then(([toolStatus, availability]) => {
+            setToolchain(toolStatus);
+            setStaticToolAvailability(availability);
+          })
+          .catch((error) => setMessage(error instanceof Error ? error.message : String(error)));
+      } else setRows([]);
+    } catch (error) {
+      if (isSettingsView) setConfigLoadError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      if (isSettingsView) setConfigLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -2103,6 +2128,9 @@ function ConfigWorkspace({
       {view === "policy" && <ConfigTable rows={rows.map((row) => ({ ...row, policy_json: JSON.stringify(safeJson(String(row.policy_json || "{}")), null, 2) }))} columns={["project_id", "policy_json", "updated_at"]} />}
       {view === "settings" && (
         <>
+          {!settingsReady && <SettingsConfigLoadingPanel loading={configLoading} error={configLoadError} onRetry={loadConfigView} />}
+          {settingsReady && (
+            <>
           <StaticToolAvailabilityPanel availability={staticToolAvailability} />
           <div className="settings-grid">
             <article className="setting-form-card">
@@ -2339,6 +2367,8 @@ function ConfigWorkspace({
             ]} />
           </div>
           <ConfigTable rows={(toolchain?.tool_calls as Record<string, unknown>[] | undefined) ?? []} columns={["tool_name", "status", "count", "last_seen_at"]} />
+            </>
+          )}
         </>
       )}
       {successNotice && <SuccessNoticeModal notice={successNotice} onClose={() => setSuccessNotice(null)} />}
@@ -2361,6 +2391,33 @@ function SettingField({ label, children }: { label: string; children: React.Reac
       <span>{label}</span>
       {children}
     </label>
+  );
+}
+
+function SettingsConfigLoadingPanel({
+  loading,
+  error,
+  onRetry
+}: {
+  loading: boolean;
+  error: string;
+  onRetry: () => Promise<void>;
+}) {
+  return (
+    <div className={`settings-config-loading ${error ? "failed" : ""}`}>
+      <div className="settings-config-loading-icon">
+        {error ? <Circle /> : <Loader2 />}
+      </div>
+      <div>
+        <strong>{error ? "配置加载失败" : "正在加载项目真实配置"}</strong>
+        <p>{error || "请稍候，当前页面会在项目级配置和有效配置返回后展示。"}</p>
+      </div>
+      {error && (
+        <button type="button" onClick={() => { onRetry().catch(() => undefined); }} disabled={loading}>
+          {loading ? "重试中..." : "重试"}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -2391,6 +2448,7 @@ function StaticToolSwitchBoard({
   onChange: (toolKey: string, enabled: boolean) => void;
 }) {
   const availabilityByName = new Map((availability?.items ?? []).map((item) => [item.name, item]));
+  const availabilityLoaded = Boolean(availability);
   return (
     <div className="static-tool-switch-board">
       {STATIC_TOOL_SWITCHES.map((tool) => {
@@ -2407,9 +2465,17 @@ function StaticToolSwitchBoard({
             <div className="static-tool-switch-main">
               <strong>{tool.displayName}</strong>
               <span>{tool.category} · {tool.requiredFor}</span>
-              <em>{item?.available ? `${item.version || "available"} · ${item.path || "--"}` : item?.installHint || "未读取到安装状态"}</em>
+              <em>
+                {!availabilityLoaded
+                  ? "正在读取安装状态"
+                  : item?.available
+                    ? `${item.version || "available"} · ${item.path || "--"}`
+                    : item?.installHint || "未读取到安装状态"}
+              </em>
             </div>
-            <b className={item?.available ? "tool-status-tag ok" : "tool-status-tag missing"}>{item?.available ? "可用" : "缺失"}</b>
+            <b className={availabilityLoaded ? item?.available ? "tool-status-tag ok" : "tool-status-tag missing" : "tool-status-tag pending"}>
+              {availabilityLoaded ? item?.available ? "可用" : "缺失" : "检测中"}
+            </b>
           </label>
         );
       })}

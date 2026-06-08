@@ -26,6 +26,8 @@ for (const forbidden of ["BoundedReviewChatModel", "scripted", "fake", "dummy", 
 
 assert(deepagents.includes("OpenAICompatibleToolChatModel"), "DeepAgents must use a real OpenAI-compatible tool-calling chat model");
 assert(deepagents.includes("DeepAgents completed without real tool calls"), "DeepAgents must reject runs with no real tool calls");
+assert(deepagents.includes("trace_callback") && deepagents.includes("_trace_llm_call"), "DeepAgents LLM calls must be traced with request and response payloads");
+assert(runExperts.includes("llm_trace=lambda fields: recorder.llm_call"), "Expert node must wire DeepAgents LLM traces into Recorder.llm_call");
 assert(runtime.includes("subprocess.run("), "Static tools must be executed through subprocess.run");
 assert(!runtime.includes('write_text("[]", "utf-8")'), "Static tool runner must not fabricate empty JSON reports");
 assert(runtime.includes('status = "output_missing"'), "Static tool runner must mark missing reports as output_missing");
@@ -60,6 +62,8 @@ assert(frontend.includes("模型服务配置"), "Settings page must expose model
 assert(frontend.includes("测试连接"), "Settings page must expose LLM connectivity test button");
 assert(frontend.includes("toolSave"), "Settings page must show static tool policy save feedback");
 assert(frontend.includes("settings-success-modal"), "Settings page must show successful actions in a modal prompt");
+assert(frontend.includes("settingsReady") && frontend.includes("SettingsConfigLoadingPanel"), "Settings page must not render default forms before real project config loads");
+assert(frontend.includes("正在读取安装状态") && frontend.includes("tool-status-tag pending"), "Settings page must load static tool availability asynchronously without showing missing before checks finish");
 assert(styles.includes(".llm-test-result") && styles.includes("overflow-wrap: anywhere"), "Settings failure messages must wrap long LLM test errors");
 assert(styles.includes(".setting-form-card") && styles.includes("min-width: 0"), "Settings cards must be allowed to shrink inside CSS grid");
 assert(!frontend.includes("JSON.stringify(item.value"), "Settings page must not expose raw JSON setting editor");
@@ -75,11 +79,14 @@ console.log(JSON.stringify({
     "oss_first_static_toolchain",
     "legacy_heuristic_prescan_not_default",
     "raw_static_tool_reports_recorded",
+    "deepagents_llm_io_logged",
     "real_tree_sitter_parser_and_grammar_installed",
     "tree_sitter_code_graph_recorded_as_static_tool",
     "settings_form_without_json_editor",
     "llm_connectivity_test_endpoint",
     "settings_success_modal_prompt",
+    "settings_real_config_loading_gate",
+    "settings_static_tool_status_async",
     "settings_failure_message_wraps"
   ]
 }, null, 2));

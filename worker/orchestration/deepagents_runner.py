@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.request
-from typing import Any
+from typing import Any, Callable
 
 from deepagents import create_deep_agent
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -19,6 +20,7 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
     api_key: str
     request_timeout_seconds: int = 120
     bound_tools: list[dict[str, Any]] = []
+    trace_callback: Callable[[dict[str, Any]], None] | None = None
 
     @property
     def _llm_type(self) -> str:
@@ -47,9 +49,47 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        started = time.time()
+        prompt_text = json.dumps(payload["messages"], ensure_ascii=False)
+        try:
+            with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            self._trace_llm_call(
+                {
+                    "prompt": prompt_text,
+                    "request_messages": payload["messages"],
+                    "status": f"failed:{type(exc).__name__}",
+                    "duration_ms": int((time.time() - started) * 1000),
+                    "input_tokens": max(1, len(prompt_text) // 4),
+                    "output_tokens": 0,
+                    "request_id": None,
+                    "response_text": str(exc),
+                }
+            )
+            raise
         raw_message = (data.get("choices") or [{}])[0].get("message") or {}
+        usage = data.get("usage") or {}
+        response_text = json.dumps(
+            {
+                "message": raw_message,
+                "usage": usage,
+                "finish_reason": (data.get("choices") or [{}])[0].get("finish_reason"),
+            },
+            ensure_ascii=False,
+        )
+        self._trace_llm_call(
+            {
+                "prompt": prompt_text,
+                "request_messages": payload["messages"],
+                "status": "completed",
+                "duration_ms": int((time.time() - started) * 1000),
+                "input_tokens": int(usage.get("prompt_tokens", max(1, len(prompt_text) // 4))),
+                "output_tokens": int(usage.get("completion_tokens", 0)),
+                "request_id": str(data.get("id") or ""),
+                "response_text": response_text,
+            }
+        )
         tool_calls = []
         for call in raw_message.get("tool_calls") or []:
             function = call.get("function") or {}
@@ -62,6 +102,20 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
         message = AIMessage(content=raw_message.get("content") or "", tool_calls=tool_calls)
         return ChatResult(generations=[ChatGeneration(message=message)])
 
+    def _trace_llm_call(self, fields: dict[str, Any]) -> None:
+        if not self.trace_callback:
+            return
+        try:
+            self.trace_callback(
+                {
+                    "provider": self.provider,
+                    "model": self.model_name,
+                    **fields,
+                }
+            )
+        except Exception:
+            return
+
 
 def run_bounded_deepagent(
     *,
@@ -71,6 +125,7 @@ def run_bounded_deepagent(
     tool_observations: list[dict[str, Any]],
     llm_config: dict[str, Any],
     max_tool_calls: int = 8,
+    llm_trace: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     agent_id = str(agent.get("agent_id") or "unknown_agent")
     applies_to = agent.get("applies_to") or {}
@@ -222,6 +277,7 @@ def run_bounded_deepagent(
             base_url=base_url,
             api_key=str(api_key),
             request_timeout_seconds=request_timeout_seconds,
+            trace_callback=llm_trace,
         ),
         tools=tools,
         system_prompt=(

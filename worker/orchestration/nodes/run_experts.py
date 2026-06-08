@@ -164,6 +164,19 @@ def make_run_experts_node(
                         tool_observations=tool_observations,
                         llm_config=project_config.get("llm", {}),
                         max_tool_calls=max_tool_calls,
+                        llm_trace=lambda fields: recorder.llm_call(
+                            span,
+                            str(fields.get("provider") or project_config.get("llm", {}).get("default_provider") or ""),
+                            str(fields.get("model") or project_config.get("llm", {}).get("default_model") or ""),
+                            str(fields.get("prompt") or ""),
+                            str(fields.get("status") or "completed"),
+                            int(fields.get("duration_ms") or 0),
+                            int(fields.get("input_tokens") or 0),
+                            int(fields.get("output_tokens") or 0),
+                            str(fields.get("request_id") or "") or None,
+                            fields.get("request_messages") if isinstance(fields.get("request_messages"), list) else [],
+                            str(fields.get("response_text") or ""),
+                        ),
                     )
                     for call in deep_result.get("tool_calls", []):
                         recorder.tool_call(

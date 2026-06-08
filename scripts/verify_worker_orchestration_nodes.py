@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -17,6 +19,7 @@ from review_runtime import (
     ChangedFile,
     Recorder,
     parse_semgrep_findings,
+    prepare_source_worktree,
     run_static_command,
     source_content_candidate_count,
     source_worktree_mode,
@@ -1435,6 +1438,15 @@ assert source_worktree_mode(configured_worktree=None, source_file_contents={}, f
 assert (
     source_worktree_mode(
         configured_worktree=None,
+        source_worktree=ROOT,
+        source_file_contents={},
+        files=source_mode_files,
+    )
+    == "git_source_worktree"
+)
+assert (
+    source_worktree_mode(
+        configured_worktree=None,
         source_file_contents={"src/main/java/demo/A.java": "class A {}\n"},
         files=source_mode_files,
     )
@@ -1452,6 +1464,38 @@ assert (
     )
     == "fetched_source_files"
 )
+
+source_repo_dir = Path(tempfile.gettempdir()) / "jolt-codereview-source-worktree-fixture"
+if source_repo_dir.exists():
+    shutil.rmtree(source_repo_dir)
+(source_repo_dir / "src" / "main" / "java" / "demo").mkdir(parents=True)
+(source_repo_dir / "src" / "main" / "java" / "demo" / "App.java").write_text("package demo;\nclass App {}\n", "utf-8")
+subprocess.run(["git", "init"], cwd=source_repo_dir, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+subprocess.run(["git", "checkout", "-B", "main"], cwd=source_repo_dir, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+subprocess.run(["git", "add", "."], cwd=source_repo_dir, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+subprocess.run(
+    ["git", "-c", "user.name=Jolt", "-c", "user.email=jolt@example.com", "commit", "-m", "fixture"],
+    cwd=source_repo_dir,
+    check=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
+source_head = subprocess.run(
+    ["git", "rev-parse", "HEAD"],
+    cwd=source_repo_dir,
+    check=True,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+).stdout.strip()
+fixture_repo = {
+    "provider_config_json": json.dumps({"git_url": str(source_repo_dir)}, ensure_ascii=False),
+}
+fixture_mr = {"latest_head_sha": source_head}
+source_worktree_path, source_worktree_errors = prepare_source_worktree({}, fixture_repo, fixture_mr)  # type: ignore[arg-type]
+assert source_worktree_errors == [], source_worktree_errors
+assert source_worktree_path, "source worktree path should be prepared"
+assert (Path(source_worktree_path) / "src" / "main" / "java" / "demo" / "App.java").exists(), source_worktree_path
 
 for heartbeat_file in [ROOT / "worker" / "review_queue" / "job_consumer.py", ROOT / "worker" / "queue" / "job_consumer.py"]:
     heartbeat_source = heartbeat_file.read_text("utf-8")
@@ -1485,6 +1529,7 @@ print(json.dumps({
     "fast_pr_summary_skipped": persisted_summary["skip_reason"],
     "llm_router_candidates_for_150k": [item["provider"] for item in llm_candidates],
     "vcs_provider_contract": "complete",
+    "source_worktree_prepared": str(source_worktree_path),
     "required_node_files": required_node_files,
     "executed_graph_nodes": EXECUTED_GRAPH_NODE_KEYS,
     "target_graph_nodes": TARGET_GRAPH_NODE_KEYS,

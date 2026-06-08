@@ -56,8 +56,13 @@ def make_prescan_node(
             {"strategy": "hunk_line_slicing", "head_sha": job["head_sha"]},
         )
         fetched_source_contents = state.get("source_file_contents") or {}
+        source_worktree_path = state.get("source_worktree_path")
         code_context = build_code_context_snapshot(files)
-        repo_related_context = build_repo_related_context(files, source_file_contents=fetched_source_contents)
+        repo_related_context = build_repo_related_context(
+            files,
+            source_file_contents=fetched_source_contents,
+            source_worktree_path=source_worktree_path,
+        )
         code_context_artifact = write_json_artifact(
             recorder,
             sandbox_dir,
@@ -94,6 +99,7 @@ def make_prescan_node(
             job["merge_request_id"],
             project_config,
             fetched_source_contents or repo_related_context.get("source_file_contents") or {},
+            source_worktree_path,
         )
         external_tool_findings = sanitize_findings_for_policy(external_tool_findings, data_policy, files)
         tool_observations = findings_to_observations(external_tool_findings)

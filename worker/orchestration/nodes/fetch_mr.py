@@ -18,6 +18,7 @@ def make_fetch_mr_node(
     fetch_changed_file_contents: Callable[[dict[str, Any], Any, Any, list[Any]], tuple[dict[str, str], list[dict[str, Any]]]],
     write_json_artifact: Callable[..., Path],
     apply_data_policy_to_files: Callable[..., tuple[list[Any], list[dict[str, Any]]]],
+    prepare_source_worktree: Callable[[dict[str, Any], Any, Any], tuple[str | None, list[dict[str, Any]]]] | None = None,
     load_incremental_context: Callable[[], dict[str, Any]] | None = None,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     def fetch_mr_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -73,6 +74,45 @@ def make_fetch_mr_node(
                 output_ref={"artifact": str(source_artifact), "file_count": len(source_file_contents), "error_count": len(source_errors)},
                 tool_version=tool_version,
             )
+            source_worktree_path: str | None = None
+            worktree_errors: list[dict[str, Any]] = []
+            if prepare_source_worktree:
+                worktree_started = time.time()
+                source_worktree_path, worktree_errors = prepare_source_worktree(project_config, repo, mr)
+                if source_worktree_path and not worktree_errors:
+                    worktree_status = "completed"
+                    worktree_summary = source_worktree_path
+                elif worktree_errors:
+                    worktree_status = "completed_with_errors"
+                    worktree_summary = f"{len(worktree_errors)} errors"
+                else:
+                    worktree_status = "skipped_no_git_url"
+                    worktree_summary = "repository git_url not configured"
+                worktree_artifact = write_json_artifact(
+                    recorder,
+                    sandbox_dir,
+                    "source",
+                    "source_worktree.json",
+                    {
+                        "path": source_worktree_path,
+                        "errors": worktree_errors,
+                    },
+                    {"provider": repo["provider"], "mr_number": mr["number"], "head_sha": job["head_sha"]},
+                )
+                recorder.tool_call(
+                    fetch_span,
+                    "git.prepare_source_worktree",
+                    worktree_status,
+                    int((time.time() - worktree_started) * 1000),
+                    args_summary=repo_ref,
+                    output_summary=worktree_summary,
+                    output_ref={
+                        "artifact": str(worktree_artifact),
+                        "path": source_worktree_path,
+                        "error_count": len(worktree_errors),
+                    },
+                    tool_version="git-worktree-v1",
+                )
             llm_files, policy_decisions = apply_data_policy_to_files(recorder, fetch_span, sandbox_dir, files, data_policy)
             incremental_context = load_incremental_context() if load_incremental_context else {"incremental_diff_only": False}
             recorder.event(
@@ -88,6 +128,8 @@ def make_fetch_mr_node(
                 "llm_files": llm_files,
                 "policy_decisions": policy_decisions,
                 "source_file_contents": source_file_contents,
+                "source_worktree_path": source_worktree_path,
+                "source_worktree_errors": worktree_errors,
                 "fetch_degraded": False,
                 "incremental_context": incremental_context,
             }

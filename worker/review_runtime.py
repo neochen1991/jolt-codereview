@@ -534,11 +534,14 @@ def source_content_candidate_count(files: list[ChangedFile]) -> int:
 def source_worktree_mode(
     *,
     configured_worktree: Path | None,
+    source_worktree: Path | None = None,
     source_file_contents: dict[str, str] | None,
     files: list[ChangedFile],
 ) -> str:
     if configured_worktree:
         return "configured_full_repo"
+    if source_worktree:
+        return "git_source_worktree"
     fetched_count = len(source_file_contents or {})
     expected_count = source_content_candidate_count(files)
     if expected_count == 0:
@@ -589,6 +592,12 @@ def _git_cache_dir(git_url: str) -> Path:
     return ROOT / "data" / "repo-cache" / digest
 
 
+def _git_worktree_dir(git_url: str, head_sha: str) -> Path:
+    repo_digest = hashlib.sha256(git_url.encode("utf-8")).hexdigest()[:16]
+    commit_label = re.sub(r"[^0-9A-Za-z._-]+", "-", head_sha.strip())[:40] or "unknown"
+    return ROOT / "data" / "repo-worktrees" / repo_digest / commit_label
+
+
 def _run_git(args: list[str], *, cwd: Path | None = None, timeout: int = 90) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
@@ -617,6 +626,44 @@ def _ensure_git_cache(git_url: str) -> tuple[Path | None, str | None]:
         if remote.returncode != 0:
             return None, remote.stderr.strip()[:500] or "git remote set-url failed"
     return cache_dir, None
+
+
+def prepare_source_worktree(config: dict[str, Any], repo: sqlite3.Row, mr: sqlite3.Row) -> tuple[str | None, list[dict[str, Any]]]:
+    provider_config = _repo_provider_config(repo)
+    git_url = str(provider_config.get("git_url") or "").strip()
+    head_sha = str(mr["latest_head_sha"] or "").strip()
+    if not git_url or not head_sha:
+        return None, []
+
+    cache_dir, cache_error = _ensure_git_cache(git_url)
+    if cache_error or cache_dir is None:
+        return None, [{"source": "git", "error": cache_error or "git cache unavailable"}]
+
+    exists = _run_git(["cat-file", "-e", f"{head_sha}^{{commit}}"], cwd=cache_dir, timeout=30)
+    if exists.returncode != 0:
+        fetch = _run_git(["fetch", "--depth=1", "origin", head_sha], cwd=cache_dir, timeout=180)
+        if fetch.returncode != 0:
+            fetch = _run_git(["fetch", "origin", head_sha], cwd=cache_dir, timeout=180)
+        if fetch.returncode != 0:
+            return None, [{"source": "git", "ref": head_sha, "error": fetch.stderr.strip()[:500] or "git fetch failed"}]
+
+    checkout_dir = _git_worktree_dir(git_url, head_sha)
+    if (checkout_dir / ".git").exists():
+        current = _run_git(["rev-parse", "HEAD"], cwd=checkout_dir, timeout=30)
+        if current.returncode == 0 and current.stdout.strip() == head_sha:
+            return str(checkout_dir), []
+        remove = _run_git(["worktree", "remove", "--force", str(checkout_dir)], cwd=cache_dir, timeout=60)
+        if remove.returncode != 0 and checkout_dir.exists():
+            shutil.rmtree(checkout_dir)
+    elif checkout_dir.exists():
+        shutil.rmtree(checkout_dir)
+
+    checkout_dir.parent.mkdir(parents=True, exist_ok=True)
+    _run_git(["worktree", "prune"], cwd=cache_dir, timeout=60)
+    add = _run_git(["worktree", "add", "--detach", "--force", str(checkout_dir), head_sha], cwd=cache_dir, timeout=240)
+    if add.returncode != 0:
+        return None, [{"source": "git", "ref": head_sha, "error": add.stderr.strip()[:500] or "git worktree add failed"}]
+    return str(checkout_dir), []
 
 
 def _fetch_git_file_contents(
@@ -2527,12 +2574,17 @@ def build_repo_related_context(
     head_sha: str,
     files: list[ChangedFile],
     source_file_contents: dict[str, str] | None = None,
+    source_worktree_path: str | None = None,
 ) -> dict[str, Any]:
     diff_worktree = materialize_changed_files(sandbox_dir, files, source_file_contents)
     configured_worktree = configured_analysis_worktree(project_config)
-    worktree = configured_worktree or diff_worktree
+    source_worktree = Path(source_worktree_path).resolve() if source_worktree_path else None
+    if source_worktree and not source_worktree.exists():
+        source_worktree = None
+    worktree = configured_worktree or source_worktree or diff_worktree
     worktree_mode = source_worktree_mode(
         configured_worktree=configured_worktree,
+        source_worktree=source_worktree,
         source_file_contents=source_file_contents,
         files=files,
     )
@@ -2902,12 +2954,17 @@ def run_external_static_prescan(
     mr_id: str | None = None,
     project_config: dict[str, Any] | None = None,
     source_file_contents: dict[str, str] | None = None,
+    source_worktree_path: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     diff_worktree = materialize_changed_files(sandbox_dir, files, source_file_contents)
     configured_worktree = configured_analysis_worktree(project_config)
-    worktree = configured_worktree or diff_worktree
+    source_worktree = Path(source_worktree_path).resolve() if source_worktree_path else None
+    if source_worktree and not source_worktree.exists():
+        source_worktree = None
+    worktree = configured_worktree or source_worktree or diff_worktree
     worktree_mode = source_worktree_mode(
         configured_worktree=configured_worktree,
+        source_worktree=source_worktree,
         source_file_contents=source_file_contents,
         files=files,
     )
@@ -4076,6 +4133,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
             fetch_changed_file_contents=fetch_changed_file_contents,
             write_json_artifact=write_json_artifact,
             apply_data_policy_to_files=apply_data_policy_to_files,
+            prepare_source_worktree=prepare_source_worktree,
             load_incremental_context=lambda: load_incremental_context(conn, str(job["merge_request_id"]), str(job["head_sha"])),
         )
         choose_effort_node = make_choose_effort_node(
@@ -4099,13 +4157,14 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
             package_version=package_version,
             build_diff_slices=build_diff_slices,
             build_code_context_snapshot=build_code_context_snapshot,
-            build_repo_related_context=lambda changed_files, source_file_contents=None: build_repo_related_context(
+            build_repo_related_context=lambda changed_files, source_file_contents=None, source_worktree_path=None: build_repo_related_context(
                 project_config=project_config,
                 sandbox_dir=sandbox_dir,
                 repository_id=str(repo["id"]),
                 head_sha=str(job["head_sha"]),
                 files=changed_files,
                 source_file_contents=source_file_contents or {},
+                source_worktree_path=source_worktree_path,
             ),
             run_external_static_prescan=run_external_static_prescan,
             sanitize_findings_for_policy=sanitize_findings_for_policy,

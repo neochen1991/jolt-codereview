@@ -62,5 +62,5 @@ def build_code_context_snapshot(files: list[Any]) -> dict[str, Any]:
             "impact_paths": [],
         },
         "supported_tools": ["find_symbol", "tests_for", "siblings_in_dir"],
-        "note": "Diff-local symbol index is active; configure analysis_worktree_path to let static tools use a full repository worktree.",
+        "note": "Diff-local symbol index is active; configure analysis_worktree_path or repository git_url to let static tools use a full repository worktree.",
     }

@@ -210,7 +210,9 @@ curl -sS http://127.0.0.1:8011/api/projects/project_default/static-tools/availab
 Tree-sitter 需要本地文件内容，但不强制要求配置完整本地仓库：
 
 - 已配置项目级 `tool_policy.analysis_worktree_path` 时，Tree-sitter 会从该完整工作区读取 MR 相关文件和同目录上下文。
-- 未配置完整工作区时，系统会把 GitHub / CodeHub 拉到的 MR 变更文件内容物化到临时目录，再构建轻量代码图谱。
+- 未配置完整工作区但仓库配置了 `git_url` 时，系统会先在 `data/repo-cache/<repo>` 维护 Git 对象缓存，再把 MR 的 `head_sha` 自动展开到 `data/repo-worktrees/<repo>/<head_sha>`，Tree-sitter、PMD、Semgrep 等静态工具优先读取这个真实源码工作区。
+- `repo-cache` 目录使用 `git clone --filter=blob:none --no-checkout`，因此通常只包含隐藏的 `.git`，Windows 资源管理器看起来可能是空目录；这是对象缓存，不是源码 checkout。源码 checkout 请查看 `data/repo-worktrees`。
+- 如果 Git 工作区准备失败，系统才会把 GitHub / CodeHub 拉到的 MR 变更文件内容物化到 `data/sandboxes/<run_id>/prescan/working-tree`，再构建轻量代码图谱。
 - 为避免 Windows 下完整仓库递归扫描卡住，Tree-sitter 默认只扫描 MR 相关路径及同目录上下文，并跳过 `.git`、`node_modules`、`target`、`build`、`dist`、`.venv` 等目录，同时限制文件数、文件大小和耗时。
 - 可在项目配置 `tool_policy.static_runners.tree_sitter_code_graph` 中调整 `max_files`、`max_file_bytes`、`timeout_seconds`、`ignore_dirs`。
 
@@ -286,7 +288,7 @@ npm run verify:static-rules
 
 说明：
 
-- `analysis_worktree_path` 指向完整仓库时，PMD、Checkstyle、OSV、Trivy、KICS 等工具能读取完整上下文；未配置时会回退到 MR diff 物化目录。
+- `analysis_worktree_path` 指向完整仓库时，PMD、Checkstyle、OSV、Trivy、KICS 等工具优先读取该完整上下文；未配置但仓库有 `git_url` 时会自动使用 `data/repo-worktrees` 中的 MR checkout；两者都不可用时才回退到 MR diff 物化目录。
 - SpotBugs 需要 `target/classes` 或 `build/classes`，因此建议在 CI 或后台队列中先执行项目构建。
 - SpotBugs 也可以通过 `tool_policy.static_runners.spotbugs.class_dirs` 指定 CI artifact 或完整仓库下的编译目录。
 - OpenAPI Diff 需要配置 `tool_policy.openapi_diff.base_spec_path`，否则会记录为 `skipped_requires_baseline_spec`。

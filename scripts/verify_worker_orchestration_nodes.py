@@ -116,6 +116,8 @@ assert "timeout_seconds=timeout_seconds" in targeted_debate_text
 assert "stream=stream_enabled" in targeted_debate_text
 assert "llm_request_timeout_seconds" in runtime_text
 assert "llm_stream_enabled" in runtime_text
+assert "http_json as llm_http_json" in runtime_text
+assert "response = llm_http_json(" in runtime_text
 
 sse_response = collect_openai_sse_response(
     [

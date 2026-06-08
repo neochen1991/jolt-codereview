@@ -26,7 +26,7 @@ from context.repo_index import build_repo_index
 from context.snapshot import build_code_context_snapshot
 from context.symbol_resolver import resolve_diff_symbols
 from diff.slicer import build_diff_slices, diff_hunks_by_file, extract_added_lines, source_snippet_loader_for_files
-from llm.client import call_llm, chat_completions_url, http_json, llm_request_timeout_seconds, llm_stream_enabled, normalize_confidence, normalize_line_number, parse_llm_findings, summarize_pr_with_llm
+from llm.client import call_llm, chat_completions_url, http_json as llm_http_json, llm_request_timeout_seconds, llm_stream_enabled, normalize_confidence, normalize_line_number, parse_llm_findings, summarize_pr_with_llm
 from llm_router import candidate_providers
 from orchestration.graph import invoke_review_graph
 from orchestration.nodes.build_context import make_build_context_node
@@ -3747,7 +3747,7 @@ def route_agents_with_llm(
         timeout_seconds = llm_request_timeout_seconds(llm)
         stream_enabled = llm_stream_enabled(llm)
         try:
-            response = http_json(
+            response = llm_http_json(
                 chat_completions_url(base_url),
                 {"Authorization": f"Bearer {api_key}"},
                 method="POST",

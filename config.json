@@ -1,0 +1,30 @@
+{
+  "llm": {
+    "default_provider": "dashscope-openai-compatible",
+    "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+    "default_model": "MiniMax-M2.7",
+    "default_api_key_env": null,
+    "default_api_key": "7b446c97-7172-4c90-a4ef-3f3ff5a8f894",
+    "request_timeout_seconds": 120,
+    "max_output_tokens": 8192
+  },
+  "github": {
+    "default_token_env": "GITHUB_TOKEN",
+    "default_endpoint": "https://api.github.com"
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8011,
+    "database_path": "data/jolt-codereview.sqlite"
+  },
+  "logging": {
+    "enabled": true,
+    "dir": "logs",
+    "api_file": "jolt-api.log",
+    "worker_file": "jolt-worker.log",
+    "review_run_dir": "review-runs"
+  },
+  "runtime": {
+    "python_bin": null
+  }
+}

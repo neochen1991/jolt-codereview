@@ -1,5 +1,4 @@
 # Local/private config
-config.json
 *.local.json
 .env
 .env.*

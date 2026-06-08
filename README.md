@@ -207,6 +207,13 @@ curl -sS http://127.0.0.1:8011/api/projects/project_default/static-tools/availab
 
 前端 `系统设置` 页面会显示“静态工具可用性”卡片，按 SAST、Java、Dependency、IaC/API 等分类展示工具路径、版本、状态和安装提示。后端探测兼容 Windows `PATHEXT`，可以识别 `.exe`、`.cmd`、`.bat` 等命令。
 
+Tree-sitter 需要本地文件内容，但不强制要求配置完整本地仓库：
+
+- 已配置项目级 `tool_policy.analysis_worktree_path` 时，Tree-sitter 会从该完整工作区读取 MR 相关文件和同目录上下文。
+- 未配置完整工作区时，系统会把 GitHub / CodeHub 拉到的 MR 变更文件内容物化到临时目录，再构建轻量代码图谱。
+- 为避免 Windows 下完整仓库递归扫描卡住，Tree-sitter 默认只扫描 MR 相关路径及同目录上下文，并跳过 `.git`、`node_modules`、`target`、`build`、`dist`、`.venv` 等目录，同时限制文件数、文件大小和耗时。
+- 可在项目配置 `tool_policy.static_runners.tree_sitter_code_graph` 中调整 `max_files`、`max_file_bytes`、`timeout_seconds`、`ignore_dirs`。
+
 ### 内置开源规则集
 
 Jolt CodeReview 会把业界开源规则集下载到 `config/static-rules/`，作为本项目的内置规则。执行：

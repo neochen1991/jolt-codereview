@@ -20,6 +20,7 @@ from review_runtime import (  # noqa: E402
     spotbugs_class_dirs,
     trivy_args,
 )
+from tools.tree_sitter_tool import build_graph as build_tree_sitter_graph  # noqa: E402
 from tools.tool_normalizer import normalize_tool_finding  # noqa: E402
 
 
@@ -316,6 +317,44 @@ def verify_checkstyle_noise_filter() -> dict[str, object]:
     return {"kept_findings": len(findings), "kept_rule": findings[0].get("tool_rule_id")}
 
 
+def verify_tree_sitter_bounded_scan() -> dict[str, object]:
+    with tempfile.TemporaryDirectory(prefix="jolt-tree-sitter-bounded-") as temp_dir:
+        root = Path(temp_dir)
+        source_dir = root / "src" / "main" / "java" / "com" / "acme"
+        source_dir.mkdir(parents=True)
+        (source_dir / "PaymentService.java").write_text(
+            "package com.acme;\nclass PaymentService { void pay() { helper(); } void helper() {} }\n",
+            "utf-8",
+        )
+        (source_dir / "PaymentHelper.java").write_text(
+            "package com.acme;\nclass PaymentHelper { void verify() {} }\n",
+            "utf-8",
+        )
+        ignored_dir = root / "node_modules" / "bad"
+        ignored_dir.mkdir(parents=True)
+        (ignored_dir / "huge.js").write_text("function ignored() {}\n" * 5000, "utf-8")
+        (source_dir / "HugeGenerated.java").write_text("class HugeGenerated {}\n" * 10000, "utf-8")
+        graph = build_tree_sitter_graph(
+            root,
+            {
+                "include_paths": ["src/main/java/com/acme/PaymentService.java"],
+                "max_files": 4,
+                "max_file_bytes": 4096,
+                "timeout_seconds": 5,
+            },
+        )
+    assert graph["file_count"] <= 3, graph
+    assert not any("node_modules" in str(item.get("file_path")) for item in graph.get("skipped_files", [])), graph
+    assert any(item.get("reason") == "max_file_bytes_exceeded" for item in graph.get("skipped_files", [])), graph
+    assert graph.get("limits", {}).get("include_path_count") == 1, graph
+    return {
+        "file_count": graph["file_count"],
+        "parsed_file_count": graph["parsed_file_count"],
+        "skipped_file_count": len(graph.get("skipped_files") or []),
+        "status": graph["status"],
+    }
+
+
 def main() -> None:
     result = {
         "ok": True,
@@ -323,6 +362,7 @@ def main() -> None:
         "runner_inventory": verify_runner_inventory(),
         "policy_and_baseline": verify_policy_and_baseline(),
         "checkstyle_noise_filter": verify_checkstyle_noise_filter(),
+        "tree_sitter_bounded_scan": verify_tree_sitter_bounded_scan(),
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

@@ -1489,6 +1489,13 @@ def run_static_command(
     timeout_seconds: int = 40,
 ) -> dict[str, Any]:
     ok_codes = ok_returncodes or {0}
+    record_trace_event(
+        recorder,
+        span_id,
+        "static_tool_started",
+        f"static.{command} started",
+        {"tool": command, "args_summary": " ".join(args), "timeout_seconds": timeout_seconds},
+    )
     version_args = {
         "semgrep": ["--version"],
         "gitleaks": ["version"],
@@ -1673,6 +1680,35 @@ def static_tool_timeout_seconds(project_config: dict[str, Any] | None, tool_name
         return 180 if tool_name in {"dependency-check", "osv-scanner", "trivy"} else 40
     except (TypeError, ValueError):
         return 180 if tool_name in {"dependency-check", "osv-scanner", "trivy"} else 40
+
+
+def record_trace_event(
+    recorder: Any,
+    span_id: str,
+    event_type: str,
+    summary: str,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    if not hasattr(recorder, "event"):
+        return
+    try:
+        recorder.event(span_id, event_type, summary, payload or {})
+    except Exception:
+        return
+
+
+def tree_sitter_graph_options(project_config: dict[str, Any] | None, files: list[ChangedFile]) -> dict[str, Any]:
+    runner_cfg = {
+        **static_runner_config(project_config, "tree_sitter"),
+        **static_runner_config(project_config, "tree_sitter_code_graph"),
+    }
+    return {
+        "include_paths": [changed.filename for changed in files],
+        "max_files": runner_cfg.get("max_files", 260),
+        "max_file_bytes": runner_cfg.get("max_file_bytes", 512 * 1024),
+        "timeout_seconds": runner_cfg.get("timeout_seconds", 20),
+        "ignore_dirs": runner_cfg.get("ignore_dirs", []),
+    }
 
 
 def runner_extra_args(project_config: dict[str, Any] | None, tool_name: str) -> list[str]:
@@ -2899,10 +2935,32 @@ def run_external_static_prescan(
 
     outputs_dir.mkdir(parents=True, exist_ok=True)
     tree_started = time.time()
-    tree_graph = build_tree_sitter_graph(worktree)
+    tree_options = tree_sitter_graph_options(project_config, files)
+    record_trace_event(
+        recorder,
+        span_id,
+        "static_tool_started",
+        "static.tree_sitter_code_graph started",
+        {
+            "tool": "tree_sitter_code_graph",
+            "worktree": str(worktree),
+            "worktree_mode": worktree_mode,
+            "max_files": tree_options.get("max_files"),
+            "max_file_bytes": tree_options.get("max_file_bytes"),
+            "timeout_seconds": tree_options.get("timeout_seconds"),
+            "include_path_count": len(tree_options.get("include_paths") or []),
+        },
+    )
+    tree_graph = build_tree_sitter_graph(worktree, tree_options)
     tree_graph_output = outputs_dir / "tree-sitter-code-graph.json"
     tree_graph_output.write_text(json.dumps(tree_graph, ensure_ascii=False, indent=2), "utf-8")
-    tree_status = "completed" if tree_graph.get("status") == "indexed" else str(tree_graph.get("status") or "failed")
+    tree_graph_status = str(tree_graph.get("status") or "failed")
+    if tree_graph.get("timeout"):
+        tree_status = "timeout"
+    elif tree_graph_status in {"indexed", "indexed_partial", "timeout_partial"}:
+        tree_status = "completed"
+    else:
+        tree_status = tree_graph_status
     recorder.tool_call(
         span_id,
         "static.tree_sitter_code_graph",
@@ -2914,6 +2972,8 @@ def run_external_static_prescan(
             f"classes={len(tree_graph.get('classes') or [])}, "
             f"functions={len(tree_graph.get('functions') or [])}, "
             f"calls={len(tree_graph.get('callers') or [])}"
+            + (", truncated=true" if tree_graph.get("truncated") else "")
+            + (", timeout=true" if tree_graph.get("timeout") else "")
         ),
         output_ref={"path": str(tree_graph_output)},
         tool_version="python-tree-sitter",
@@ -2922,11 +2982,11 @@ def run_external_static_prescan(
     results = [
         {
             "tool": "tree_sitter_code_graph",
-            "available": tree_graph.get("status") == "indexed",
+            "available": tree_graph_status in {"indexed", "indexed_partial", "timeout_partial"},
             "status": tree_status,
             "version": "python-tree-sitter",
             "stdout_path": str(tree_graph_output),
-            "returncode": 0 if tree_graph.get("status") == "indexed" else 1,
+            "returncode": 0 if tree_graph_status in {"indexed", "indexed_partial", "timeout_partial"} else 1,
             "findings": [],
             "metrics": {
                 "worktree_mode": worktree_mode,
@@ -2938,6 +2998,9 @@ def run_external_static_prescan(
                 "function_count": len(tree_graph.get("functions") or []),
                 "call_count": len(tree_graph.get("callers") or []),
                 "impact_symbol_count": len(tree_graph.get("impact_symbols") or []),
+                "truncated": bool(tree_graph.get("truncated")),
+                "timeout": bool(tree_graph.get("timeout")),
+                "skipped_file_count": len(tree_graph.get("skipped_files") or []),
             },
         },
         run_semgrep_prescan(

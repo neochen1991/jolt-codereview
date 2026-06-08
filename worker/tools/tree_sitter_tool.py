@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,30 @@ CONTROL_WORDS = {
     "import",
 }
 
+DEFAULT_IGNORE_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".idea",
+    ".vscode",
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    "node_modules",
+    "target",
+    "build",
+    "dist",
+    "out",
+    ".gradle",
+    ".mvn",
+    ".ruff_cache",
+    ".pytest_cache",
+}
+DEFAULT_MAX_FILES = 260
+DEFAULT_MAX_FILE_BYTES = 512 * 1024
+DEFAULT_TIMEOUT_SECONDS = 20.0
+
 
 def language_for_path(path: str | Path) -> str | None:
     return SUPPORTED_SUFFIXES.get(Path(path).suffix.lower())
@@ -122,16 +147,62 @@ def probe() -> dict[str, Any]:
     }
 
 
-def build_graph(worktree: Path) -> dict[str, Any]:
+def build_graph(worktree: Path, options: dict[str, Any] | None = None) -> dict[str, Any]:
+    options = options or {}
+    started = time.monotonic()
+    max_files = _positive_int(options.get("max_files"), DEFAULT_MAX_FILES)
+    max_file_bytes = _positive_int(options.get("max_file_bytes"), DEFAULT_MAX_FILE_BYTES)
+    timeout_seconds = float(_positive_int(options.get("timeout_seconds"), int(DEFAULT_TIMEOUT_SECONDS)))
+    ignore_dirs = set(DEFAULT_IGNORE_DIRS)
+    ignore_dirs.update(str(item) for item in options.get("ignore_dirs") or [] if str(item))
+    include_paths = [str(item).replace("\\", "/") for item in options.get("include_paths") or [] if str(item)]
     files: list[tuple[str, str]] = []
+    skipped: list[dict[str, Any]] = []
+    truncated = False
+    timeout = False
     if worktree.exists():
-        for path in worktree.rglob("*"):
-            if path.is_file() and language_for_path(path):
-                try:
-                    files.append((path.relative_to(worktree).as_posix(), path.read_text("utf-8", errors="replace")))
-                except OSError:
+        candidates = _candidate_paths(worktree, include_paths, ignore_dirs)
+        seen: set[str] = set()
+        for path in candidates:
+            if time.monotonic() - started > timeout_seconds:
+                timeout = True
+                break
+            if not path.is_file() or not language_for_path(path) or _ignored_path(path, worktree, ignore_dirs):
+                continue
+            relative_path = path.relative_to(worktree).as_posix()
+            if relative_path in seen:
+                continue
+            seen.add(relative_path)
+            if len(files) >= max_files:
+                truncated = True
+                skipped.append({"file_path": relative_path, "reason": "max_files_exceeded"})
+                break
+            try:
+                size = path.stat().st_size
+                if size > max_file_bytes:
+                    skipped.append({"file_path": relative_path, "reason": "max_file_bytes_exceeded", "size_bytes": size})
                     continue
-    return _build_index(files, {"worktree": str(worktree), "index_kind": "tree_sitter_repo_graph"})
+                files.append((relative_path, path.read_text("utf-8", errors="replace")))
+            except OSError as exc:
+                skipped.append({"file_path": relative_path, "reason": f"os_error:{type(exc).__name__}"})
+                continue
+    graph = _build_index(files, {"worktree": str(worktree), "index_kind": "tree_sitter_repo_graph"})
+    graph["truncated"] = truncated
+    graph["timeout"] = timeout
+    graph["skipped_files"] = skipped[:100]
+    graph["limits"] = {
+        **(graph.get("limits") or {}),
+        "max_files": max_files,
+        "max_file_bytes": max_file_bytes,
+        "timeout_seconds": timeout_seconds,
+        "ignore_dirs": sorted(ignore_dirs),
+        "include_path_count": len(include_paths),
+    }
+    if timeout and graph.get("status") == "indexed":
+        graph["status"] = "timeout_partial"
+    elif truncated and graph.get("status") == "indexed":
+        graph["status"] = "indexed_partial"
+    return graph
 
 
 def build_diff_graph(files: list[Any]) -> dict[str, Any]:
@@ -142,6 +213,48 @@ def build_diff_graph(files: list[Any]) -> dict[str, Any]:
             continue
         indexed.append((filename, "\n".join(line for _, line in _added_lines(str(getattr(changed, "patch", ""))))))
     return _build_index(indexed, {"index_kind": "tree_sitter_diff_graph"})
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _candidate_paths(worktree: Path, include_paths: list[str], ignore_dirs: set[str]) -> list[Path]:
+    if include_paths:
+        candidates: list[Path] = []
+        seen: set[str] = set()
+        for relative in include_paths:
+            safe = Path(relative.replace("\\", "/"))
+            if safe.is_absolute() or ".." in safe.parts:
+                continue
+            path = worktree / safe
+            if path.exists() and path.is_file():
+                key = path.resolve().as_posix()
+                if key not in seen:
+                    seen.add(key)
+                    candidates.append(path)
+            parent = path.parent
+            if parent.exists() and parent.is_dir() and not _ignored_path(parent, worktree, ignore_dirs):
+                for sibling in parent.iterdir():
+                    if sibling.is_file() and language_for_path(sibling):
+                        key = sibling.resolve().as_posix()
+                        if key not in seen:
+                            seen.add(key)
+                            candidates.append(sibling)
+        return candidates
+    return [path for path in worktree.rglob("*") if path.is_file()]
+
+
+def _ignored_path(path: Path, worktree: Path, ignore_dirs: set[str]) -> bool:
+    try:
+        relative = path.relative_to(worktree)
+    except ValueError:
+        return True
+    return any(part in ignore_dirs for part in relative.parts)
 
 
 def _build_index(files: list[tuple[str, str]], base: dict[str, Any]) -> dict[str, Any]:

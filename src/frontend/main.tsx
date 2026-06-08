@@ -296,7 +296,29 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 function listItems<T>(value: T[] | { items?: T[] } | null | undefined): T[] {
   if (Array.isArray(value)) return value;
-  return value?.items ?? [];
+  return Array.isArray(value?.items) ? value.items : [];
+}
+
+function normalizeMrChangedFiles(value: unknown): MrChangedFile[] {
+  const rawItems = Array.isArray(value)
+    ? value
+    : value && typeof value === "object" && Array.isArray((value as { items?: unknown[] }).items)
+      ? (value as { items: unknown[] }).items
+      : [];
+  return rawItems.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    const filename = String(row.filename ?? row.new_path ?? row.path ?? "").trim();
+    if (!filename) return [];
+    return [{
+      filename,
+      status: row.status ? String(row.status) : undefined,
+      additions: Number.isFinite(Number(row.additions)) ? Number(row.additions) : undefined,
+      deletions: Number.isFinite(Number(row.deletions)) ? Number(row.deletions) : undefined,
+      patch: typeof row.patch === "string" ? row.patch : "",
+      previous_filename: row.previous_filename ? String(row.previous_filename) : undefined
+    }];
+  });
 }
 
 function splitCsv(value: string) {
@@ -709,10 +731,11 @@ function App() {
     setDetail(nextDetail);
     if (showPreview) {
       setMrPreview(nextDetail);
+      setMrPreviewFiles([]);
       setMrPreviewLoading(true);
       try {
-        const files = await api<{ items: MrChangedFile[] }>(`/api/vcs/${activeProjectId}/merge-requests/${id}/files`);
-        setMrPreviewFiles(files.items || []);
+        const files = await api<unknown>(`/api/vcs/${activeProjectId}/merge-requests/${id}/files`);
+        setMrPreviewFiles(normalizeMrChangedFiles(files));
       } catch (error) {
         setMessage(`MR diff 加载失败：${(error as Error).message}`);
         setMrPreviewFiles([]);
@@ -3702,11 +3725,18 @@ function MrPreviewModal({
   onClose: () => void;
 }) {
   const [activeFile, setActiveFile] = useState("");
+  const safeFiles = useMemo(() => normalizeMrChangedFiles(files), [files]);
   useEffect(() => {
-    if (!activeFile && files[0]?.filename) setActiveFile(files[0].filename);
-  }, [activeFile, files]);
-  const current = files.find((file) => file.filename === activeFile) || files[0];
-  const tree = buildFileTree(files);
+    if (!safeFiles.length) {
+      if (activeFile) setActiveFile("");
+      return;
+    }
+    if (!activeFile || !safeFiles.some((file) => file.filename === activeFile)) {
+      setActiveFile(safeFiles[0].filename);
+    }
+  }, [activeFile, safeFiles]);
+  const current = safeFiles.find((file) => file.filename === activeFile) || safeFiles[0] || null;
+  const tree = buildFileTree(safeFiles);
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
       <section className="mr-preview-modal" onClick={(event) => event.stopPropagation()}>
@@ -3721,6 +3751,7 @@ function MrPreviewModal({
           <aside className="mr-file-tree">
             <strong>变更文件</strong>
             {loading && <p>正在加载 diff...</p>}
+            {!loading && !tree.length && <p>暂无变更文件。可能是空提交、平台未返回文件列表，或该 MR 只有元数据变化。</p>}
             {!loading && tree.map((entry) => (
               <button
                 key={entry.path}

@@ -32,9 +32,79 @@ def llm_request_timeout_seconds(llm: dict[str, Any] | None) -> int:
         or 120
     )
     try:
-        return max(1, min(120, int(configured)))
+        return max(1, min(600, int(configured)))
     except (TypeError, ValueError):
         return 120
+
+
+def llm_stream_enabled(llm: dict[str, Any] | None) -> bool:
+    config = llm or {}
+    configured = config.get("enable_stream", config.get("stream", True))
+    if isinstance(configured, str):
+        return configured.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+    return bool(configured)
+
+
+def collect_openai_sse_response(response: Any, started: float) -> dict[str, Any]:
+    content_parts: list[str] = []
+    tool_call_parts: dict[int, dict[str, Any]] = {}
+    chunk_count = 0
+    first_chunk_ms: int | None = None
+    response_id = ""
+    finish_reason = None
+    usage: dict[str, Any] = {}
+
+    for raw_line in response:
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if not line or line.startswith(":"):
+            continue
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload == "[DONE]":
+            break
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        chunk_count += 1
+        if first_chunk_ms is None:
+            first_chunk_ms = int((time.time() - started) * 1000)
+        response_id = str(chunk.get("id") or response_id)
+        if isinstance(chunk.get("usage"), dict):
+            usage = chunk.get("usage") or usage
+        choice = (chunk.get("choices") or [{}])[0]
+        finish_reason = choice.get("finish_reason") or finish_reason
+        delta = choice.get("delta") or {}
+        if delta.get("content"):
+            content_parts.append(str(delta.get("content")))
+        for tool_call in delta.get("tool_calls") or []:
+            index = int(tool_call.get("index") or 0)
+            existing = tool_call_parts.setdefault(index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+            if tool_call.get("id"):
+                existing["id"] = tool_call.get("id")
+            if tool_call.get("type"):
+                existing["type"] = tool_call.get("type")
+            function = tool_call.get("function") or {}
+            existing_function = existing.setdefault("function", {"name": "", "arguments": ""})
+            if function.get("name"):
+                existing_function["name"] = function.get("name")
+            if function.get("arguments"):
+                existing_function["arguments"] = str(existing_function.get("arguments") or "") + str(function.get("arguments"))
+
+    message: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts)}
+    if tool_call_parts:
+        message["tool_calls"] = [tool_call_parts[index] for index in sorted(tool_call_parts)]
+    return {
+        "id": response_id,
+        "choices": [{"message": message, "finish_reason": finish_reason}],
+        "usage": usage,
+        "_jolt_stream": {
+            "enabled": True,
+            "chunk_count": chunk_count,
+            "first_chunk_ms": first_chunk_ms,
+        },
+    }
 
 
 def http_json(
@@ -43,14 +113,25 @@ def http_json(
     method: str = "GET",
     body: dict[str, Any] | None = None,
     timeout_seconds: int = 120,
+    stream: bool = False,
 ) -> Any:
     data = None
     request_headers = dict(headers)
+    request_headers.setdefault("Accept", "application/json")
+    request_headers.setdefault("User-Agent", "Jolt-CodeReview-Worker/0.1")
     if body is not None:
-        data = json.dumps(body).encode("utf-8")
+        request_body = dict(body)
+        if stream:
+            request_body["stream"] = True
+            request_body.setdefault("stream_options", {"include_usage": True})
+        data = json.dumps(request_body).encode("utf-8")
         request_headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, method=method, headers=request_headers)
+    started = time.time()
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        content_type = str(response.headers.get("Content-Type") or "").lower()
+        if stream and "text/event-stream" in content_type:
+            return collect_openai_sse_response(response, started)
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -364,6 +445,8 @@ def summarize_pr_with_llm(
             },
             {"role": "user", "content": prompt},
         ]
+        timeout_seconds = llm_request_timeout_seconds(llm)
+        stream_enabled = llm_stream_enabled(llm)
         try:
             response = http_json(
                 chat_completions_url(base_url),
@@ -375,13 +458,15 @@ def summarize_pr_with_llm(
                     "temperature": 0.1,
                     "max_tokens": min(2048, llm_max_output_tokens(llm)),
                 },
-                timeout_seconds=llm_request_timeout_seconds(llm),
+                timeout_seconds=timeout_seconds,
+                stream=stream_enabled,
             )
             duration_ms = int((time.time() - started) * 1000)
             usage = response.get("usage") or {}
             input_tokens = int(usage.get("prompt_tokens", len(prompt) // 4))
             output_tokens = int(usage.get("completion_tokens", 0))
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+            response_debug_text = json.dumps({"content": content, "stream": response.get("_jolt_stream") or {"enabled": False}}, ensure_ascii=False)
             recorder.llm_call(
                 span_id,
                 provider,
@@ -393,7 +478,7 @@ def summarize_pr_with_llm(
                 output_tokens,
                 str(response.get("id") or ""),
                 messages,
-                str(content),
+                response_debug_text,
             )
             if budget_tracker:
                 budget_tracker.charge_llm(model, input_tokens, output_tokens)
@@ -401,7 +486,8 @@ def summarize_pr_with_llm(
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = exc
             duration_ms = int((time.time() - started) * 1000)
-            recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, len(prompt) // 4, 0, None, messages, str(exc))
+            error_text = json.dumps({"error": str(exc), "timeout_seconds": timeout_seconds, "stream": stream_enabled}, ensure_ascii=False)
+            recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, len(prompt) // 4, 0, None, messages, error_text)
             if index < len(providers) - 1:
                 recorder.event(span_id, "pr_summary_llm_failover", f"{provider} 摘要调用失败，尝试下一个 provider", {"error": str(exc)[:300]})
                 continue
@@ -464,19 +550,23 @@ def call_llm(
             "temperature": 0.1,
             "max_tokens": llm_max_output_tokens(llm),
         }
+        timeout_seconds = llm_request_timeout_seconds(llm)
+        stream_enabled = llm_stream_enabled(llm)
         try:
             response = http_json(
                 chat_completions_url(base_url),
                 {"Authorization": f"Bearer {api_key}"},
                 method="POST",
                 body=payload,
-                timeout_seconds=llm_request_timeout_seconds(llm),
+                timeout_seconds=timeout_seconds,
+                stream=stream_enabled,
             )
             duration_ms = int((time.time() - started) * 1000)
             usage = response.get("usage") or {}
             input_tokens = int(usage.get("prompt_tokens", len(prompt) // 4))
             output_tokens = int(usage.get("completion_tokens", 0))
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "[]")
+            response_debug_text = json.dumps({"content": content, "stream": response.get("_jolt_stream") or {"enabled": False}}, ensure_ascii=False)
             recorder.llm_call(
                 span_id,
                 provider,
@@ -488,7 +578,7 @@ def call_llm(
                 output_tokens,
                 str(response.get("id") or ""),
                 messages,
-                str(content),
+                response_debug_text,
             )
             if budget_tracker:
                 budget_tracker.charge_llm(model, input_tokens, output_tokens)
@@ -498,7 +588,8 @@ def call_llm(
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = exc
             duration_ms = int((time.time() - started) * 1000)
-            recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, len(prompt) // 4, 0, None, messages, str(exc))
+            error_text = json.dumps({"error": str(exc), "timeout_seconds": timeout_seconds, "stream": stream_enabled}, ensure_ascii=False)
+            recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, len(prompt) // 4, 0, None, messages, error_text)
             if index < len(providers) - 1:
                 recorder.event(span_id, "llm_failover", f"{provider} 调用失败，尝试下一个 provider：{type(exc).__name__}", {"error": str(exc)[:300]})
                 continue

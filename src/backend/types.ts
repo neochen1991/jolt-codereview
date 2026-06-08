@@ -9,6 +9,7 @@ export interface AppConfig {
     default_api_key?: string | null;
     request_timeout_seconds?: number;
     max_output_tokens?: number;
+    enable_stream?: boolean;
   };
   github?: {
     default_token_env?: string;

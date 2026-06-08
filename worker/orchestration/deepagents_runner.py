@@ -12,6 +12,8 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
+from llm.client import collect_openai_sse_response, llm_stream_enabled
+
 
 class OpenAICompatibleToolChatModel(BaseChatModel):
     provider: str
@@ -19,6 +21,7 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
     base_url: str
     api_key: str
     request_timeout_seconds: int = 120
+    enable_stream: bool = True
     bound_tools: list[dict[str, Any]] = []
     trace_callback: Callable[[dict[str, Any]], None] | None = None
 
@@ -43,17 +46,31 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
         if self.bound_tools:
             payload["tools"] = self.bound_tools
             payload["tool_choice"] = "auto"
+        request_payload = dict(payload)
+        if self.enable_stream:
+            request_payload["stream"] = True
+            request_payload.setdefault("stream_options", {"include_usage": True})
         request = urllib.request.Request(
             f"{self.base_url.rstrip('/')}/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            data=json.dumps(request_payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Jolt-CodeReview-Worker/0.1",
+            },
             method="POST",
         )
         started = time.time()
         prompt_text = json.dumps(payload["messages"], ensure_ascii=False)
         try:
             with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
-                data = json.loads(response.read().decode("utf-8"))
+                headers = getattr(response, "headers", {})
+                content_type = str(headers.get("Content-Type") if hasattr(headers, "get") else "").lower()
+                if self.enable_stream and "text/event-stream" in content_type:
+                    data = collect_openai_sse_response(response, started)
+                else:
+                    data = json.loads(response.read().decode("utf-8"))
         except Exception as exc:
             self._trace_llm_call(
                 {
@@ -64,7 +81,7 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
                     "input_tokens": max(1, len(prompt_text) // 4),
                     "output_tokens": 0,
                     "request_id": None,
-                    "response_text": str(exc),
+                    "response_text": json.dumps({"error": str(exc), "timeout_seconds": self.request_timeout_seconds, "stream": self.enable_stream}, ensure_ascii=False),
                 }
             )
             raise
@@ -75,6 +92,7 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
                 "message": raw_message,
                 "usage": usage,
                 "finish_reason": (data.get("choices") or [{}])[0].get("finish_reason"),
+                "stream": data.get("_jolt_stream") or {"enabled": False},
             },
             ensure_ascii=False,
         )
@@ -138,9 +156,10 @@ def run_bounded_deepagent(
     if not base_url or not api_key:
         raise RuntimeError("DeepAgents requires a real OpenAI-compatible base_url and api_key")
     try:
-        request_timeout_seconds = max(1, min(120, int(llm_config.get("request_timeout_seconds") or llm_config.get("timeout_seconds") or 120)))
+        request_timeout_seconds = max(1, min(600, int(llm_config.get("request_timeout_seconds") or llm_config.get("timeout_seconds") or 120)))
     except (TypeError, ValueError):
         request_timeout_seconds = 120
+    enable_stream = llm_stream_enabled(llm_config)
 
     def inspect_agent_rules() -> str:
         """Read the actual markdown/code-rule summary bound to this expert agent."""
@@ -277,6 +296,7 @@ def run_bounded_deepagent(
             base_url=base_url,
             api_key=str(api_key),
             request_timeout_seconds=request_timeout_seconds,
+            enable_stream=enable_stream,
             trace_callback=llm_trace,
         ),
         tools=tools,

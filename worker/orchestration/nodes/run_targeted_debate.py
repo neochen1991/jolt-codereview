@@ -5,7 +5,7 @@ import time
 import urllib.error
 from typing import Any
 
-from llm.client import chat_completions_url, http_json
+from llm.client import chat_completions_url, http_json, llm_request_timeout_seconds, llm_stream_enabled
 from llm_router import candidate_providers
 
 SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
@@ -241,6 +241,8 @@ def run_targeted_debate_with_llm(
                     },
                     {"role": "user", "content": prompt},
                 ]
+                timeout_seconds = llm_request_timeout_seconds(llm)
+                stream_enabled = llm_stream_enabled(llm)
                 try:
                     response = http_json(
                         chat_completions_url(base_url),
@@ -251,20 +253,24 @@ def run_targeted_debate_with_llm(
                             "messages": messages,
                             "temperature": 0.1,
                         },
+                        timeout_seconds=timeout_seconds,
+                        stream=stream_enabled,
                     )
                     duration_ms = int((time.time() - started) * 1000)
                     usage = response.get("usage") or {}
                     input_tokens = int(usage.get("prompt_tokens", len(prompt) // 4))
                     output_tokens = int(usage.get("completion_tokens", 0))
                     content = response.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-                    recorder.llm_call(span_id, provider, model, prompt, "completed", duration_ms, input_tokens, output_tokens, str(response.get("id") or ""), messages, str(content))
+                    response_debug_text = json.dumps({"content": content, "stream": response.get("_jolt_stream") or {"enabled": False}}, ensure_ascii=False)
+                    recorder.llm_call(span_id, provider, model, prompt, "completed", duration_ms, input_tokens, output_tokens, str(response.get("id") or ""), messages, response_debug_text)
                     if budget_tracker:
                         budget_tracker.charge_llm(model, input_tokens, output_tokens)
                     verdict = _parse_verdict(content, fallback)
                     break
                 except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
                     duration_ms = int((time.time() - started) * 1000)
-                    recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, len(prompt) // 4, 0, None, messages, str(exc))
+                    error_text = json.dumps({"error": str(exc), "timeout_seconds": timeout_seconds, "stream": stream_enabled}, ensure_ascii=False)
+                    recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, len(prompt) // 4, 0, None, messages, error_text)
                     if index < len(providers) - 1:
                         recorder.event(span_id, "debate_llm_failover", f"{provider} 辩论调用失败，尝试下一个 provider", {"error": str(exc)[:300]})
                     else:

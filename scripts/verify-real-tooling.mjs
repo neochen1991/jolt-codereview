@@ -27,6 +27,7 @@ for (const forbidden of ["BoundedReviewChatModel", "scripted", "fake", "dummy", 
 assert(deepagents.includes("OpenAICompatibleToolChatModel"), "DeepAgents must use a real OpenAI-compatible tool-calling chat model");
 assert(deepagents.includes("DeepAgents completed without real tool calls"), "DeepAgents must reject runs with no real tool calls");
 assert(deepagents.includes("trace_callback") && deepagents.includes("_trace_llm_call"), "DeepAgents LLM calls must be traced with request and response payloads");
+assert(deepagents.includes("enable_stream") && deepagents.includes("collect_openai_sse_response"), "DeepAgents must support OpenAI-compatible SSE streaming");
 assert(runExperts.includes("llm_trace=lambda fields: recorder.llm_call"), "Expert node must wire DeepAgents LLM traces into Recorder.llm_call");
 assert(runtime.includes("subprocess.run("), "Static tools must be executed through subprocess.run");
 assert(!runtime.includes('write_text("[]", "utf-8")'), "Static tool runner must not fabricate empty JSON reports");
@@ -60,6 +61,8 @@ assert(!prescan.includes("mvp-heuristic-v1"), "Prescan must not use MVP heuristi
 assert(!runExperts.includes("mvp-heuristic-v1"), "Expert node must not use MVP heuristic version marker");
 assert(frontend.includes("模型服务配置"), "Settings page must expose model service form");
 assert(frontend.includes("测试连接"), "Settings page must expose LLM connectivity test button");
+assert(frontend.includes("启用 SSE 流式响应"), "Settings page must expose LLM SSE streaming toggle");
+assert(frontend.includes("Math.min(600"), "Settings page must allow long LLM timeouts for Windows worker runs");
 assert(frontend.includes("toolSave"), "Settings page must show static tool policy save feedback");
 assert(frontend.includes("settings-success-modal"), "Settings page must show successful actions in a modal prompt");
 assert(frontend.includes("settingsReady") && frontend.includes("SettingsConfigLoadingPanel"), "Settings page must not render default forms before real project config loads");
@@ -69,6 +72,8 @@ assert(styles.includes(".setting-form-card") && styles.includes("min-width: 0"),
 assert(!frontend.includes("JSON.stringify(item.value"), "Settings page must not expose raw JSON setting editor");
 assert(projectRoutes.includes("/api/projects/:projectId/settings/llm/test"), "Backend must expose LLM test endpoint");
 assert(projectRoutes.includes("compactLlmTestInput"), "LLM test endpoint must ignore blank fields instead of overriding saved credentials");
+assert(projectRoutes.includes("stream_options") && projectRoutes.includes("parseOpenAiLikeResponse"), "LLM test endpoint must support SSE connectivity tests");
+assert(projectRoutes.includes("Math.min(600"), "Backend LLM test must allow long LLM timeouts");
 
 console.log(JSON.stringify({
   ok: true,
@@ -80,6 +85,7 @@ console.log(JSON.stringify({
     "legacy_heuristic_prescan_not_default",
     "raw_static_tool_reports_recorded",
     "deepagents_llm_io_logged",
+    "deepagents_sse_streaming_supported",
     "real_tree_sitter_parser_and_grammar_installed",
     "tree_sitter_code_graph_recorded_as_static_tool",
     "settings_form_without_json_editor",
@@ -87,6 +93,7 @@ console.log(JSON.stringify({
     "settings_success_modal_prompt",
     "settings_real_config_loading_gate",
     "settings_static_tool_status_async",
-    "settings_failure_message_wraps"
+    "settings_failure_message_wraps",
+    "llm_sse_connectivity_test"
   ]
 }, null, 2));

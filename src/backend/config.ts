@@ -10,7 +10,8 @@ const DEFAULT_CONFIG: AppConfig = {
     default_api_key_env: null,
     default_api_key: null,
     request_timeout_seconds: 120,
-    max_output_tokens: 8192
+    max_output_tokens: 8192,
+    enable_stream: true
   },
   github: {
     default_token_env: "GITHUB_TOKEN",

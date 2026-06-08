@@ -18,6 +18,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "default_api_key": None,
         "request_timeout_seconds": 120,
         "max_output_tokens": 8192,
+        "enable_stream": True,
     },
     "github": {
         "default_token_env": "GITHUB_TOKEN",

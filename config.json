@@ -5,8 +5,9 @@
     "default_model": "MiniMax-M2.7",
     "default_api_key_env": null,
     "default_api_key": "7b446c97-7172-4c90-a4ef-3f3ff5a8f894",
-    "request_timeout_seconds": 120,
-    "max_output_tokens": 8192
+    "request_timeout_seconds": 600,
+    "max_output_tokens": 8192,
+    "enable_stream": true
   },
   "github": {
     "default_token_env": "GITHUB_TOKEN",

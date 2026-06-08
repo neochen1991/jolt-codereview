@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "worker"))
 
 from budget import BudgetTracker
-from llm.client import parse_llm_findings
+from llm.client import collect_openai_sse_response, parse_llm_findings
 from llm_router import candidate_providers
 from review_runtime import (
     ChangedFile,
@@ -69,6 +69,7 @@ runtime_text = (ROOT / "worker" / "review_runtime.py").read_text("utf-8")
 graph_text = (ROOT / "worker" / "orchestration" / "graph.py").read_text("utf-8")
 llm_client_text = (ROOT / "worker" / "llm" / "client.py").read_text("utf-8")
 deepagents_text = (ROOT / "worker" / "orchestration" / "deepagents_runner.py").read_text("utf-8")
+targeted_debate_text = (ROOT / "worker" / "orchestration" / "nodes" / "run_targeted_debate.py").read_text("utf-8")
 assert "def fetch_node(" not in runtime_text
 assert "def choose_effort_node(" not in runtime_text
 assert "def prescan_node(" not in runtime_text
@@ -101,12 +102,32 @@ assert "LangGraph is required in production review orchestration" in graph_text
 assert EXECUTED_GRAPH_NODE_KEYS == TARGET_GRAPH_NODE_KEYS
 assert "timeout=30" not in llm_client_text
 assert "llm_request_timeout_seconds" in llm_client_text
-assert "min(120" in llm_client_text
+assert "min(600" in llm_client_text
+assert "llm_stream_enabled" in llm_client_text
+assert "collect_openai_sse_response" in llm_client_text
 assert "request_timeout_seconds" in deepagents_text
+assert "enable_stream" in deepagents_text
+assert "collect_openai_sse_response(response, started)" in deepagents_text
 assert "def read_file(path: str)" in deepagents_text
 assert "def read_diff_patch(path: str)" in deepagents_text
 assert "min(max_tool_calls, 16)" in deepagents_text
 assert "trace_callback" in deepagents_text
+assert "timeout_seconds=timeout_seconds" in targeted_debate_text
+assert "stream=stream_enabled" in targeted_debate_text
+assert "llm_request_timeout_seconds" in runtime_text
+assert "llm_stream_enabled" in runtime_text
+
+sse_response = collect_openai_sse_response(
+    [
+        'data: {"id":"chatcmpl-test","choices":[{"delta":{"content":"中文"},"finish_reason":null}]}\n'.encode("utf-8"),
+        'data: {"choices":[{"delta":{"content":"回答","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"inspect_agent_rules","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":12,"completion_tokens":3}}\n'.encode("utf-8"),
+        b"data: [DONE]\n",
+    ],
+    time.time(),
+)
+assert sse_response["choices"][0]["message"]["content"] == "中文回答"
+assert sse_response["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "inspect_agent_rules"
+assert sse_response["_jolt_stream"]["chunk_count"] == 2
 
 deepagent_llm_traces = []
 

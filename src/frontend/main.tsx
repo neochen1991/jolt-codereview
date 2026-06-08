@@ -180,6 +180,7 @@ type LlmSettingsForm = {
   default_api_key: string;
   request_timeout_seconds: string;
   max_output_tokens: string;
+  enable_stream: boolean;
 };
 
 type ReviewSettingsForm = {
@@ -304,7 +305,7 @@ function splitCsv(value: string) {
 
 function clampLlmTimeout(value: string) {
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(120, parsed)) : 120;
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(600, parsed)) : 120;
 }
 
 function clampLlmOutputTokens(value: string) {
@@ -1399,7 +1400,8 @@ function ConfigWorkspace({
     default_api_key_env: "",
     default_api_key: "",
     request_timeout_seconds: "120",
-    max_output_tokens: "8192"
+    max_output_tokens: "8192",
+    enable_stream: true
   });
   const [llmStoredApiKey, setLlmStoredApiKey] = useState("");
   const [reviewForm, setReviewForm] = useState<ReviewSettingsForm>({ effort: "standard", max_findings_per_mr: "12", min_confidence: "0.75", enable_full_repo_context: true });
@@ -1548,7 +1550,8 @@ function ConfigWorkspace({
         default_api_key_env: String(llm.default_api_key_env ?? ""),
         default_api_key: "",
         request_timeout_seconds: String(llm.request_timeout_seconds ?? "120"),
-        max_output_tokens: String(llm.max_output_tokens ?? "8192")
+        max_output_tokens: String(llm.max_output_tokens ?? "8192"),
+        enable_stream: llm.enable_stream !== false
       });
       setLlmStoredApiKey(String(llm.default_api_key ?? ""));
       setReviewForm({
@@ -1758,7 +1761,8 @@ function ConfigWorkspace({
       default_api_key_env: llmForm.default_api_key_env.trim() || null,
       default_api_key: llmForm.default_api_key.trim() || llmStoredApiKey || null,
       request_timeout_seconds: clampLlmTimeout(llmForm.request_timeout_seconds),
-      max_output_tokens: clampLlmOutputTokens(llmForm.max_output_tokens)
+      max_output_tokens: clampLlmOutputTokens(llmForm.max_output_tokens),
+      enable_stream: llmForm.enable_stream
     });
   }
 
@@ -1774,14 +1778,16 @@ function ConfigWorkspace({
           default_api_key_env: llmForm.default_api_key_env.trim() || null,
           default_api_key: llmForm.default_api_key.trim() || llmStoredApiKey || null,
           request_timeout_seconds: clampLlmTimeout(llmForm.request_timeout_seconds),
-          max_output_tokens: clampLlmOutputTokens(llmForm.max_output_tokens)
+          max_output_tokens: clampLlmOutputTokens(llmForm.max_output_tokens),
+          enable_stream: llmForm.enable_stream
         })
       });
       const ok = Boolean(result.ok);
       const statusText = result.status ? `HTTP ${String(result.status)}` : "无 HTTP 状态";
       const sampleText = String(result.sample ?? "").trim();
+      const streamText = result.stream === false ? "非流式" : "流式";
       const nextMessage = ok
-        ? `连接成功，${statusText}，耗时 ${String(result.latency_ms ?? "--")}ms，模型 ${String(result.model ?? llmForm.default_model)}${sampleText ? `，返回：${sampleText}` : ""}`
+        ? `连接成功，${statusText}，${streamText}，耗时 ${String(result.latency_ms ?? "--")}ms，模型 ${String(result.model ?? llmForm.default_model)}${sampleText ? `，返回：${sampleText}` : ""}`
         : `连接失败，${statusText}：${String(result.error_preview ?? "未知错误")}`;
       setLlmTest({
         status: ok ? "ok" : "failed",
@@ -2149,10 +2155,16 @@ function ConfigWorkspace({
                   <input value={llmForm.default_model} onChange={(event) => setLlmForm({ ...llmForm, default_model: event.target.value })} disabled={!canEdit} />
                 </SettingField>
                 <SettingField label="调用超时（秒）">
-                  <input type="number" min="1" max="120" value={llmForm.request_timeout_seconds} onChange={(event) => setLlmForm({ ...llmForm, request_timeout_seconds: event.target.value })} disabled={!canEdit} />
+                  <input type="number" min="1" max="600" value={llmForm.request_timeout_seconds} onChange={(event) => setLlmForm({ ...llmForm, request_timeout_seconds: event.target.value })} disabled={!canEdit} />
                 </SettingField>
                 <SettingField label="输出上限 Tokens">
                   <input type="number" min="1024" max="12000" value={llmForm.max_output_tokens} onChange={(event) => setLlmForm({ ...llmForm, max_output_tokens: event.target.value })} disabled={!canEdit} />
+                </SettingField>
+                <SettingField label="流式调用">
+                  <label className="setting-check">
+                    <input type="checkbox" checked={llmForm.enable_stream} onChange={(event) => setLlmForm({ ...llmForm, enable_stream: event.target.checked })} disabled={!canEdit} />
+                    <span>启用 SSE 流式响应</span>
+                  </label>
                 </SettingField>
                 <SettingField label="API Key 环境变量">
                   <input value={llmForm.default_api_key_env} onChange={(event) => setLlmForm({ ...llmForm, default_api_key_env: event.target.value })} placeholder="例如 MINIMAX_API_KEY" disabled={!canEdit} />

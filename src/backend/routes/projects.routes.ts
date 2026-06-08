@@ -9,6 +9,7 @@ type LlmTestInput = {
   default_api_key_env?: string | null;
   default_api_key?: string | null;
   request_timeout_seconds?: number;
+  enable_stream?: boolean;
 };
 
 function openAiCompatibleChatUrl(baseUrl: string) {
@@ -32,6 +33,47 @@ function compactLlmTestInput(input: LlmTestInput) {
   return compacted;
 }
 
+function parseOpenAiLikeResponse(text: string, stream: boolean) {
+  if (!stream) {
+    try {
+      return text ? JSON.parse(text) as Record<string, unknown> : null;
+    } catch {
+      return null;
+    }
+  }
+  let sample = "";
+  let chunkCount = 0;
+  let parsedStatus: Record<string, unknown> | null = null;
+  if (!text.split(/\r?\n/).some((line) => line.trim().startsWith("data:"))) {
+    try {
+      return text ? JSON.parse(text) as Record<string, unknown> : null;
+    } catch {
+      return null;
+    }
+  }
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const chunk = JSON.parse(payload) as Record<string, unknown>;
+      parsedStatus = chunk;
+      chunkCount += 1;
+      const choices = Array.isArray(chunk.choices) ? chunk.choices as Array<Record<string, unknown>> : [];
+      const delta = choices[0]?.delta as Record<string, unknown> | undefined;
+      if (typeof delta?.content === "string") sample += delta.content;
+    } catch {
+      continue;
+    }
+  }
+  return {
+    choices: [{ message: { content: sample } }],
+    stream: { enabled: true, chunk_count: chunkCount },
+    last_chunk: parsedStatus
+  };
+}
+
 async function testOpenAiCompatibleLlm(input: LlmTestInput) {
   const baseUrl = String(input.default_base_url ?? "").trim();
   const model = String(input.default_model ?? "").trim();
@@ -43,13 +85,15 @@ async function testOpenAiCompatibleLlm(input: LlmTestInput) {
   const started = Date.now();
   const controller = new AbortController();
   const configuredTimeout = Number(input.request_timeout_seconds ?? 120);
-  const timeoutSeconds = Number.isFinite(configuredTimeout) ? Math.max(1, Math.min(120, configuredTimeout)) : 120;
+  const timeoutSeconds = Number.isFinite(configuredTimeout) ? Math.max(1, Math.min(600, configuredTimeout)) : 120;
+  const enableStream = input.enable_stream !== false;
   const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
   try {
     const response = await fetch(openAiCompatibleChatUrl(baseUrl), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Accept: enableStream ? "text/event-stream, application/json" : "application/json",
         Authorization: `Bearer ${apiKey}`
       },
       signal: controller.signal,
@@ -60,16 +104,13 @@ async function testOpenAiCompatibleLlm(input: LlmTestInput) {
           { role: "user", content: "ping" }
         ],
         temperature: 0,
-        max_tokens: 8
+        max_tokens: 8,
+        stream: enableStream,
+        ...(enableStream ? { stream_options: { include_usage: true } } : {})
       })
     });
     const text = await response.text();
-    let parsed: Record<string, unknown> | null = null;
-    try {
-      parsed = text ? JSON.parse(text) as Record<string, unknown> : null;
-    } catch {
-      parsed = null;
-    }
+    const parsed = parseOpenAiLikeResponse(text, enableStream);
     const choices = Array.isArray(parsed?.choices) ? parsed.choices as Array<Record<string, unknown>> : [];
     const firstMessage = choices[0]?.message as Record<string, unknown> | undefined;
     const sample = String(firstMessage?.content ?? "").slice(0, 80);
@@ -77,6 +118,7 @@ async function testOpenAiCompatibleLlm(input: LlmTestInput) {
       ok: response.ok,
       provider: String(input.default_provider ?? ""),
       model,
+      stream: enableStream,
       status: response.status,
       latency_ms: Date.now() - started,
       sample,

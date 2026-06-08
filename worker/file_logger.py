@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+import shutil
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 def _logging_config(config: dict[str, Any] | None) -> dict[str, Any]:
@@ -23,6 +25,25 @@ def _resolve_dir(config: dict[str, Any] | None) -> Path:
     logging = _logging_config(config)
     configured = Path(str(logging["dir"]))
     return configured if configured.is_absolute() else ROOT / configured
+
+
+def beijing_iso_timestamp() -> str:
+    return datetime.now(BEIJING_TZ).isoformat()
+
+
+def clear_worker_logs(config: dict[str, Any] | None) -> None:
+    logging = _logging_config(config)
+    if not logging["enabled"]:
+        return
+    log_dir = _resolve_dir(config)
+    for target in [
+        log_dir / str(logging["worker_file"]),
+        log_dir / str(logging["review_run_dir"]),
+    ]:
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            target.unlink(missing_ok=True)
 
 
 def _redact(key: str, value: Any) -> Any:
@@ -46,7 +67,7 @@ def write_worker_log(config: dict[str, Any] | None, event: str, fields: dict[str
     log_dir = _resolve_dir(config)
     log_dir.mkdir(parents=True, exist_ok=True)
     payload = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": beijing_iso_timestamp(),
         "service": "jolt-worker",
         "level": level,
         "event": event,
@@ -63,7 +84,7 @@ def write_review_run_log(config: dict[str, Any] | None, run_id: str, event: str,
     run_dir = _resolve_dir(config) / str(logging["review_run_dir"])
     run_dir.mkdir(parents=True, exist_ok=True)
     payload = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": beijing_iso_timestamp(),
         "service": "jolt-worker",
         "level": level,
         "event": event,

@@ -45,7 +45,7 @@ def llm_stream_enabled(llm: dict[str, Any] | None) -> bool:
     return bool(configured)
 
 
-def collect_openai_sse_response(response: Any, started: float) -> dict[str, Any]:
+def collect_openai_sse_lines(raw_lines: Any, started: float) -> dict[str, Any]:
     content_parts: list[str] = []
     tool_call_parts: dict[int, dict[str, Any]] = {}
     chunk_count = 0
@@ -54,8 +54,11 @@ def collect_openai_sse_response(response: Any, started: float) -> dict[str, Any]
     finish_reason = None
     usage: dict[str, Any] = {}
 
-    for raw_line in response:
-        line = raw_line.decode("utf-8", errors="replace").strip()
+    for raw_line in raw_lines:
+        if isinstance(raw_line, bytes):
+            line = raw_line.decode("utf-8", errors="replace").strip()
+        else:
+            line = str(raw_line).strip()
         if not line or line.startswith(":"):
             continue
         if not line.startswith("data:"):
@@ -107,6 +110,31 @@ def collect_openai_sse_response(response: Any, started: float) -> dict[str, Any]
     }
 
 
+def collect_openai_sse_response(response: Any, started: float) -> dict[str, Any]:
+    return collect_openai_sse_lines(response, started)
+
+
+def looks_like_openai_sse(text: str) -> bool:
+    return any(line.lstrip().startswith("data:") for line in text.splitlines())
+
+
+def json_decode_error_with_preview(exc: json.JSONDecodeError, text: str) -> json.JSONDecodeError:
+    preview = text[:500].replace("\r", "\\r").replace("\n", "\\n")
+    return json.JSONDecodeError(f"{exc.msg}; response_preview={preview}", exc.doc, exc.pos)
+
+
+def parse_openai_response_text(text: str, started: float) -> dict[str, Any]:
+    if looks_like_openai_sse(text):
+        return collect_openai_sse_lines(text.splitlines(), started)
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise json_decode_error_with_preview(exc, text) from exc
+    if not isinstance(parsed, dict):
+        raise json.JSONDecodeError(f"OpenAI response must be a JSON object; response_preview={text[:500]}", text, 0)
+    return parsed
+
+
 def http_json(
     url: str,
     headers: dict[str, str],
@@ -132,7 +160,7 @@ def http_json(
         content_type = str(response.headers.get("Content-Type") or "").lower()
         if stream and "text/event-stream" in content_type:
             return collect_openai_sse_response(response, started)
-        return json.loads(response.read().decode("utf-8"))
+        return parse_openai_response_text(response.read().decode("utf-8", errors="replace"), started)
 
 
 def normalize_line_number(value: Any) -> int | None:

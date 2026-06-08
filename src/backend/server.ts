@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { openDatabase } from "./db.js";
-import { FileLogger } from "./logger.js";
+import { clearLogFiles, FileLogger } from "./logger.js";
 import { MergeRequestRepository } from "./repositories/MergeRequestRepository.js";
 import { ProjectRepository } from "./repositories/ProjectRepository.js";
 import { RepositoryRepository } from "./repositories/RepositoryRepository.js";
@@ -14,6 +14,7 @@ import { ProjectConfigService } from "./services/ProjectConfigService.js";
 import { ReviewQueueService } from "./services/ReviewQueueService.js";
 
 const config = loadConfig();
+clearLogFiles(config);
 const logger = new FileLogger(config);
 const db = openDatabase(config);
 const server = createApp(createRoutes(config, db), logger);
@@ -22,7 +23,7 @@ function runWorkerOnce() {
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
   const child = spawn(npmCommand, ["run", "worker:once"], {
     cwd: process.cwd(),
-    env: { ...process.env },
+    env: { ...process.env, JOLT_SKIP_LOG_CLEANUP: "1" },
     stdio: "ignore",
     detached: true
   });

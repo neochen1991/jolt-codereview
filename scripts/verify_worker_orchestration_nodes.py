@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "worker"))
 
 from budget import BudgetTracker
-from llm.client import collect_openai_sse_response, parse_llm_findings
+from llm.client import collect_openai_sse_response, parse_llm_findings, parse_openai_response_text
 from llm_router import candidate_providers
 from review_runtime import (
     ChangedFile,
@@ -128,6 +128,14 @@ sse_response = collect_openai_sse_response(
 assert sse_response["choices"][0]["message"]["content"] == "中文回答"
 assert sse_response["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "inspect_agent_rules"
 assert sse_response["_jolt_stream"]["chunk_count"] == 2
+mislabeled_sse_response = parse_openai_response_text(
+    'data: {"id":"chatcmpl-mislabel","choices":[{"delta":{"content":"仍然"},"finish_reason":null}]}\n'
+    'data: {"choices":[{"delta":{"content":"解析"},"finish_reason":"stop"}]}\n'
+    "data: [DONE]\n",
+    time.time(),
+)
+assert mislabeled_sse_response["choices"][0]["message"]["content"] == "仍然解析"
+assert mislabeled_sse_response["_jolt_stream"]["chunk_count"] == 2
 
 deepagent_llm_traces = []
 

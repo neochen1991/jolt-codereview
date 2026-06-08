@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
-from llm.client import collect_openai_sse_response, llm_stream_enabled
+from llm.client import collect_openai_sse_response, llm_stream_enabled, parse_openai_response_text
 
 
 class OpenAICompatibleToolChatModel(BaseChatModel):
@@ -70,7 +70,7 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
                 if self.enable_stream and "text/event-stream" in content_type:
                     data = collect_openai_sse_response(response, started)
                 else:
-                    data = json.loads(response.read().decode("utf-8"))
+                    data = parse_openai_response_text(response.read().decode("utf-8", errors="replace"), started)
         except Exception as exc:
             self._trace_llm_call(
                 {

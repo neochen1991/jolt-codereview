@@ -20,7 +20,7 @@ from typing import Any
 from uuid import uuid4
 
 from config import db_path, effective_project_config, load_config
-from file_logger import write_review_run_log, write_worker_log
+from file_logger import clear_worker_logs, write_review_run_log, write_worker_log
 from agents.registry import load_expert_profiles
 from context.repo_index import build_repo_index
 from context.snapshot import build_code_context_snapshot
@@ -4411,6 +4411,8 @@ def main() -> None:
     parser.add_argument("--loop", action="store_true")
     args = parser.parse_args()
     config = load_config()
+    if args.loop and os.environ.get("JOLT_SKIP_LOG_CLEANUP") != "1":
+        clear_worker_logs(config)
     conn = connect(config)
     if args.once:
         process_one(conn, config)

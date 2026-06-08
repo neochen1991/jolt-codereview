@@ -17,6 +17,9 @@ const agentRoutes = read("src/backend/routes/agents.routes.ts");
 const frontend = read("src/frontend/main.tsx");
 const styles = read("src/frontend/styles.css");
 const projectRoutes = read("src/backend/routes/projects.routes.ts");
+const apiLogger = read("src/backend/logger.ts");
+const server = read("src/backend/server.ts");
+const workerLogger = read("worker/file_logger.py");
 const treeSitterTool = read("worker/tools/tree_sitter_tool.py");
 const requirements = read("requirements.txt");
 
@@ -74,6 +77,10 @@ assert(projectRoutes.includes("/api/projects/:projectId/settings/llm/test"), "Ba
 assert(projectRoutes.includes("compactLlmTestInput"), "LLM test endpoint must ignore blank fields instead of overriding saved credentials");
 assert(projectRoutes.includes("stream_options") && projectRoutes.includes("parseOpenAiLikeResponse"), "LLM test endpoint must support SSE connectivity tests");
 assert(projectRoutes.includes("Math.min(600"), "Backend LLM test must allow long LLM timeouts");
+assert(apiLogger.includes("beijingIsoString") && apiLogger.includes("+08:00"), "API file logs must use Beijing time");
+assert(apiLogger.includes("clearLogFiles") && server.includes("clearLogFiles(config)"), "API startup must clear previous file logs");
+assert(server.includes('JOLT_SKIP_LOG_CLEANUP: "1"'), "API-spawned one-shot workers must not clear logs mid-review");
+assert(workerLogger.includes("BEIJING_TZ") && workerLogger.includes("clear_worker_logs"), "Worker file logs must use Beijing time and support startup cleanup");
 
 console.log(JSON.stringify({
   ok: true,
@@ -94,6 +101,8 @@ console.log(JSON.stringify({
     "settings_real_config_loading_gate",
     "settings_static_tool_status_async",
     "settings_failure_message_wraps",
-    "llm_sse_connectivity_test"
+    "llm_sse_connectivity_test",
+    "beijing_file_log_timestamps",
+    "startup_log_cleanup"
   ]
 }, null, 2));

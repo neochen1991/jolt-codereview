@@ -12,36 +12,70 @@ Jolt CodeReview 是一个项目级 AI 代码检视平台，面向生产环境的
 - Agent trace、LLM 调用记录、finding 确认、dry-run/真实发布到 GitHub comment。
 - macOS / Windows 跨平台启动脚本。
 
+## Windows 快速运行
+
+建议使用 Windows 10/11 + PowerShell。首次运行分为“安装依赖”和“启动服务”两步：
+
+```powershell
+git clone https://github.com/neochen1991/jolt-codereview.git
+cd jolt-codereview
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\scripts\install-windows.ps1
+.\scripts\start-windows.ps1
+```
+
+启动后访问：
+
+- API: `http://127.0.0.1:8011`
+- Frontend: `http://127.0.0.1:5173`
+
+如果机器不能访问 GitHub release、npm registry 或 PyPI，可以先跳过静态工具和规则下载：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\scripts\install-windows.ps1 -SkipStaticTools -SkipStaticRules
+.\scripts\start-windows.ps1
+```
+
+如果已经安装过依赖，只想启动：
+
+```powershell
+npm run start:windows
+```
+
+如果缺少 `node_modules` 或 `.venv`，并希望启动脚本自动补齐基础依赖：
+
+```powershell
+.\scripts\start-windows.ps1 -InstallIfMissing
+```
+
 ## 环境要求
 
+- Windows 10/11、macOS 或 Linux。
 - Node.js 24+，用于内置 `node:sqlite`。
 - Python 3.10+。
 - npm。
+- Java 17+ 或 21+，用于 Checkstyle、PMD、SpotBugs、Dependency-Check 等 Java 工具。
 - 可选：`GITHUB_TOKEN`。不配置 token 时可以同步公开仓库 PR，但 GitHub API 可能很快触发 rate limit；配置 token 后可完整拉取 PR changed files。
 - 可选：`CODEHUB_TOKEN`。接入公司内网 CodeHub 时使用。
 
-Windows PowerShell 示例：
+Windows PowerShell 环境变量示例：
 
 ```powershell
 $env:GITHUB_TOKEN="ghp_xxx"
 $env:CODEHUB_TOKEN="codehub_xxx"
 $env:PYTHON_BIN="C:\Path\To\python.exe"
-npm install
-py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-npm run dev
 ```
 
-macOS / Linux 示例：
+macOS / Linux 环境变量示例：
 
 ```bash
 export GITHUB_TOKEN="ghp_xxx"
 export CODEHUB_TOKEN="codehub_xxx"
-npm install
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-npm run dev
+export PYTHON_BIN="/path/to/python3"
 ```
+
+`PYTHON_BIN` 可选。未配置时，启动脚本会优先使用项目内 `.venv`，然后再查找系统 Python。
 
 ## 静态工具安装与验证
 
@@ -60,7 +94,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 .\scripts\install-windows.ps1
 ```
 
-两个脚本会安装项目 npm/Python 依赖、创建 `.venv`、复制 `config.example.json` 到 `config.json`，并安装/验证静态工具链。Linux 脚本默认使用用户目录 `$HOME/.jolt-tools`、`$HOME/.local/bin`、`$HOME/.npm-global/bin`；Windows 脚本默认使用 `%USERPROFILE%\.jolt-tools\bin`，并写入用户级 `PATH`。如果刚装完后仍提示命令不存在，请重新打开终端后再执行验证。
+两个脚本会安装项目 npm/Python 依赖、创建 `.venv`、准备 `config.json`、安装/验证静态工具链，并同步开源静态规则集。Linux 脚本默认使用用户目录 `$HOME/.jolt-tools`、`$HOME/.local/bin`、`$HOME/.npm-global/bin`；Windows 脚本默认使用 `%USERPROFILE%\.jolt-tools\bin`，并写入用户级 `PATH`。如果刚装完后仍提示命令不存在，请重新打开终端后再执行验证。
 
 只验证当前机器工具状态，不执行安装：
 
@@ -79,13 +113,14 @@ bash scripts/install-linux.sh --skip-system-packages --skip-project-deps
 ```
 
 ```powershell
-.\scripts\install-windows.ps1 -SkipWinget -SkipProjectDeps
+.\scripts\install-windows.ps1 -SkipWinget -SkipProjectDeps -SkipStaticRules
 ```
 
 常用参数：
 
 - Linux: `--tool-home DIR`、`--skip-system-packages`、`--skip-project-deps`、`--skip-static-tools`、`--verify-only`。
-- Windows: `-ToolHome DIR`、`-SkipWinget`、`-SkipProjectDeps`、`-SkipStaticTools`、`-VerifyOnly`。
+- Windows: `-ToolHome DIR`、`-SkipWinget`、`-SkipProjectDeps`、`-SkipStaticTools`、`-SkipStaticRules`、`-VerifyOnly`。
+- Windows 离线/内网常用：`-SkipStaticTools -SkipStaticRules`。跳过后仍可启动平台，但对应静态工具会在设置页显示为 missing。
 - 版本覆盖：`GITLEAKS_VERSION`、`PMD_VERSION`、`CHECKSTYLE_VERSION`、`SPOTBUGS_VERSION`、`DEPENDENCY_CHECK_VERSION`、`OSV_SCANNER_VERSION`、`TRIVY_VERSION`、`KICS_VERSION`。
 
 | 工具 | 用途 | macOS / Linux 安装 | Windows 安装 |
@@ -253,19 +288,26 @@ npm run verify:static-rules
 
 ## 本机配置
 
-复制示例配置：
+仓库包含一个可直接本机调试的 `config.json`。Windows 启动脚本会自动设置：
+
+```powershell
+$env:CONFIG_PATH="<repo>\config.json"
+$env:PYTHON_BIN="<repo>\.venv\Scripts\python.exe"
+```
+
+如果你需要重置配置，可以从示例文件恢复：
+
+```powershell
+Copy-Item config.example.json config.json -Force
+```
+
+macOS / Linux：
 
 ```bash
 cp config.example.json config.json
 ```
 
-Windows PowerShell：
-
-```powershell
-Copy-Item config.example.json config.json
-```
-
-`config.json` 已被 `.gitignore` 忽略。可以在本机填入 MiniMax-M2.7 调试 key：
+`config.json` 里的 LLM 配置示例：
 
 ```json
 {
@@ -279,9 +321,23 @@ Copy-Item config.example.json config.json
 }
 ```
 
-生产或团队共享环境应使用环境变量或 secret store，不提交真实 key。
+生产或团队共享环境建议改用 `default_api_key_env` 或 secret store，避免在团队仓库中长期保存明文 key。
 
 ## 启动
+
+Windows 推荐：
+
+```powershell
+.\scripts\start-windows.ps1
+```
+
+或：
+
+```powershell
+npm run start:windows
+```
+
+跨平台通用：
 
 ```bash
 npm run dev
@@ -292,7 +348,7 @@ npm run dev
 - API: `http://127.0.0.1:8011`
 - Frontend: `http://127.0.0.1:5173`
 
-`npm run dev` 由 Node 脚本启动，不依赖 bash，可在 Windows 下运行。
+`npm run dev` 由 Node 脚本启动，不依赖 bash，可在 Windows 下运行。Windows 专用脚本会在启动前补齐 `CONFIG_PATH` 和 `PYTHON_BIN`。
 Python Worker 会优先使用 `PYTHON_BIN`、`config.json` 中的 `runtime.python_bin`，其次自动使用项目内 `.venv`。
 
 启动后会同时拉起：
@@ -348,6 +404,19 @@ CodeHub 仓库可以通过 API 或前端绑定，核心是提供 `provider_confi
 
 ## 验证
 
+Windows PowerShell：
+
+```powershell
+npm run build
+npm run verify:windows
+npm run smoke
+npm run worker:once
+npm run verify:local
+npm run verify:llm
+```
+
+跨平台通用：
+
 ```bash
 npm run build
 npm run smoke
@@ -360,6 +429,17 @@ npm run verify:codehub
 
 `smoke` 会检查 API health、用户、项目和 MR 列表。`worker:once` 会消费一个 queued review job。`verify:local` 会检查项目成员、规则库、Agent 配置、review policy、MR 队列、session logs、agent messages、tool calls、LLM calls 和 artifacts。`verify:llm` 会真实调用 MiniMax-M2.7，并只打印脱敏 key。`verify:e2e` 会创建一个 GitHub provider 的本机 fixture MR，跑完整 review job，验证 finding、dry-run 发布记录和误报反馈闭环。
 `verify:e2e`、`verify:codehub` 和 `verify:local` 还会校验 LangGraph 编排、DeepAgents 受控专家节点、静态工具 manifest 与过程记录。`verify:codehub` 会发送一个 CodeHub webhook fixture，验证 CodeHub MR 入队、worker 检视和静态工具记录。
+
+## Windows 常见问题
+
+- PowerShell 提示脚本不可执行：先执行 `Set-ExecutionPolicy -Scope Process Bypass -Force`，只影响当前终端窗口。
+- `node:sqlite` 或 `Cannot find module node:sqlite`：Node.js 版本过低，升级到 Node.js 24+ 后重新执行 `npm install`。
+- `Python 3 was not found`：安装 Python 3.10+，或设置 `$env:PYTHON_BIN="C:\Path\To\python.exe"`。
+- 安装后 `pmd`、`checkstyle`、`spotbugs`、`dependency-check` 等命令仍不可用：重新打开 PowerShell，让用户级 `PATH` 生效，然后执行 `npm run verify:windows`。
+- `npm run dev` 能启动但 Worker 不运行：优先使用 `.\scripts\start-windows.ps1`，它会设置 `CONFIG_PATH` 和 `PYTHON_BIN`。
+- 端口被占用：关闭占用 `8011` 或 `5173` 的进程，或修改 `config.json` 中的 `server.port` 后重启。
+- Dependency-Check 首次运行很慢：它会初始化漏洞库。生产环境建议预热缓存，并配置 `NVD_API_KEY`。
+- 内网不能下载 GitHub release：执行 `.\scripts\install-windows.ps1 -SkipStaticTools -SkipStaticRules` 先启动平台，再由管理员离线安装工具到 `%USERPROFILE%\.jolt-tools\bin` 或系统 `PATH`。
 
 ## 发布评论
 

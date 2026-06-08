@@ -3,6 +3,7 @@ param(
   [switch]$SkipWinget,
   [switch]$SkipProjectDeps,
   [switch]$SkipStaticTools,
+  [switch]$SkipStaticRules,
   [switch]$VerifyOnly
 )
 
@@ -284,14 +285,30 @@ function Install-StaticTools {
   Install-DependencyCheck
 }
 
+function Install-StaticRules {
+  if ($SkipStaticRules) { return }
+  if ($SkipProjectDeps) {
+    Write-Warn "Skipping static rule sync because project dependencies were skipped."
+    return
+  }
+  Write-Step "Syncing open-source static rules"
+  Push-Location $RootDir
+  try {
+    npm run sync:static-rules
+    npm run verify:static-rules
+  } finally {
+    Pop-Location
+  }
+}
+
 function Test-Version {
-  param([string]$Name, [string[]]$Args)
+  param([string]$Name, [string[]]$Args, [bool]$Required = $true)
   if (Test-Command $Name) {
     Write-Host ("[OK]   {0}" -f $Name)
     try { & $Name @Args | Select-Object -First 1 | ForEach-Object { Write-Host "       $_" } } catch {}
   } else {
     Write-Host ("[MISS] {0}" -f $Name) -ForegroundColor Yellow
-    return $false
+    if ($Required) { return $false }
   }
   return $true
 }
@@ -299,24 +316,28 @@ function Test-Version {
 function Test-All {
   Write-Step "Verifying tool availability"
   $ok = $true
-  $ok = (Test-Version "node" @("--version")) -and $ok
-  $ok = (Test-Version "npm" @("--version")) -and $ok
-  $ok = (Test-Version "java" @("-version")) -and $ok
-  $ok = (Test-Version "semgrep" @("--version")) -and $ok
-  $ok = (Test-Version "gitleaks" @("version")) -and $ok
-  $ok = (Test-Version "ruff" @("--version")) -and $ok
-  $ok = (Test-Version "bandit" @("--version")) -and $ok
-  $ok = (Test-Version "eslint" @("--version")) -and $ok
-  $ok = (Test-Version "pmd" @("--version")) -and $ok
-  $ok = (Test-Version "checkstyle" @("--version")) -and $ok
-  $ok = (Test-Version "spotbugs" @("-version")) -and $ok
-  $ok = (Test-Version "dependency-check" @("--version")) -and $ok
-  $ok = (Test-Version "osv-scanner" @("--version")) -and $ok
-  $ok = (Test-Version "trivy" @("--version")) -and $ok
-  $ok = (Test-Version "kics" @("version")) -and $ok
-  $ok = (Test-Version "openapi-diff" @("--version")) -and $ok
+  $requireStaticTools = -not $SkipStaticTools
+  $ok = (Test-Version -Name "node" -Args @("--version") -Required $true) -and $ok
+  $ok = (Test-Version -Name "npm" -Args @("--version") -Required $true) -and $ok
+  $ok = (Test-Version -Name "java" -Args @("-version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "semgrep" -Args @("--version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "gitleaks" -Args @("version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "ruff" -Args @("--version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "bandit" -Args @("--version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "eslint" -Args @("--version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "pmd" -Args @("--version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "checkstyle" -Args @("--version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "spotbugs" -Args @("-version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "dependency-check" -Args @("--version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "osv-scanner" -Args @("--version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "trivy" -Args @("--version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "kics" -Args @("version") -Required $requireStaticTools) -and $ok
+  $ok = (Test-Version -Name "openapi-diff" -Args @("--version") -Required $requireStaticTools) -and $ok
   if (-not $ok) {
     throw "Some tools are missing. Reopen PowerShell so the user PATH takes effect, then rerun this script."
+  }
+  if (-not $requireStaticTools) {
+    Write-Warn "Static tool verification was non-blocking because -SkipStaticTools was set."
   }
 }
 
@@ -328,12 +349,13 @@ try {
     Refresh-Path
     Install-ProjectDependencies
     Install-StaticTools
+    Install-StaticRules
   }
   Test-All
   if ($VerifyOnly) {
     Write-Step "Verification complete."
   } else {
-    Write-Step "Install complete. Run: npm run build"
+    Write-Step "Install complete. Run: .\scripts\start-windows.ps1"
   }
 } finally {
   if (Test-Path $TempDir) {

@@ -53,10 +53,12 @@
     "verify:custom-agents": "node scripts/run-python.mjs scripts/verify_custom_agent_config.py",
     "verify:low-level-defect-agent": "npm run build:api && node scripts/verify-low-level-defect-agent.mjs",
     "verify:md-export": "npm run build:api && node scripts/verify-mr-markdown-export.mjs",
-    "verify:gold-eval": "python3 evaluation/run_gold_eval.py --gold evaluation/gold_set.jsonl --findings evaluation/sample_findings.jsonl --out evaluation/report.json && python3 evaluation/check_thresholds.py evaluation/report.json --min-precision 0.80 --min-recall 0.75 --min-high-recall 0.85",
+    "verify:gold-eval": "node scripts/run-python.mjs evaluation/run_gold_eval.py --gold evaluation/gold_set.jsonl --findings evaluation/sample_findings.jsonl --out evaluation/report.json && node scripts/run-python.mjs evaluation/check_thresholds.py evaluation/report.json --min-precision 0.80 --min-recall 0.75 --min-high-recall 0.85",
     "sync:static-rules": "node scripts/sync-open-source-static-rules.mjs",
     "install:linux": "bash scripts/install-linux.sh",
-    "install:windows": "powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1"
+    "install:windows": "powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1",
+    "start:windows": "powershell -ExecutionPolicy Bypass -File scripts/start-windows.ps1",
+    "verify:windows": "powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1 -VerifyOnly"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",

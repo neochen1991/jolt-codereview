@@ -15,6 +15,7 @@ const runExperts = read("worker/orchestration/nodes/run_experts.py");
 const seed = read("src/backend/db/seed.ts");
 const agentRoutes = read("src/backend/routes/agents.routes.ts");
 const frontend = read("src/frontend/main.tsx");
+const styles = read("src/frontend/styles.css");
 const projectRoutes = read("src/backend/routes/projects.routes.ts");
 const treeSitterTool = read("worker/tools/tree_sitter_tool.py");
 const requirements = read("requirements.txt");
@@ -59,6 +60,8 @@ assert(frontend.includes("模型服务配置"), "Settings page must expose model
 assert(frontend.includes("测试连接"), "Settings page must expose LLM connectivity test button");
 assert(frontend.includes("toolSave"), "Settings page must show static tool policy save feedback");
 assert(frontend.includes("settings-success-modal"), "Settings page must show successful actions in a modal prompt");
+assert(styles.includes(".llm-test-result") && styles.includes("overflow-wrap: anywhere"), "Settings failure messages must wrap long LLM test errors");
+assert(styles.includes(".setting-form-card") && styles.includes("min-width: 0"), "Settings cards must be allowed to shrink inside CSS grid");
 assert(!frontend.includes("JSON.stringify(item.value"), "Settings page must not expose raw JSON setting editor");
 assert(projectRoutes.includes("/api/projects/:projectId/settings/llm/test"), "Backend must expose LLM test endpoint");
 assert(projectRoutes.includes("compactLlmTestInput"), "LLM test endpoint must ignore blank fields instead of overriding saved credentials");
@@ -76,6 +79,7 @@ console.log(JSON.stringify({
     "tree_sitter_code_graph_recorded_as_static_tool",
     "settings_form_without_json_editor",
     "llm_connectivity_test_endpoint",
-    "settings_success_modal_prompt"
+    "settings_success_modal_prompt",
+    "settings_failure_message_wraps"
   ]
 }, null, 2));

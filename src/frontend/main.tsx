@@ -260,6 +260,17 @@ type LlmTestState = {
   message: string;
 };
 
+type FormActionState = {
+  status: "idle" | "saving" | "ok" | "failed";
+  message: string;
+};
+
+type SuccessNotice = {
+  title: string;
+  message: string;
+  detail?: string;
+};
+
 type MarkdownExportResponse = {
   filename: string;
   content_type: string;
@@ -1405,6 +1416,8 @@ function ConfigWorkspace({
   const [publishForm, setPublishForm] = useState<PublishSettingsForm>({ require_manual_confirmation: true, dry_run: false, allowed_severities: "critical, high, medium, low" });
   const [dataForm, setDataForm] = useState<DataSettingsForm>({ prompt_retention: "hash_only", diff_max_lines_to_llm: "4000", sensitive_paths: "infra/secrets/**, config/prod/**, **/*.pem, **/*.p12", fallback_on_violation: "skip_file" });
   const [llmTest, setLlmTest] = useState<LlmTestState>({ status: "idle", message: "" });
+  const [toolSave, setToolSave] = useState<FormActionState>({ status: "idle", message: "" });
+  const [successNotice, setSuccessNotice] = useState<SuccessNotice | null>(null);
   const [agentQuality, setAgentQuality] = useState<Record<string, unknown>[]>([]);
   const [ruleDocs, setRuleDocs] = useState<Record<string, unknown>[]>([]);
   const [ruleBindings, setRuleBindings] = useState<Record<string, unknown>[]>([]);
@@ -1568,6 +1581,7 @@ function ConfigWorkspace({
         fallback_on_violation: String(dataPolicy.fallback_on_violation ?? "skip_file")
       });
       setLlmTest({ status: "idle", message: "" });
+      setToolSave({ status: "idle", message: "" });
       setEffectiveConfig(effective);
       setToolchain(toolStatus);
       setStaticToolAvailability(availability);
@@ -1704,6 +1718,10 @@ function ConfigWorkspace({
       body: JSON.stringify({ value })
     });
     setMessage(`${label}已保存`);
+    setSuccessNotice({
+      title: `${label}已保存`,
+      message: "项目级配置已更新，后续该项目下的 MR 检视会使用最新配置。"
+    });
     await loadConfigView();
   }
 
@@ -1735,14 +1753,27 @@ function ConfigWorkspace({
         })
       });
       const ok = Boolean(result.ok);
+      const statusText = result.status ? `HTTP ${String(result.status)}` : "无 HTTP 状态";
+      const sampleText = String(result.sample ?? "").trim();
+      const nextMessage = ok
+        ? `连接成功，${statusText}，耗时 ${String(result.latency_ms ?? "--")}ms，模型 ${String(result.model ?? llmForm.default_model)}${sampleText ? `，返回：${sampleText}` : ""}`
+        : `连接失败，${statusText}：${String(result.error_preview ?? "未知错误")}`;
       setLlmTest({
         status: ok ? "ok" : "failed",
-        message: ok
-          ? `连接成功，耗时 ${String(result.latency_ms ?? "--")}ms，模型 ${String(result.model ?? llmForm.default_model)}`
-          : `连接失败：${String(result.error_preview ?? result.status ?? "未知错误")}`
+        message: nextMessage
       });
+      setMessage(nextMessage);
+      if (ok) {
+        setSuccessNotice({
+          title: "模型连接测试成功",
+          message: nextMessage,
+          detail: "当前项目后续 AI 检视会使用该模型配置。"
+        });
+      }
     } catch (error) {
-      setLlmTest({ status: "failed", message: error instanceof Error ? error.message : String(error) });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setLlmTest({ status: "failed", message: errorMessage });
+      setMessage(errorMessage);
     }
   }
 
@@ -1765,12 +1796,30 @@ function ConfigWorkspace({
   }
 
   async function saveToolSettings() {
-    await saveStructuredSetting("tool_policy", "静态工具策略", {
+    setToolSave({ status: "saving", message: "正在保存静态工具策略..." });
+    const payload = {
       analysis_worktree_path: toolForm.analysis_worktree_path.trim(),
       enable_mcp: toolForm.enable_mcp,
       enable_builtin_java_heuristics: toolForm.enable_builtin_java_heuristics,
       static_runners: staticRunnerPayload(toolForm)
-    });
+    };
+    try {
+      await api(`/api/projects/${projectId}/settings/tool_policy`, {
+        method: "PATCH",
+        body: JSON.stringify({ value: payload })
+      });
+      setMessage("静态工具策略已保存");
+      setToolSave({ status: "ok", message: "静态工具策略已保存，下一次 MR 检视会按这些开关执行。" });
+      setSuccessNotice({
+        title: "静态工具策略已保存",
+        message: "下一次 MR 检视会按这些工具开关执行。",
+        detail: `已配置 ${STATIC_TOOL_SWITCHES.length} 个静态工具开关。`
+      });
+      await loadConfigView();
+      setToolSave({ status: "ok", message: "静态工具策略已保存，下一次 MR 检视会按这些开关执行。" });
+    } catch (error) {
+      setToolSave({ status: "failed", message: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   async function saveQueueSettings() {
@@ -2137,8 +2186,9 @@ function ConfigWorkspace({
                 </label>
               </div>
               <div className="setting-actions">
-                <button type="button" onClick={saveToolSettings} disabled={!canEdit}>保存工具策略</button>
+                <button type="button" onClick={saveToolSettings} disabled={!canEdit || toolSave.status === "saving"}>{toolSave.status === "saving" ? "保存中..." : "保存工具策略"}</button>
               </div>
+              {toolSave.message && <p className={`llm-test-result ${toolSave.status === "saving" ? "testing" : toolSave.status}`}>{toolSave.message}</p>}
             </article>
 
             <article className="setting-form-card">
@@ -2291,6 +2341,7 @@ function ConfigWorkspace({
           <ConfigTable rows={(toolchain?.tool_calls as Record<string, unknown>[] | undefined) ?? []} columns={["tool_name", "status", "count", "last_seen_at"]} />
         </>
       )}
+      {successNotice && <SuccessNoticeModal notice={successNotice} onClose={() => setSuccessNotice(null)} />}
     </section>
   );
 }
@@ -2310,6 +2361,21 @@ function SettingField({ label, children }: { label: string; children: React.Reac
       <span>{label}</span>
       {children}
     </label>
+  );
+}
+
+function SuccessNoticeModal({ notice, onClose }: { notice: SuccessNotice; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <section className="settings-success-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="settings-success-icon"><Check /></div>
+        <div className="settings-success-content">
+          <strong>{notice.title}</strong>
+          <p>{notice.message}</p>
+          {notice.detail && <span>{notice.detail}</span>}
+        </div>
+      </section>
+    </div>
   );
 }
 

@@ -22,6 +22,16 @@ function resolveLlmApiKey(input: LlmTestInput) {
   return typeof input.default_api_key === "string" ? input.default_api_key.trim() : "";
 }
 
+function compactLlmTestInput(input: LlmTestInput) {
+  const compacted: LlmTestInput = {};
+  for (const [key, rawValue] of Object.entries(input) as Array<[keyof LlmTestInput, unknown]>) {
+    if (rawValue === null || rawValue === undefined) continue;
+    if (typeof rawValue === "string" && rawValue.trim() === "") continue;
+    (compacted as Record<string, unknown>)[key] = rawValue;
+  }
+  return compacted;
+}
+
 async function testOpenAiCompatibleLlm(input: LlmTestInput) {
   const baseUrl = String(input.default_base_url ?? "").trim();
   const model = String(input.default_model ?? "").trim();
@@ -191,7 +201,7 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       const input = (typeof body === "object" && body ? body : {}) as LlmTestInput;
       const llm = {
         ...(effective.llm ?? {}),
-        ...input
+        ...compactLlmTestInput(input)
       };
       const result = await testOpenAiCompatibleLlm(llm);
       auditLog({

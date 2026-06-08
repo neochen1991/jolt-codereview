@@ -57,8 +57,11 @@ assert(!prescan.includes("mvp-heuristic-v1"), "Prescan must not use MVP heuristi
 assert(!runExperts.includes("mvp-heuristic-v1"), "Expert node must not use MVP heuristic version marker");
 assert(frontend.includes("模型服务配置"), "Settings page must expose model service form");
 assert(frontend.includes("测试连接"), "Settings page must expose LLM connectivity test button");
+assert(frontend.includes("toolSave"), "Settings page must show static tool policy save feedback");
+assert(frontend.includes("settings-success-modal"), "Settings page must show successful actions in a modal prompt");
 assert(!frontend.includes("JSON.stringify(item.value"), "Settings page must not expose raw JSON setting editor");
 assert(projectRoutes.includes("/api/projects/:projectId/settings/llm/test"), "Backend must expose LLM test endpoint");
+assert(projectRoutes.includes("compactLlmTestInput"), "LLM test endpoint must ignore blank fields instead of overriding saved credentials");
 
 console.log(JSON.stringify({
   ok: true,
@@ -72,6 +75,7 @@ console.log(JSON.stringify({
     "real_tree_sitter_parser_and_grammar_installed",
     "tree_sitter_code_graph_recorded_as_static_tool",
     "settings_form_without_json_editor",
-    "llm_connectivity_test_endpoint"
+    "llm_connectivity_test_endpoint",
+    "settings_success_modal_prompt"
   ]
 }, null, 2));

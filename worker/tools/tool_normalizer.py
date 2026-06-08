@@ -43,11 +43,12 @@ RULE_CATEGORY_MAP = {
     "jolt.java.signature-string-equals": "WEAK_SIGNATURE_COMPARE",
     "jolt.java.spring-debug-endpoint-method": "DEBUG_ENDPOINT_EXPOSURE",
     "jolt.java.trust-x-forwarded-for": "UNTRUSTED_FORWARDED_HEADER",
-    "config.static-rules.semgrep.java.lang.security.audit.crypto.use-of-sha1": "WEAK_SIGNATURE_COMPARE",
-    "java.lang.security.audit.crypto.use-of-sha1": "WEAK_SIGNATURE_COMPARE",
+    "config.static-rules.semgrep.java.lang.security.audit.crypto.use-of-sha1": "WEAK_SIGNATURE_ALGORITHM",
+    "java.lang.security.audit.crypto.use-of-sha1": "WEAK_SIGNATURE_ALGORITHM",
     "SEC-AUTHN-001": "AUTHORIZATION_BYPASS",
     "SEC-AUTHZ-002": "AUTHORIZATION_BYPASS",
     "SEC-CRYPTO-010": "WEAK_SIGNATURE_COMPARE",
+    "SEC-CRYPTO-011": "WEAK_SIGNATURE_ALGORITHM",
     "SEC-DEBUG-011": "DEBUG_ENDPOINT_EXPOSURE",
     "JOLT_JAVA_CATCH_EXCEPTION": "BROAD_EXCEPTION",
     "CODE-EXC-003": "BROAD_EXCEPTION",
@@ -129,6 +130,7 @@ CATEGORY_PRIMARY_RULE = {
     "SPRING_ACTUATOR_EXPOSED": "SEC-CONFIG-007",
     "DEBUG_ENDPOINT_EXPOSURE": "SEC-DEBUG-011",
     "WEAK_SIGNATURE_COMPARE": "SEC-CRYPTO-010",
+    "WEAK_SIGNATURE_ALGORITHM": "SEC-CRYPTO-011",
     "UNTRUSTED_FORWARDED_HEADER": "SEC-RISK-006",
     "UNBOUNDED_QUERY": "PERF-QUERY-001",
     "UNBOUNDED_RESULT_MEMORY": "PERF-MEM-004",
@@ -216,7 +218,7 @@ def normalized_rule_category(rule_id: str | None, title: str | None = None) -> s
         return "UNTRUSTED_FORWARDED_HEADER"
     if "use-of-sha1" in combined or "sha-1" in combined or "sha1" in combined:
         if any(marker in combined for marker in ["signature", "digest", "crypto", "message-digest", "签名", "摘要"]):
-            return "WEAK_SIGNATURE_COMPARE"
+            return "WEAK_SIGNATURE_ALGORITHM"
     if "jolt.java.threadlocal-set-without-remove" in combined or "jolt.java.threadlocal-read-in-new-thread" in combined:
         return "THREADLOCAL_LEAK"
     if "jolt.java.static-mutable-collection" in combined:
@@ -253,6 +255,8 @@ def normalized_rule_category(rule_id: str | None, title: str | None = None) -> s
     if any(marker in combined for marker in ["sha-1", "sha1", "signature", "签名"]) and any(
         marker in combined for marker in ["equals", "常量时间", "constant-time", "弱摘要", "weak", "message digest"]
     ):
+        if "sha-1" in combined or "sha1" in combined or "弱摘要" in combined:
+            return "WEAK_SIGNATURE_ALGORITHM"
         return "WEAK_SIGNATURE_COMPARE"
     if "password" in combined or "secret" in combined or "token" in combined or "敏感" in combined or "密码" in combined or "凭据" in combined or "密钥" in combined:
         return "SECRET_LEAK"

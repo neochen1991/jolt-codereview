@@ -70,25 +70,23 @@ def latest_run(conn: sqlite3.Connection, mr_id: str, run_id: str | None) -> sqli
     return row
 
 
-def finding_text(row: sqlite3.Row) -> str:
-    return "\n".join(
-        str(row[key] or "")
-        for key in [
-            "title",
-            "problem_description",
-            "recommendation",
-            "evidence",
-            "suggested_code",
-            "file_path",
-            "covered_rules_json",
-            "tool_provenance_json",
-            "source_observations_json",
-        ]
-    )
+def finding_text(row: sqlite3.Row, *, include_artifacts: bool = True) -> str:
+    keys = [
+        "title",
+        "problem_description",
+        "recommendation",
+        "evidence",
+        "suggested_code",
+        "file_path",
+        "covered_rules_json",
+    ]
+    if include_artifacts:
+        keys.extend(["tool_provenance_json", "source_observations_json"])
+    return "\n".join(str(row[key] or "") for key in keys)
 
 
-def matches_spec(row: sqlite3.Row, spec: dict[str, Any]) -> bool:
-    text = finding_text(row)
+def matches_spec(row: sqlite3.Row, spec: dict[str, Any], *, include_artifacts: bool = True) -> bool:
+    text = finding_text(row, include_artifacts=include_artifacts)
     file_path = str(row["file_path"] or "")
     if not any(file_name in file_path or file_name in text for file_name in spec["files"]):
         return False
@@ -122,9 +120,10 @@ def evaluate(conn: sqlite3.Connection, run: sqlite3.Row) -> dict[str, Any]:
     matched_finding_ids: set[str] = set()
     coverage: list[dict[str, Any]] = []
     for spec in GROUND_TRUTH:
-        matches = [row for row in findings if matches_spec(row, spec)]
+        direct_matches = [row for row in findings if matches_spec(row, spec, include_artifacts=False)]
+        matches = direct_matches or [row for row in findings if matches_spec(row, spec)]
         if matches:
-            matched_finding_ids.add(str(matches[0]["id"]))
+            matched_finding_ids.update(str(row["id"]) for row in matches)
         coverage.append(
             {
                 "id": spec["id"],

@@ -45,6 +45,7 @@ PROMOTABLE_TOOL_RULES = {
     "REDIS-TTL-002",
     "SEC-CONFIG-007",
     "SEC-CRYPTO-010",
+    "SEC-CRYPTO-011",
     "SEC-DEBUG-011",
     "SEC-AUTHN-001",
     "SEC-AUTHZ-002",
@@ -102,6 +103,7 @@ AGENT_BY_RULE = {
     "ALI-CONCURRENCY-001": "performance_agent",
     "ALI-CONCURRENCY-003": "coding_agent",
     "SEC-CRYPTO-010": "security_agent",
+    "SEC-CRYPTO-011": "security_agent",
     "SEC-DEBUG-011": "security_agent",
     "ALI-DB-001": "database_agent",
     "ALI-DB-002": "database_agent",
@@ -247,6 +249,13 @@ if (!MessageDigest.isEqual(expectedBytes, actualBytes)) {
     throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid signature");
 }''',
     },
+    "SEC-CRYPTO-011": {
+        "title": "签名摘要使用 SHA-1 弱算法",
+        "recommendation": "不要使用 SHA-1 作为签名或安全摘要算法；改用 HMAC-SHA256、SHA-256/512，并确保密钥由配置中心或 KMS 管理。",
+        "suggested_code": '''Mac mac = Mac.getInstance("HmacSHA256");
+mac.init(new SecretKeySpec(secretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+byte[] signature = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));''',
+    },
     "SEC-DEBUG-011": {
         "title": "生产接口暴露调试状态",
         "recommendation": "删除生产调试接口，或至少增加强认证授权、环境开关和敏感字段脱敏。",
@@ -388,6 +397,16 @@ def _text_blob(finding: dict[str, Any]) -> str:
 def _root_cause_signature(finding: dict[str, Any]) -> str | None:
     text = _text_blob(finding)
     path = str(finding.get("file_path") or "").replace("\\", "/").lower()
+    if any(marker in text for marker in ["bulk-adjust", "bulkadjust", "批量", "list<", "数组", "requestbody", "@requestbody"]):
+        if any(marker in text for marker in ["无上限", "规模", "数量", "超大", "长事务", "内存", "数据库压力", "size limit", "bounded"]):
+            return "UNBOUNDED_REQUEST_BODY"
+    if any(marker in text for marker in ["吞", "ignored", "静默", "伪造成功", "误以为成功", "swallow", "fallback", "兜底"]):
+        if any(marker in text for marker in ["exception", "异常", "catch"]):
+            if "writebalanceadjustment" in text or "写入" in text or "余额调整" in text:
+                return "SWALLOWED_EXCEPTION_WRITE"
+            if "loadrecentauditpaymentids" in text or "loadrecent" in text or "读取" in text:
+                return "SWALLOWED_EXCEPTION_READ"
+            return "SWALLOWED_EXCEPTION"
     if any(marker in text for marker in ["connection", "statement", "resultset", "autocommit", "jdbc", "连接", "连接池", "资源"]):
         if any(marker in text for marker in ["未关闭", "close", "泄漏", "释放", "autocommit", "commit", "rollback"]):
             if "loadrecentauditpaymentids" in text or "loadrecent" in text or "读取" in text:
@@ -409,8 +428,11 @@ def _root_cause_signature(finding: dict[str, Any]) -> str | None:
     if any(marker in text for marker in ["mutabletenantkey", "hashmap key", "map key", "hashcode", "equals", "可变对象", "参与 hash"]):
         if "key" in text or "键" in text or path.endswith("mutabletenantkey.java"):
             return "MUTABLE_HASH_KEY"
-    if any(marker in text for marker in ["sha-1", "sha1", "use-of-sha1", "message-digest", "弱摘要"]):
-        if any(marker in text for marker in ["signature", "digest", "签名", "摘要", "crypto"]):
+    if any(marker in text for marker in ["string.equals", "signature.equals", "常量时间", "constant-time", "timing", "时序"]):
+        if any(marker in text for marker in ["signature", "签名", "token", "摘要"]):
+            return "WEAK_SIGNATURE_COMPARE"
+    if any(marker in text for marker in ["sha-1", "sha1", "use-of-sha1", 'getinstance("sha-1"', "弱摘要算法"]):
+        if any(marker in text for marker in ["signature", "digest", "签名", "摘要", "crypto", "message-digest", "algorithm"]):
             return "WEAK_SIGNATURE_ALGORITHM"
     if path.endswith("refundservice.java") and ("manual_override" in text or ("reason" in text and "绕过" in text)):
         if any(marker in text for marker in ["null", "npe", "空指针", "空值"]) and not any(marker in text for marker in ["绕过", "bypass", "manual_override"]):
@@ -483,6 +505,13 @@ def _business_subcategory(category: str, finding: dict[str, Any]) -> str:
             return "MISSING_APP_SERVICE_TEST_COVERAGE"
         if ".yml" in text or ".yaml" in text or "configuration" in text or "配置" in text:
             return "TEST_CONFIG_MASKING"
+    if category == "BROAD_EXCEPTION":
+        if any(marker in text for marker in ["吞", "ignored", "静默", "伪造成功", "误以为成功", "swallow", "fallback", "兜底"]):
+            if "writebalanceadjustment" in text or "写入" in text or "余额调整" in text:
+                return "SWALLOWED_EXCEPTION_WRITE"
+            if "loadrecentauditpaymentids" in text or "loadrecent" in text or "读取" in text:
+                return "SWALLOWED_EXCEPTION_READ"
+            return "SWALLOWED_EXCEPTION"
     return category
 
 
@@ -527,6 +556,7 @@ CORE_IMPACT_CATEGORIES = {
     "WEAK_WEBHOOK_TRUST",
     "SSRF_CALLBACK",
     "WEAK_SIGNATURE_COMPARE",
+    "WEAK_SIGNATURE_ALGORITHM",
     "DEBUG_ENDPOINT_EXPOSURE",
     "UNTRUSTED_FORWARDED_HEADER",
     "SQL_INJECTION",
@@ -557,6 +587,9 @@ CORE_IMPACT_CATEGORIES = {
     "UNBOUNDED_RESULT_MEMORY",
     "UNBOUNDED_REQUEST_BODY",
     "UNBOUNDED_CACHE_STATE",
+    "SWALLOWED_EXCEPTION",
+    "SWALLOWED_EXCEPTION_WRITE",
+    "SWALLOWED_EXCEPTION_READ",
     "LIKE_LEADING_WILDCARD_INDEX_RISK",
     "NULL_SAFETY",
     "BROAD_EXCEPTION",
@@ -826,9 +859,11 @@ def _path_relevance_score(finding: dict[str, Any], category: str) -> int:
             return 7
         if "/service/" in path:
             return 6
-    if category in {"BIGDECIMAL_PRECISION", "NULL_SAFETY", "BROAD_EXCEPTION", "SPRING_TRANSACTION"}:
+    if category in {"BIGDECIMAL_PRECISION", "NULL_SAFETY", "BROAD_EXCEPTION", "SPRING_TRANSACTION", "SWALLOWED_EXCEPTION", "SWALLOWED_EXCEPTION_WRITE", "SWALLOWED_EXCEPTION_READ"}:
         if "/service/" in path or "/api/" in path:
             return 6
+        if "/infrastructure/" in path or "/repository/" in path:
+            return 7
         if "/domain/" in path:
             return 4
     if path.endswith((".yml", ".yaml", ".properties")):
@@ -873,6 +908,8 @@ def _category_impact_score(finding: dict[str, Any], category: str) -> int:
     if category in {"LIKE_LEADING_WILDCARD_INDEX_RISK", "MISSING_APP_SERVICE_TEST_COVERAGE"}:
         score += 6
     if category in {"UNBOUNDED_REQUEST_BODY", "UNBOUNDED_CACHE_STATE"}:
+        score += 7
+    if category in {"SWALLOWED_EXCEPTION", "SWALLOWED_EXCEPTION_WRITE", "SWALLOWED_EXCEPTION_READ"}:
         score += 7
     if category.startswith("SENSITIVE_DATA_"):
         score += 5
@@ -923,6 +960,8 @@ def _is_auxiliary_finding(finding: dict[str, Any]) -> bool:
         return False
     if category == "MISSING_TEST_COVERAGE":
         return True
+    if category == "BROAD_EXCEPTION" and _business_subcategory(category, finding).startswith("SWALLOWED_EXCEPTION"):
+        return False
     if category in {"IDEMPOTENCY_GUARD", "BROAD_EXCEPTION"} and not _is_tool_backed_finding(finding):
         return True
     if any(rule.startswith("TEST-") for rule in covered) and not _is_tool_backed_finding(finding):
@@ -1257,6 +1296,7 @@ def _promotable_tool_observation(observation: dict[str, Any]) -> bool:
             "REDIS-TTL-002",
             "SEC-AUTHZ-002",
             "SEC-CRYPTO-010",
+            "SEC-CRYPTO-011",
             "SEC-DEBUG-011",
             "SEC-CONFIG-007",
             "SEC-INJECT-003",

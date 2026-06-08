@@ -63,10 +63,16 @@ if (!python) {
   process.exit(1);
 }
 
+const childEnv = {
+  ...process.env,
+  PYTHONUTF8: process.env.PYTHONUTF8 || "1",
+  PYTHONIOENCODING: process.env.PYTHONIOENCODING || "utf-8"
+};
+
 const child = spawn(python.command, [...python.prefixArgs, ...scriptArgs], {
   cwd: root,
   stdio: "inherit",
-  env: process.env,
+  env: childEnv,
   shell: false
 });
 

@@ -8,6 +8,15 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+try {
+  chcp 65001 | Out-Null
+  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+  [Console]::InputEncoding = [System.Text.Encoding]::UTF8
+} catch {
+  Write-Warning "Failed to switch console encoding to UTF-8. Continuing with PYTHONUTF8/PYTHONIOENCODING."
+}
 
 $GitleaksVersion = $env:GITLEAKS_VERSION
 if (-not $GitleaksVersion) { $GitleaksVersion = "8.30.1" }

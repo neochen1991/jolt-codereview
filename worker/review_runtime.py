@@ -594,6 +594,8 @@ def _run_git(args: list[str], *, cwd: Path | None = None, timeout: int = 90) -> 
         ["git", *args],
         cwd=str(cwd) if cwd else None,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=timeout,
@@ -1465,6 +1467,8 @@ def command_version(command: str, args: list[str]) -> tuple[str | None, int]:
             [executable, *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )
@@ -1525,6 +1529,8 @@ def run_static_command(
             [executable or command, *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_seconds,
             check=False,
         )

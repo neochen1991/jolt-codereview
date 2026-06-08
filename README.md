@@ -435,6 +435,7 @@ npm run verify:codehub
 - PowerShell 提示脚本不可执行：先执行 `Set-ExecutionPolicy -Scope Process Bypass -Force`，只影响当前终端窗口。
 - `node:sqlite` 或 `Cannot find module node:sqlite`：Node.js 版本过低，升级到 Node.js 24+ 后重新执行 `npm install`。
 - `Python 3 was not found`：安装 Python 3.10+，或设置 `$env:PYTHON_BIN="C:\Path\To\python.exe"`。
+- Python 报 `UnicodeEncodeError` / `UnicodeDecodeError` / `gbk codec can't encode/decode`：优先使用 `.\scripts\start-windows.ps1` 或 `npm run start:windows`。脚本会设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8` 并切换控制台到 UTF-8；如果你直接运行 Python，也先执行 `$env:PYTHONUTF8="1"; $env:PYTHONIOENCODING="utf-8"; chcp 65001`。
 - 安装后 `pmd`、`checkstyle`、`spotbugs`、`dependency-check` 等命令仍不可用：重新打开 PowerShell，让用户级 `PATH` 生效，然后执行 `npm run verify:windows`。
 - `npm run dev` 能启动但 Worker 不运行：优先使用 `.\scripts\start-windows.ps1`，它会设置 `CONFIG_PATH` 和 `PYTHON_BIN`。
 - 端口被占用：关闭占用 `8011` 或 `5173` 的进程，或修改 `config.json` 中的 `server.port` 后重启。

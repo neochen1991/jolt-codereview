@@ -70,8 +70,17 @@ function Ensure-ProjectReady {
 Ensure-ProjectReady
 
 $env:CONFIG_PATH = $ConfigPath
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
 if (-not $env:PYTHON_BIN -and (Test-Path $VenvPython)) {
   $env:PYTHON_BIN = $VenvPython
+}
+try {
+  chcp 65001 | Out-Null
+  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+  [Console]::InputEncoding = [System.Text.Encoding]::UTF8
+} catch {
+  Write-Warning "Failed to switch console encoding to UTF-8. Continuing with PYTHONUTF8/PYTHONIOENCODING."
 }
 
 Write-Step "Starting Jolt CodeReview"

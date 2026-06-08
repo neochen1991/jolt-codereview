@@ -1,0 +1,13 @@
+{
+  "id": "ca02f4e8-d3ae-4832-b7db-bb037516d9e7",
+  "queryName": "Request Body JSON Reference Does Not Exist",
+  "severity": "INFO",
+  "category": "Structure and Semantics",
+  "descriptionText": "Request Body reference should exist on components field",
+  "descriptionUrl": "https://swagger.io/specification/#components-object",
+  "platform": "OpenAPI",
+  "descriptionID": "b33e0ccc",
+  "cloudProvider": "common",
+  "cwe": "20",
+  "riskScore": "0.0"
+}

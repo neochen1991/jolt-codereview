@@ -73,6 +73,49 @@ function hasExistingBundle(name) {
   return false;
 }
 
+function walkFiles(dir, visitor) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const child = path.join(dir, entry.name);
+    if (entry.isDirectory()) walkFiles(child, visitor);
+    else visitor(child);
+  }
+}
+
+function prunePushProtectionFixtures() {
+  const removed = [];
+  const kicsRoot = path.join(rulesRoot, "kics");
+  if (fs.existsSync(kicsRoot)) {
+    const stack = [kicsRoot];
+    while (stack.length) {
+      const current = stack.pop();
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        const child = path.join(current, entry.name);
+        if (!entry.isDirectory()) continue;
+        if (entry.name === "test") {
+          fs.rmSync(child, { recursive: true, force: true });
+          removed.push(path.relative(root, child));
+        } else {
+          stack.push(child);
+        }
+      }
+    }
+  }
+  const semgrepRoot = path.join(rulesRoot, "semgrep");
+  const semgrepSecretFixtures = path.join(semgrepRoot, "generic", "secrets");
+  if (fs.existsSync(semgrepSecretFixtures)) {
+    fs.rmSync(semgrepSecretFixtures, { recursive: true, force: true });
+    removed.push(path.relative(root, semgrepSecretFixtures));
+  }
+  walkFiles(semgrepRoot, (file) => {
+    if (/\.(fixed\.)?test\./.test(path.basename(file))) {
+      fs.rmSync(file, { force: true });
+      removed.push(path.relative(root, file));
+    }
+  });
+  return removed;
+}
+
 function gitSparseCheckout(source, dest) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "jolt-static-rules-"));
   try {
@@ -116,10 +159,12 @@ async function main() {
       }
     }
   }
+  const pruned = prunePushProtectionFixtures();
   const syncedManifest = {
     ...manifest,
     updated_at: new Date().toISOString(),
     sync_results: results,
+    pruned_push_protection_fixtures: pruned.length,
   };
   fs.writeFileSync(manifestPath, JSON.stringify(syncedManifest, null, 2) + "\n");
   console.log(JSON.stringify({ ok: results.every((item) => item.status === "synced"), results }, null, 2));

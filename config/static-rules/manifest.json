@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "description": "Open-source static-analysis rule bundles used by Jolt CodeReview.",
+  "updated_at": "2026-06-07T09:52:31Z",
+  "sources": {
+    "semgrep": {
+      "kind": "git_sparse",
+      "repository": "https://github.com/semgrep/semgrep-rules.git",
+      "ref": "develop",
+      "paths": [
+        "java",
+        "generic",
+        "yaml",
+        "secrets"
+      ]
+    },
+    "pmd": {
+      "kind": "raw",
+      "repository": "https://github.com/pmd/pmd",
+      "ref": "main",
+      "paths": [
+        "pmd-java/src/main/resources/category/java/bestpractices.xml",
+        "pmd-java/src/main/resources/category/java/errorprone.xml",
+        "pmd-java/src/main/resources/category/java/security.xml",
+        "pmd-java/src/main/resources/category/java/performance.xml"
+      ]
+    },
+    "checkstyle": {
+      "kind": "raw",
+      "repository": "https://github.com/checkstyle/checkstyle",
+      "ref": "master",
+      "paths": [
+        "src/main/resources/google_checks.xml",
+        "src/main/resources/sun_checks.xml"
+      ]
+    },
+    "gitleaks": {
+      "kind": "raw",
+      "repository": "https://github.com/gitleaks/gitleaks",
+      "ref": "master",
+      "paths": [
+        "config/gitleaks.toml"
+      ]
+    },
+    "kics": {
+      "kind": "git_sparse",
+      "repository": "https://github.com/Checkmarx/kics.git",
+      "ref": "master",
+      "paths": [
+        "assets/queries"
+      ]
+    }
+  },
+  "sync_results": [
+    {
+      "name": "semgrep",
+      "status": "synced",
+      "dest": "config/static-rules/semgrep"
+    },
+    {
+      "name": "pmd",
+      "status": "synced",
+      "dest": "config/static-rules/pmd"
+    },
+    {
+      "name": "checkstyle",
+      "status": "synced",
+      "dest": "config/static-rules/checkstyle"
+    },
+    {
+      "name": "gitleaks",
+      "status": "synced",
+      "dest": "config/static-rules/gitleaks"
+    },
+    {
+      "name": "kics",
+      "status": "synced",
+      "dest": "config/static-rules/kics"
+    }
+  ]
+}

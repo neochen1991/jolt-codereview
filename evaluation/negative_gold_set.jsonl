@@ -1,0 +1,2 @@
+{"id":"NEG-JAVA-001","description":"只修改 README 或注释的 MR 不应产生代码问题","expected_issues":[],"tags":["negative","java"]}
+{"id":"NEG-JAVA-002","description":"仅增加无行为变化的 Spring 配置注释不应产生代码问题","expected_issues":[],"tags":["negative","spring"]}

@@ -1,0 +1,30 @@
+{"mr_id":"java-auth-001","file_path":"src/main/java/com/acme/payment/PaymentController.java","line_start":42,"tool_rule_id":"SEC-INJECT-003","severity":"high","evidence":"executeQuery userId"}
+{"mr_id":"java-auth-001","file_path":"src/main/java/com/acme/payment/PaymentController.java","line_start":57,"tool_rule_id":"SEC-SECRET-004","severity":"high","evidence":"password static"}
+{"mr_id":"java-auth-001","file_path":"src/main/resources/application.yml","line_start":18,"tool_rule_id":"SEC-CONFIG-001","severity":"high","evidence":"management include"}
+{"mr_id":"java-redis-001","file_path":"src/main/java/com/acme/cache/PaymentCache.java","line_start":31,"tool_rule_id":"REDIS-CMD-003","severity":"high","evidence":"keys redis"}
+{"mr_id":"java-redis-001","file_path":"src/main/java/com/acme/cache/PaymentCache.java","line_start":47,"tool_rule_id":"REDIS-TTL-002","severity":"medium","evidence":"opsForValue set"}
+{"mr_id":"java-redis-001","file_path":"src/main/java/com/acme/cache/LockService.java","line_start":66,"tool_rule_id":"REDIS-LOCK-004","severity":"high","evidence":"setIfAbsent unlock"}
+{"mr_id":"java-ddd-001","file_path":"src/main/java/com/acme/domain/PaymentAggregate.java","line_start":24,"tool_rule_id":"DDD-AGG-001","severity":"medium","evidence":"Map Object"}
+{"mr_id":"java-ddd-001","file_path":"src/main/java/com/acme/domain/OrderService.java","line_start":83,"tool_rule_id":"DDD-SERVICE-002","severity":"medium","evidence":"status set"}
+{"mr_id":"java-ddd-001","file_path":"src/main/java/com/acme/domain/PaymentEvent.java","line_start":15,"tool_rule_id":"DDD-EVENT-003","severity":"low","evidence":"String type"}
+{"mr_id":"java-backend-001","file_path":"src/main/java/com/acme/api/ProjectSettingsController.java","line_start":88,"tool_rule_id":"BACKEND-AUTH-001","severity":"high","evidence":"project_admin settings"}
+{"mr_id":"java-backend-001","file_path":"src/main/java/com/acme/api/ProjectSettingsController.java","line_start":121,"tool_rule_id":"BACKEND-IDEMP-001","severity":"medium","evidence":"requestId retry"}
+{"mr_id":"java-backend-001","file_path":"src/main/java/com/acme/service/PaymentService.java","line_start":136,"tool_rule_id":"CODE-EXC-003","severity":"medium","evidence":"catch Exception"}
+{"mr_id":"java-test-001","file_path":"src/main/java/com/acme/service/RiskService.java","line_start":44,"tool_rule_id":"TEST-COVER-001","severity":"medium","evidence":"src/main/java test"}
+{"mr_id":"java-test-001","file_path":"src/test/java/com/acme/service/RiskServiceTest.java","line_start":27,"tool_rule_id":"TEST-ASSERT-002","severity":"low","evidence":"assertTrue not null"}
+{"mr_id":"java-test-001","file_path":"src/test/java/com/acme/api/PaymentControllerTest.java","line_start":72,"tool_rule_id":"TEST-MOCK-003","severity":"low","evidence":"when any"}
+{"mr_id":"java-perf-001","file_path":"src/main/java/com/acme/repository/PaymentRepository.java","line_start":52,"tool_rule_id":"PERF-QUERY-001","severity":"medium","evidence":"select * findAll"}
+{"mr_id":"java-perf-001","file_path":"src/main/java/com/acme/service/BatchPaymentService.java","line_start":101,"tool_rule_id":"PERF-NPLUS1-002","severity":"medium","evidence":"for repository"}
+{"mr_id":"java-perf-001","file_path":"src/main/java/com/acme/client/RiskClient.java","line_start":64,"tool_rule_id":"PERF-TIMEOUT-003","severity":"medium","evidence":"timeout 0"}
+{"mr_id":"java-dep-001","file_path":"pom.xml","line_start":39,"tool_rule_id":"DEP-CVE-001","severity":"high","evidence":"fastjson 1.2.47"}
+{"mr_id":"java-dep-001","file_path":"pom.xml","line_start":73,"tool_rule_id":"DEP-SCOPE-002","severity":"medium","evidence":"junit scope"}
+{"mr_id":"java-dep-001","file_path":"build.gradle","line_start":22,"tool_rule_id":"DEP-VERSION-003","severity":"medium","evidence":"SNAPSHOT dependency"}
+{"mr_id":"java-db-001","file_path":"src/main/resources/db/migration/V42__add_payment_index.sql","line_start":5,"tool_rule_id":"DB-MIG-LOCK-001","severity":"high","evidence":"ALTER TABLE NOT NULL"}
+{"mr_id":"java-db-001","file_path":"src/main/resources/db/migration/V43__payment_audit.sql","line_start":12,"tool_rule_id":"DB-MIG-IDX-002","severity":"medium","evidence":"WHERE index"}
+{"mr_id":"java-db-001","file_path":"src/main/resources/db/migration/V44__backfill.sql","line_start":20,"tool_rule_id":"DB-MIG-BATCH-003","severity":"medium","evidence":"UPDATE batch"}
+{"mr_id":"java-frontend-001","file_path":"src/frontend/PaymentSettings.tsx","line_start":49,"tool_rule_id":"FE-STATE-001","severity":"medium","evidence":"loading disabled"}
+{"mr_id":"java-frontend-001","file_path":"src/frontend/PaymentSettings.tsx","line_start":78,"tool_rule_id":"FE-ERROR-002","severity":"medium","evidence":"catch message"}
+{"mr_id":"java-frontend-001","file_path":"src/frontend/PaymentForm.tsx","line_start":91,"tool_rule_id":"FE-A11Y-003","severity":"low","evidence":"button aria"}
+{"mr_id":"java-iac-001","file_path":"deploy/k8s/deployment.yaml","line_start":18,"tool_rule_id":"IAC-RESOURCE-001","severity":"medium","evidence":"resources limits"}
+{"mr_id":"java-iac-001","file_path":"Dockerfile","line_start":3,"tool_rule_id":"IAC-ROOT-002","severity":"medium","evidence":"USER root"}
+{"mr_id":"java-iac-001","file_path":"openapi/payment.yaml","line_start":44,"tool_rule_id":"API-BREAK-001","severity":"high","evidence":"required removed"}

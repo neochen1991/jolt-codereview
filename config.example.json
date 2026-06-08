@@ -1,0 +1,35 @@
+{
+  "llm": {
+    "default_provider": "dashscope-openai-compatible",
+    "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+    "default_model": "MiniMax-M2.7",
+    "default_api_key_env": null,
+    "default_api_key": "<LOCAL_ONLY_API_KEY>",
+    "request_timeout_seconds": 120,
+    "max_output_tokens": 8192
+  },
+  "github": {
+    "default_token_env": "GITHUB_TOKEN",
+    "default_endpoint": "https://api.github.com"
+  },
+  "codehub": {
+    "default_token_env": "CODEHUB_TOKEN",
+    "default_endpoint": "https://codehub.example.com",
+    "list_mrs_path_note": "Set repository.provider_config.list_mrs_path when your internal CodeHub API path differs from /api/v1/repos/{repo_id}/merge-requests?state=open&per_page=50"
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8011,
+    "database_path": "data/jolt-codereview.sqlite"
+  },
+  "logging": {
+    "enabled": true,
+    "dir": "logs",
+    "api_file": "jolt-api.log",
+    "worker_file": "jolt-worker.log",
+    "review_run_dir": "review-runs"
+  },
+  "runtime": {
+    "python_bin": null
+  }
+}

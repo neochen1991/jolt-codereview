@@ -1,0 +1,58 @@
+{
+  "mr_id": "mr_repo_github_java_fixture_9101",
+  "run_id": "run_5da5d2a38033438e",
+  "expected_count": 20,
+  "finding_count": 20,
+  "matched_count": 20,
+  "missing_count": 0,
+  "false_positive_count": 0,
+  "precision": 1.0,
+  "recall": 1.0,
+  "fp_rate": 0.0,
+  "agreement_at_5": 1.0,
+  "matched": [
+    "BE-API-001",
+    "BE-IDEMP-004",
+    "CODE-EXC-003",
+    "CODE-NULL-001",
+    "CODE-RESOURCE-005",
+    "DB-DDL-001",
+    "DB-NOTNULL-002",
+    "DDD-VO-002",
+    "DEP-CVE-001",
+    "DEP-SCOPE-005",
+    "JOLT_JAVA_FIELD_AUTOWIRED",
+    "PERF-MEM-004",
+    "PERF-QUERY-001",
+    "REDIS-CMD-003",
+    "REDIS-TTL-002",
+    "SEC-CONFIG-007",
+    "SEC-INJECT-003",
+    "SEC-SECRET-004",
+    "SEC-SECRET-004:ERROR_RESPONSE",
+    "TEST-COVER-001"
+  ],
+  "missing": [],
+  "unknown_findings": [],
+  "negative_gold_count": 2,
+  "negative_gold_set": [
+    {
+      "id": "NEG-JAVA-001",
+      "description": "只修改 README 或注释的 MR 不应产生代码问题",
+      "expected_issues": [],
+      "tags": [
+        "negative",
+        "java"
+      ]
+    },
+    {
+      "id": "NEG-JAVA-002",
+      "description": "仅增加无行为变化的 Spring 配置注释不应产生代码问题",
+      "expected_issues": [],
+      "tags": [
+        "negative",
+        "spring"
+      ]
+    }
+  ]
+}

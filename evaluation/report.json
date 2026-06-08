@@ -1,0 +1,134 @@
+{
+  "tp": 30,
+  "fp": 0,
+  "fn": 0,
+  "precision": 1.0,
+  "recall": 1.0,
+  "high_recall": 1.0,
+  "gold_count": 30,
+  "finding_count": 30,
+  "missed_gold_ids": [],
+  "false_positive_count": 0,
+  "by_rule": {
+    "SEC-INJECT-003": {
+      "tp": 1,
+      "fn": 0
+    },
+    "SEC-SECRET-004": {
+      "tp": 1,
+      "fn": 0
+    },
+    "SEC-CONFIG-001": {
+      "tp": 1,
+      "fn": 0
+    },
+    "REDIS-CMD-003": {
+      "tp": 1,
+      "fn": 0
+    },
+    "REDIS-TTL-002": {
+      "tp": 1,
+      "fn": 0
+    },
+    "REDIS-LOCK-004": {
+      "tp": 1,
+      "fn": 0
+    },
+    "DDD-AGG-001": {
+      "tp": 1,
+      "fn": 0
+    },
+    "DDD-SERVICE-002": {
+      "tp": 1,
+      "fn": 0
+    },
+    "DDD-EVENT-003": {
+      "tp": 1,
+      "fn": 0
+    },
+    "BACKEND-AUTH-001": {
+      "tp": 1,
+      "fn": 0
+    },
+    "BACKEND-IDEMP-001": {
+      "tp": 1,
+      "fn": 0
+    },
+    "CODE-EXC-003": {
+      "tp": 1,
+      "fn": 0
+    },
+    "TEST-COVER-001": {
+      "tp": 1,
+      "fn": 0
+    },
+    "TEST-ASSERT-002": {
+      "tp": 1,
+      "fn": 0
+    },
+    "TEST-MOCK-003": {
+      "tp": 1,
+      "fn": 0
+    },
+    "PERF-QUERY-001": {
+      "tp": 1,
+      "fn": 0
+    },
+    "PERF-NPLUS1-002": {
+      "tp": 1,
+      "fn": 0
+    },
+    "PERF-TIMEOUT-003": {
+      "tp": 1,
+      "fn": 0
+    },
+    "DEP-CVE-001": {
+      "tp": 1,
+      "fn": 0
+    },
+    "DEP-SCOPE-002": {
+      "tp": 1,
+      "fn": 0
+    },
+    "DEP-VERSION-003": {
+      "tp": 1,
+      "fn": 0
+    },
+    "DB-MIG-LOCK-001": {
+      "tp": 1,
+      "fn": 0
+    },
+    "DB-MIG-IDX-002": {
+      "tp": 1,
+      "fn": 0
+    },
+    "DB-MIG-BATCH-003": {
+      "tp": 1,
+      "fn": 0
+    },
+    "FE-STATE-001": {
+      "tp": 1,
+      "fn": 0
+    },
+    "FE-ERROR-002": {
+      "tp": 1,
+      "fn": 0
+    },
+    "FE-A11Y-003": {
+      "tp": 1,
+      "fn": 0
+    },
+    "IAC-RESOURCE-001": {
+      "tp": 1,
+      "fn": 0
+    },
+    "IAC-ROOT-002": {
+      "tp": 1,
+      "fn": 0
+    },
+    "API-BREAK-001": {
+      "tp": 1,
+      "fn": 0
+    }
+  }
+}

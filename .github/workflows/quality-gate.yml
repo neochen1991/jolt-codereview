@@ -1,0 +1,47 @@
+name: Jolt CodeReview Quality Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  schedule:
+    - cron: "0 18 * * 0"
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          python -m pip install -r requirements.txt
+
+      - name: Build frontend and backend
+        run: npm run build
+
+      - name: Verify worker orchestration
+        run: npm run verify:worker-orchestration
+
+      - name: Verify real tooling guards
+        run: npm run verify:real-tooling
+
+      - name: Gold set regression gate
+        run: npm run verify:gold-eval

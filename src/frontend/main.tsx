@@ -197,8 +197,7 @@ type AgentSettingsForm = {
 };
 
 type ToolSettingsForm = {
-  enabled_tools: string;
-  disabled_tools: string;
+  static_tool_enabled: Record<string, boolean>;
   analysis_worktree_path: string;
   semgrep_config: string;
   gitleaks_config_path: string;
@@ -208,6 +207,33 @@ type ToolSettingsForm = {
   enable_mcp: boolean;
   enable_builtin_java_heuristics: boolean;
 };
+
+type StaticToolSwitch = {
+  key: string;
+  availabilityName: string;
+  displayName: string;
+  category: string;
+  requiredFor: string;
+};
+
+const STATIC_TOOL_SWITCHES: StaticToolSwitch[] = [
+  { key: "tree_sitter_code_graph", availabilityName: "tree-sitter", displayName: "Tree-sitter", category: "Code Graph", requiredFor: "语法图谱、调用关系、影响范围上下文" },
+  { key: "semgrep", availabilityName: "semgrep", displayName: "Semgrep", category: "SAST", requiredFor: "Java/Spring 规则、通用安全规则" },
+  { key: "gitleaks", availabilityName: "gitleaks", displayName: "Gitleaks", category: "Secret", requiredFor: "密钥泄露扫描" },
+  { key: "ruff", availabilityName: "ruff", displayName: "Ruff", category: "Python", requiredFor: "Python 静态检查" },
+  { key: "bandit", availabilityName: "bandit", displayName: "Bandit", category: "Python Security", requiredFor: "Python 安全扫描" },
+  { key: "eslint", availabilityName: "eslint", displayName: "ESLint", category: "Frontend", requiredFor: "JS/TS 静态检查" },
+  { key: "pmd", availabilityName: "pmd", displayName: "PMD", category: "Java Source", requiredFor: "Java 规范、复杂度、安全规则" },
+  { key: "checkstyle", availabilityName: "checkstyle", displayName: "Checkstyle", category: "Java Style", requiredFor: "Java 基础规范" },
+  { key: "spotbugs", availabilityName: "spotbugs", displayName: "SpotBugs", category: "Java Bytecode", requiredFor: "字节码缺陷、FindSecBugs 安全规则" },
+  { key: "dependency-check", availabilityName: "dependency-check", displayName: "Dependency-Check", category: "Dependency", requiredFor: "OWASP 依赖 CVE 扫描" },
+  { key: "osv-scanner", availabilityName: "osv-scanner", displayName: "OSV Scanner", category: "Dependency", requiredFor: "OSV 依赖漏洞扫描" },
+  { key: "trivy", availabilityName: "trivy", displayName: "Trivy", category: "Container/IaC", requiredFor: "依赖、镜像、配置、密钥扫描" },
+  { key: "kics", availabilityName: "kics", displayName: "KICS", category: "IaC", requiredFor: "K8s、Docker、Terraform 配置风险" },
+  { key: "openapi-diff", availabilityName: "openapi-diff", displayName: "OpenAPI Diff", category: "API", requiredFor: "OpenAPI 破坏性变更检测" }
+];
+
+const DEFAULT_STATIC_TOOL_ENABLED = Object.fromEntries(STATIC_TOOL_SWITCHES.map((tool) => [tool.key, true]));
 
 type QueueSettingsForm = {
   poll_interval_seconds: string;
@@ -286,6 +312,46 @@ function recordValue(value: unknown): Record<string, unknown> {
 
 function boolValue(value: unknown, fallback = false) {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function staticToolPolicyValue(toolPolicy: Record<string, unknown>, staticRunners: Record<string, unknown>, tool: StaticToolSwitch) {
+  const enabledTools = Array.isArray(toolPolicy.enabled_tools) ? toolPolicy.enabled_tools.map(String) : [];
+  const disabledTools = Array.isArray(toolPolicy.disabled_tools) ? toolPolicy.disabled_tools.map(String) : [];
+  const aliases = new Set([tool.key, tool.availabilityName]);
+  const runner = recordValue(staticRunners[tool.key] ?? staticRunners[tool.availabilityName]);
+  if (disabledTools.some((item) => aliases.has(item))) return false;
+  if (enabledTools.length > 0) return enabledTools.some((item) => aliases.has(item));
+  return boolValue(runner.enabled, true);
+}
+
+function staticRunnerPayload(toolForm: ToolSettingsForm) {
+  const runners: Record<string, Record<string, unknown>> = Object.fromEntries(
+    STATIC_TOOL_SWITCHES.map((tool) => [tool.key, { enabled: toolForm.static_tool_enabled[tool.key] !== false }])
+  );
+  runners.tree_sitter_code_graph = {
+    ...runners.tree_sitter_code_graph,
+  };
+  runners.semgrep = {
+    ...runners.semgrep,
+    custom_config_paths: splitCsv(toolForm.semgrep_config)
+  };
+  runners.gitleaks = {
+    ...runners.gitleaks,
+    extend_config_path: toolForm.gitleaks_config_path.trim()
+  };
+  runners.checkstyle = {
+    ...runners.checkstyle,
+    config_path: toolForm.checkstyle_config_path.trim()
+  };
+  runners.pmd = {
+    ...runners.pmd,
+    custom_rulesets: splitCsv(toolForm.pmd_rulesets)
+  };
+  runners.kics = {
+    ...runners.kics,
+    custom_queries_path: toolForm.kics_queries_path.trim()
+  };
+  return runners;
 }
 
 function statusLabel(status: string) {
@@ -1325,8 +1391,7 @@ function ConfigWorkspace({
   const [reviewForm, setReviewForm] = useState<ReviewSettingsForm>({ effort: "standard", max_findings_per_mr: "12", min_confidence: "0.75", enable_full_repo_context: true });
   const [agentForm, setAgentForm] = useState<AgentSettingsForm>({ max_parallel_agents: "3", enable_llm_routing: true, require_rule_coverage: true, default_max_tool_calls: "8" });
   const [toolForm, setToolForm] = useState<ToolSettingsForm>({
-    enabled_tools: "semgrep, gitleaks, pmd, checkstyle, spotbugs, dependency-check, osv-scanner, trivy",
-    disabled_tools: "",
+    static_tool_enabled: DEFAULT_STATIC_TOOL_ENABLED,
     analysis_worktree_path: "",
     semgrep_config: "",
     gitleaks_config_path: "",
@@ -1449,6 +1514,9 @@ function ConfigWorkspace({
       const checkstyleRunner = recordValue(staticRunners.checkstyle);
       const pmdRunner = recordValue(staticRunners.pmd);
       const kicsRunner = recordValue(staticRunners.kics);
+      const staticToolEnabled = Object.fromEntries(
+        STATIC_TOOL_SWITCHES.map((tool) => [tool.key, staticToolPolicyValue(toolPolicy, staticRunners, tool)])
+      );
       setLlmForm({
         default_provider: String(llm.default_provider ?? "dashscope-openai-compatible"),
         default_base_url: String(llm.default_base_url ?? "https://ark.cn-beijing.volces.com/api/coding/v3"),
@@ -1472,8 +1540,7 @@ function ConfigWorkspace({
         default_max_tool_calls: String(agentPolicy.default_max_tool_calls ?? "8")
       });
       setToolForm({
-        enabled_tools: csvValue(toolPolicy.enabled_tools) || "semgrep, gitleaks, pmd, checkstyle, spotbugs, dependency-check, osv-scanner, trivy",
-        disabled_tools: csvValue(toolPolicy.disabled_tools),
+        static_tool_enabled: staticToolEnabled,
         analysis_worktree_path: String(toolPolicy.analysis_worktree_path ?? toolPolicy.full_repo_worktree_path ?? toolPolicy.workspace_path ?? ""),
         semgrep_config: csvValue(semgrepRunner.custom_config_paths) || csvValue(semgrepRunner.additional_config_paths) || csvValue(semgrepRunner.config_paths),
         gitleaks_config_path: String(gitleaksRunner.extend_config_path ?? gitleaksRunner.custom_config_path ?? gitleaksRunner.config_path ?? toolPolicy.gitleaks_config_path ?? ""),
@@ -1699,18 +1766,10 @@ function ConfigWorkspace({
 
   async function saveToolSettings() {
     await saveStructuredSetting("tool_policy", "静态工具策略", {
-      enabled_tools: splitCsv(toolForm.enabled_tools),
-      disabled_tools: splitCsv(toolForm.disabled_tools),
       analysis_worktree_path: toolForm.analysis_worktree_path.trim(),
       enable_mcp: toolForm.enable_mcp,
       enable_builtin_java_heuristics: toolForm.enable_builtin_java_heuristics,
-      static_runners: {
-        semgrep: { custom_config_paths: splitCsv(toolForm.semgrep_config) },
-        gitleaks: { extend_config_path: toolForm.gitleaks_config_path.trim() },
-        checkstyle: { config_path: toolForm.checkstyle_config_path.trim() },
-        pmd: { custom_rulesets: splitCsv(toolForm.pmd_rulesets) },
-        kics: { custom_queries_path: toolForm.kics_queries_path.trim() }
-      }
+      static_runners: staticRunnerPayload(toolForm)
     });
   }
 
@@ -2037,13 +2096,19 @@ function ConfigWorkspace({
                 <strong>静态工具策略</strong>
                 <span>默认加载项目内置开源规则集，项目可以追加团队自定义规则。</span>
               </div>
+              <StaticToolSwitchBoard
+                availability={staticToolAvailability}
+                values={toolForm.static_tool_enabled}
+                disabled={!canEdit}
+                onChange={(toolKey, enabled) => setToolForm({
+                  ...toolForm,
+                  static_tool_enabled: {
+                    ...toolForm.static_tool_enabled,
+                    [toolKey]: enabled
+                  }
+                })}
+              />
               <div className="setting-form-grid">
-                <SettingField label="启用工具">
-                  <input value={toolForm.enabled_tools} onChange={(event) => setToolForm({ ...toolForm, enabled_tools: event.target.value })} disabled={!canEdit} />
-                </SettingField>
-                <SettingField label="禁用工具">
-                  <input value={toolForm.disabled_tools} onChange={(event) => setToolForm({ ...toolForm, disabled_tools: event.target.value })} placeholder="逗号分隔，可留空" disabled={!canEdit} />
-                </SettingField>
                 <SettingField label="完整仓库工作区">
                   <input value={toolForm.analysis_worktree_path} onChange={(event) => setToolForm({ ...toolForm, analysis_worktree_path: event.target.value })} placeholder="可选，Windows/Linux 路径均可" disabled={!canEdit} />
                 </SettingField>
@@ -2245,6 +2310,44 @@ function SettingField({ label, children }: { label: string; children: React.Reac
       <span>{label}</span>
       {children}
     </label>
+  );
+}
+
+function StaticToolSwitchBoard({
+  availability,
+  values,
+  disabled,
+  onChange
+}: {
+  availability: StaticToolAvailability | null;
+  values: Record<string, boolean>;
+  disabled: boolean;
+  onChange: (toolKey: string, enabled: boolean) => void;
+}) {
+  const availabilityByName = new Map((availability?.items ?? []).map((item) => [item.name, item]));
+  return (
+    <div className="static-tool-switch-board">
+      {STATIC_TOOL_SWITCHES.map((tool) => {
+        const item = availabilityByName.get(tool.availabilityName);
+        const enabled = values[tool.key] !== false;
+        return (
+          <label className={`static-tool-switch-row ${enabled ? "enabled" : "disabled"}`} key={tool.key}>
+            <input
+              type="checkbox"
+              checked={enabled}
+              disabled={disabled}
+              onChange={(event) => onChange(tool.key, event.target.checked)}
+            />
+            <div className="static-tool-switch-main">
+              <strong>{tool.displayName}</strong>
+              <span>{tool.category} · {tool.requiredFor}</span>
+              <em>{item?.available ? `${item.version || "available"} · ${item.path || "--"}` : item?.installHint || "未读取到安装状态"}</em>
+            </div>
+            <b className={item?.available ? "tool-status-tag ok" : "tool-status-tag missing"}>{item?.available ? "可用" : "缺失"}</b>
+          </label>
+        );
+      })}
+    </div>
   );
 }
 

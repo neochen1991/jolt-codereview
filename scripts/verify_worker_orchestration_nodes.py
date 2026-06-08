@@ -21,6 +21,7 @@ from review_runtime import (
     parse_semgrep_findings,
     prepare_source_worktree,
     run_static_command,
+    static_tool_enabled,
     source_content_candidate_count,
     source_worktree_mode,
 )
@@ -1496,6 +1497,10 @@ source_worktree_path, source_worktree_errors = prepare_source_worktree({}, fixtu
 assert source_worktree_errors == [], source_worktree_errors
 assert source_worktree_path, "source worktree path should be prepared"
 assert (Path(source_worktree_path) / "src" / "main" / "java" / "demo" / "App.java").exists(), source_worktree_path
+assert static_tool_enabled({"tool_policy": {"static_runners": {"semgrep": {"enabled": False}}}}, "semgrep") is False
+assert static_tool_enabled({"tool_policy": {"static_runners": {"tree-sitter": {"enabled": False}}}}, "tree_sitter_code_graph") is False
+assert static_tool_enabled({"tool_policy": {"enabled_tools": ["tree-sitter"]}}, "tree_sitter_code_graph") is True
+assert static_tool_enabled({"tool_policy": {"disabled_tools": ["tree-sitter"]}}, "tree_sitter_code_graph") is False
 
 for heartbeat_file in [ROOT / "worker" / "review_queue" / "job_consumer.py", ROOT / "worker" / "queue" / "job_consumer.py"]:
     heartbeat_source = heartbeat_file.read_text("utf-8")

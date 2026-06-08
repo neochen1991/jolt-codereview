@@ -1690,21 +1690,36 @@ def tool_policy_config(project_config: dict[str, Any] | None) -> dict[str, Any]:
     return policy if isinstance(policy, dict) else {}
 
 
+STATIC_TOOL_ALIASES: dict[str, list[str]] = {
+    "tree_sitter_code_graph": ["tree_sitter_code_graph", "tree_sitter", "tree-sitter"],
+}
+
+
+def static_tool_aliases(tool_name: str) -> list[str]:
+    return STATIC_TOOL_ALIASES.get(tool_name, [tool_name])
+
+
 def static_runner_config(project_config: dict[str, Any] | None, tool_name: str) -> dict[str, Any]:
     policy = tool_policy_config(project_config)
     static_runners = policy.get("static_runners") if isinstance(policy.get("static_runners"), dict) else {}
-    runner_cfg = static_runners.get(tool_name) if isinstance(static_runners, dict) else None
+    runner_cfg = None
+    if isinstance(static_runners, dict):
+        for candidate in static_tool_aliases(tool_name):
+            runner_cfg = static_runners.get(candidate)
+            if isinstance(runner_cfg, dict):
+                break
     return runner_cfg if isinstance(runner_cfg, dict) else {}
 
 
 def static_tool_enabled(project_config: dict[str, Any] | None, tool_name: str) -> bool:
     policy = tool_policy_config(project_config)
+    aliases = set(static_tool_aliases(tool_name))
     disabled = {str(item) for item in policy.get("disabled_tools") or []}
-    if tool_name in disabled:
+    if aliases & disabled:
         return False
     enabled = policy.get("enabled_tools")
     if isinstance(enabled, list) and enabled:
-        return tool_name in {str(item) for item in enabled}
+        return bool(aliases & {str(item) for item in enabled})
     runner_cfg = static_runner_config(project_config, tool_name)
     if isinstance(runner_cfg, dict) and runner_cfg.get("enabled") is False:
         return False
@@ -2991,75 +3006,81 @@ def run_external_static_prescan(
     bandit_output = outputs_dir / "bandit.json"
 
     outputs_dir.mkdir(parents=True, exist_ok=True)
-    tree_started = time.time()
-    tree_options = tree_sitter_graph_options(project_config, files)
-    record_trace_event(
-        recorder,
-        span_id,
-        "static_tool_started",
-        "static.tree_sitter_code_graph started",
-        {
-            "tool": "tree_sitter_code_graph",
-            "worktree": str(worktree),
-            "worktree_mode": worktree_mode,
-            "max_files": tree_options.get("max_files"),
-            "max_file_bytes": tree_options.get("max_file_bytes"),
-            "timeout_seconds": tree_options.get("timeout_seconds"),
-            "include_path_count": len(tree_options.get("include_paths") or []),
-        },
-    )
-    tree_graph = build_tree_sitter_graph(worktree, tree_options)
-    tree_graph_output = outputs_dir / "tree-sitter-code-graph.json"
-    tree_graph_output.write_text(json.dumps(tree_graph, ensure_ascii=False, indent=2), "utf-8")
-    tree_graph_status = str(tree_graph.get("status") or "failed")
-    if tree_graph.get("timeout"):
-        tree_status = "timeout"
-    elif tree_graph_status in {"indexed", "indexed_partial", "timeout_partial"}:
-        tree_status = "completed"
-    else:
-        tree_status = tree_graph_status
-    recorder.tool_call(
-        span_id,
-        "static.tree_sitter_code_graph",
-        tree_status,
-        int((time.time() - tree_started) * 1000),
-        args_summary=f"worktree={worktree}; mode={worktree_mode}; source_files={fetched_source_count}/{expected_source_count}",
-        output_summary=(
-            f"files={tree_graph.get('parsed_file_count', 0)}/{tree_graph.get('file_count', 0)}, "
-            f"classes={len(tree_graph.get('classes') or [])}, "
-            f"functions={len(tree_graph.get('functions') or [])}, "
-            f"calls={len(tree_graph.get('callers') or [])}"
-            + (", truncated=true" if tree_graph.get("truncated") else "")
-            + (", timeout=true" if tree_graph.get("timeout") else "")
-        ),
-        output_ref={"path": str(tree_graph_output)},
-        tool_version="python-tree-sitter",
-    )
-
-    results = [
-        {
-            "tool": "tree_sitter_code_graph",
-            "available": tree_graph_status in {"indexed", "indexed_partial", "timeout_partial"},
-            "status": tree_status,
-            "version": "python-tree-sitter",
-            "stdout_path": str(tree_graph_output),
-            "returncode": 0 if tree_graph_status in {"indexed", "indexed_partial", "timeout_partial"} else 1,
-            "findings": [],
-            "metrics": {
+    results: list[dict[str, Any]] = []
+    if static_tool_enabled(project_config, "tree_sitter_code_graph"):
+        tree_started = time.time()
+        tree_options = tree_sitter_graph_options(project_config, files)
+        record_trace_event(
+            recorder,
+            span_id,
+            "static_tool_started",
+            "static.tree_sitter_code_graph started",
+            {
+                "tool": "tree_sitter_code_graph",
+                "worktree": str(worktree),
                 "worktree_mode": worktree_mode,
-                "source_file_count": fetched_source_count,
-                "expected_source_file_count": expected_source_count,
-                "file_count": tree_graph.get("file_count", 0),
-                "parsed_file_count": tree_graph.get("parsed_file_count", 0),
-                "class_count": len(tree_graph.get("classes") or []),
-                "function_count": len(tree_graph.get("functions") or []),
-                "call_count": len(tree_graph.get("callers") or []),
-                "impact_symbol_count": len(tree_graph.get("impact_symbols") or []),
-                "truncated": bool(tree_graph.get("truncated")),
-                "timeout": bool(tree_graph.get("timeout")),
-                "skipped_file_count": len(tree_graph.get("skipped_files") or []),
+                "max_files": tree_options.get("max_files"),
+                "max_file_bytes": tree_options.get("max_file_bytes"),
+                "timeout_seconds": tree_options.get("timeout_seconds"),
+                "include_path_count": len(tree_options.get("include_paths") or []),
             },
-        },
+        )
+        tree_graph = build_tree_sitter_graph(worktree, tree_options)
+        tree_graph_output = outputs_dir / "tree-sitter-code-graph.json"
+        tree_graph_output.write_text(json.dumps(tree_graph, ensure_ascii=False, indent=2), "utf-8")
+        tree_graph_status = str(tree_graph.get("status") or "failed")
+        if tree_graph.get("timeout"):
+            tree_status = "timeout"
+        elif tree_graph_status in {"indexed", "indexed_partial", "timeout_partial"}:
+            tree_status = "completed"
+        else:
+            tree_status = tree_graph_status
+        recorder.tool_call(
+            span_id,
+            "static.tree_sitter_code_graph",
+            tree_status,
+            int((time.time() - tree_started) * 1000),
+            args_summary=f"worktree={worktree}; mode={worktree_mode}; source_files={fetched_source_count}/{expected_source_count}",
+            output_summary=(
+                f"files={tree_graph.get('parsed_file_count', 0)}/{tree_graph.get('file_count', 0)}, "
+                f"classes={len(tree_graph.get('classes') or [])}, "
+                f"functions={len(tree_graph.get('functions') or [])}, "
+                f"calls={len(tree_graph.get('callers') or [])}"
+                + (", truncated=true" if tree_graph.get("truncated") else "")
+                + (", timeout=true" if tree_graph.get("timeout") else "")
+            ),
+            output_ref={"path": str(tree_graph_output)},
+            tool_version="python-tree-sitter",
+        )
+        results.append(
+            {
+                "tool": "tree_sitter_code_graph",
+                "available": tree_graph_status in {"indexed", "indexed_partial", "timeout_partial"},
+                "status": tree_status,
+                "version": "python-tree-sitter",
+                "stdout_path": str(tree_graph_output),
+                "returncode": 0 if tree_graph_status in {"indexed", "indexed_partial", "timeout_partial"} else 1,
+                "findings": [],
+                "metrics": {
+                    "worktree_mode": worktree_mode,
+                    "source_file_count": fetched_source_count,
+                    "expected_source_file_count": expected_source_count,
+                    "file_count": tree_graph.get("file_count", 0),
+                    "parsed_file_count": tree_graph.get("parsed_file_count", 0),
+                    "class_count": len(tree_graph.get("classes") or []),
+                    "function_count": len(tree_graph.get("functions") or []),
+                    "call_count": len(tree_graph.get("callers") or []),
+                    "impact_symbol_count": len(tree_graph.get("impact_symbols") or []),
+                    "truncated": bool(tree_graph.get("truncated")),
+                    "timeout": bool(tree_graph.get("timeout")),
+                    "skipped_file_count": len(tree_graph.get("skipped_files") or []),
+                },
+            }
+        )
+    else:
+        results.append(disabled_static_tool(recorder, span_id, "tree_sitter_code_graph"))
+
+    results.extend([
         run_semgrep_prescan(
             recorder,
             span_id,
@@ -3115,7 +3136,7 @@ def run_external_static_prescan(
             eslint_output,
             {0, 1},
         ) if eslint_targets else skipped_static_tool_with_policy(recorder, span_id, project_config, "eslint", "skipped_no_targets"),
-    ]
+    ])
     java_results, java_tool_findings = java_static_tool_results(
         recorder,
         span_id,

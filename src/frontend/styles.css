@@ -976,6 +976,58 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   gap: 12px;
 }
 
+.static-tool-switch-board {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.static-tool-switch-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  background: #fff;
+}
+
+.static-tool-switch-row.disabled {
+  background: #f8fafc;
+  opacity: 0.76;
+}
+
+.static-tool-switch-row input {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+
+.static-tool-switch-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.static-tool-switch-main strong {
+  color: #14213d;
+  font-size: 13px;
+}
+
+.static-tool-switch-main span {
+  color: #52657e;
+  font-size: 12px;
+}
+
+.static-tool-switch-main em {
+  color: #6d7f96;
+  font-size: 12px;
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
 .setting-field {
   min-width: 0;
   display: grid;

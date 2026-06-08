@@ -447,7 +447,7 @@ npm run verify:codehub
 - Python 报 `UnicodeEncodeError` / `UnicodeDecodeError` / `gbk codec can't encode/decode`：优先使用 `.\scripts\start-windows.ps1` 或 `npm run start:windows`。脚本会设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8` 并切换控制台到 UTF-8；如果你直接运行 Python，也先执行 `$env:PYTHONUTF8="1"; $env:PYTHONIOENCODING="utf-8"; chcp 65001`。
 - 安装后 `pmd`、`checkstyle`、`spotbugs`、`dependency-check` 等命令仍不可用：重新打开 PowerShell，让用户级 `PATH` 生效，然后执行 `npm run verify:windows`。
 - `npm run dev` 能启动但 Worker 不运行：优先使用 `.\scripts\start-windows.ps1`，它会设置 `CONFIG_PATH` 和 `PYTHON_BIN`。
-- 端口被占用：关闭占用 `8011` 或 `5173` 的进程，或修改 `config.json` 中的 `server.port` 后重启。
+- 端口被占用：`npm run dev` / `.\scripts\start-windows.ps1` 会在启动前自动终止占用 API 端口和前端 `5173` 的旧进程；API 端口可通过 `config.json` 的 `server.port` 修改。
 - Dependency-Check 首次运行很慢：它会初始化漏洞库。生产环境建议预热缓存，并配置 `NVD_API_KEY`。
 - 内网不能下载 GitHub release：执行 `.\scripts\install-windows.ps1 -SkipStaticTools -SkipStaticRules` 先启动平台，再由管理员离线安装工具到 `%USERPROFILE%\.jolt-tools\bin` 或系统 `PATH`。
 

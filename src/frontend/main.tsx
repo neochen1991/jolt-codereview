@@ -812,6 +812,27 @@ function App() {
     if (detail) await openMr(detail.mr.id);
   }
 
+  async function setAllFindingsSelected(selected: boolean) {
+    if (!detail) return;
+    const targets = detail.findings.filter((finding) => Boolean(finding.selected) !== selected);
+    if (!targets.length) return;
+    setBusy(true);
+    try {
+      await Promise.all(targets.map((finding) =>
+        api(`/api/mr-review/review-findings/${finding.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ selected })
+        })
+      ));
+      await loadAll(detail.mr.id);
+      setMessage(selected ? `已全选 ${detail.findings.length} 条检视意见` : "已取消全选检视意见");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function markFalsePositive(finding: Finding) {
     await api(`/api/mr-review/review-findings/${finding.id}/feedback`, {
       method: "POST",
@@ -1062,6 +1083,7 @@ function App() {
                 busy={busy}
                 onRerun={rerunReview}
                 onToggleFinding={toggleFinding}
+                onToggleAllFindings={setAllFindingsSelected}
                 onFalsePositive={markFalsePositive}
                 onBulkFalsePositive={markSelectedFalsePositive}
                 onExportMarkdown={exportMarkdown}
@@ -2965,6 +2987,7 @@ function DetailPanel({
   busy,
   onRerun,
   onToggleFinding,
+  onToggleAllFindings,
   onFalsePositive,
   onBulkFalsePositive,
   onExportMarkdown,
@@ -2975,6 +2998,7 @@ function DetailPanel({
   busy: boolean;
   onRerun: () => void;
   onToggleFinding: (finding: Finding) => void;
+  onToggleAllFindings: (selected: boolean) => void;
   onFalsePositive: (finding: Finding) => void;
   onBulkFalsePositive: () => void;
   onExportMarkdown: () => void;
@@ -2996,6 +3020,7 @@ function DetailPanel({
 
   const hasRun = detail.runs.length > 0;
   const selectedCount = detail.findings.filter((finding) => finding.selected).length;
+  const allSelected = detail.findings.length > 0 && selectedCount === detail.findings.length;
   const highCount = detail.findings.filter((finding) => finding.severity === "high" || finding.severity === "critical").length;
   const agentCount = new Set(detail.findings.map((finding) => finding.agent_id)).size || (hasRun ? 3 : 0);
   const duration = estimateDuration(detail);
@@ -3067,6 +3092,10 @@ function DetailPanel({
       </div>
 
       <div className="detail-actions">
+        <button type="button" onClick={() => onToggleAllFindings(!allSelected)} disabled={busy || !detail.findings.length}>
+          <Check size={18} />
+          {allSelected ? "取消全选" : "全选问题"}
+        </button>
         <button type="button" onClick={onBulkFalsePositive} disabled={busy || !selectedCount}>标记误报</button>
         <button type="button" onClick={onExportMarkdown} disabled={busy || !detail.findings.length}>
           <FileDown size={18} />
@@ -3075,7 +3104,7 @@ function DetailPanel({
         <button type="button" onClick={onRerun} disabled={busy}>重新检视</button>
         <button className="submit-button" type="button" onClick={onPublish} disabled={busy || !selectedCount}>
           <Send size={18} />
-          提交选中意见到 GitHub
+          提交选中意见到 CodeHub
         </button>
       </div>
       {activeFinding && (

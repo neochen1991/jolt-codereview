@@ -40,8 +40,15 @@ RULE_CATEGORY_MAP = {
     "jolt.java.weak-webhook-signature-match": "WEAK_WEBHOOK_TRUST",
     "jolt.java.webhook-dedupe-key-composite-change": "IDEMPOTENCY_GUARD",
     "jolt.java.untrusted-callback-url-invocation": "SSRF_CALLBACK",
+    "jolt.java.signature-string-equals": "WEAK_SIGNATURE_COMPARE",
+    "jolt.java.spring-debug-endpoint-method": "DEBUG_ENDPOINT_EXPOSURE",
+    "jolt.java.trust-x-forwarded-for": "UNTRUSTED_FORWARDED_HEADER",
+    "config.static-rules.semgrep.java.lang.security.audit.crypto.use-of-sha1": "WEAK_SIGNATURE_COMPARE",
+    "java.lang.security.audit.crypto.use-of-sha1": "WEAK_SIGNATURE_COMPARE",
     "SEC-AUTHN-001": "AUTHORIZATION_BYPASS",
     "SEC-AUTHZ-002": "AUTHORIZATION_BYPASS",
+    "SEC-CRYPTO-010": "WEAK_SIGNATURE_COMPARE",
+    "SEC-DEBUG-011": "DEBUG_ENDPOINT_EXPOSURE",
     "JOLT_JAVA_CATCH_EXCEPTION": "BROAD_EXCEPTION",
     "CODE-EXC-003": "BROAD_EXCEPTION",
     "BE-ERR-003": "BROAD_EXCEPTION",
@@ -80,6 +87,7 @@ RULE_CATEGORY_MAP = {
     "ALI-BIGDECIMAL-001": "BIGDECIMAL_PRECISION",
     "ALI-CONCURRENCY-001": "UNBOUNDED_EXECUTOR",
     "ALI-CONCURRENCY-002": "THREAD_UNSAFE_DATE_FORMAT",
+    "ALI-CONCURRENCY-003": "THREADLOCAL_LEAK",
     "ALI-RETURN-001": "NULL_RETURN_COLLECTION",
     "ALI-EXC-002": "PRINT_STACK_TRACE",
     "ALI-LOG-001": "SYSTEM_OUT_LOGGING",
@@ -91,6 +99,17 @@ RULE_CATEGORY_MAP = {
     "HW-SEC-001": "INSECURE_RANDOM",
     "HW-LAYER-001": "LAYER_VIOLATION",
     "HW-TX-001": "TRANSACTION_PROXY_INVALID",
+    "jolt.java.threadlocal-set-without-remove": "THREADLOCAL_LEAK",
+    "jolt.java.threadlocal-read-in-new-thread": "THREADLOCAL_LEAK",
+    "jolt.java.static-mutable-collection": "THREAD_UNSAFE_SHARED_STATE",
+    "jolt.java.static-simpledateformat": "THREAD_UNSAFE_DATE_FORMAT",
+    "jolt.java.bigdecimal-double-constructor": "BIGDECIMAL_PRECISION",
+    "jolt.java.bigdecimal-floating-literal-constructor": "BIGDECIMAL_PRECISION",
+    "jolt.java.localdatetime-now-idempotency-window": "IDEMPOTENCY_GUARD",
+    "jolt.java.new-thread-in-spring-code": "UNBOUNDED_EXECUTOR",
+    "jolt.java.return-internal-mutable-collection": "STATE_MACHINE_INTEGRITY",
+    "jolt.java.transactional-self-invocation": "TRANSACTION_PROXY_INVALID",
+    "jolt.java.jdbc-autocommit-not-restored": "DB_CONNECTION_STATE_LEAK",
 }
 
 CATEGORY_PRIMARY_RULE = {
@@ -108,14 +127,20 @@ CATEGORY_PRIMARY_RULE = {
     "SPRING_FIELD_INJECTION": "JOLT_JAVA_FIELD_AUTOWIRED",
     "MISSING_TEST_COVERAGE": "TEST-COVER-001",
     "SPRING_ACTUATOR_EXPOSED": "SEC-CONFIG-007",
+    "DEBUG_ENDPOINT_EXPOSURE": "SEC-DEBUG-011",
+    "WEAK_SIGNATURE_COMPARE": "SEC-CRYPTO-010",
+    "UNTRUSTED_FORWARDED_HEADER": "SEC-RISK-006",
     "UNBOUNDED_QUERY": "PERF-QUERY-001",
     "UNBOUNDED_RESULT_MEMORY": "PERF-MEM-004",
+    "DB_CONNECTION_STATE_LEAK": "CODE-RESOURCE-005",
     "NULL_SAFETY": "CODE-NULL-001",
     "IDEMPOTENCY_GUARD": "BE-IDEMP-004",
     "JAVA_NAMING": "ALI-NAMING-001",
     "BIGDECIMAL_PRECISION": "ALI-BIGDECIMAL-001",
     "UNBOUNDED_EXECUTOR": "ALI-CONCURRENCY-001",
     "THREAD_UNSAFE_DATE_FORMAT": "ALI-CONCURRENCY-002",
+    "THREAD_UNSAFE_SHARED_STATE": "ALI-CONCURRENCY-002",
+    "THREADLOCAL_LEAK": "ALI-CONCURRENCY-003",
     "NULL_RETURN_COLLECTION": "ALI-RETURN-001",
     "PRINT_STACK_TRACE": "ALI-EXC-002",
     "SYSTEM_OUT_LOGGING": "ALI-LOG-001",
@@ -154,6 +179,11 @@ def canonical_rule_id(value: str | None) -> str:
 def normalized_rule_category(rule_id: str | None, title: str | None = None) -> str:
     raw = canonical_rule_id(rule_id or title or "GENERAL")
     title_text = (title or "").lower()
+    if raw == "SEC-CONFIG-007":
+        if any(marker in title_text for marker in ["sha-1", "sha1", "signature", "签名", "弱摘要", "hmac"]):
+            return "WEAK_SIGNATURE_COMPARE"
+        if any(marker in title_text for marker in ["debug", "调试", "内部状态", "runtime state"]):
+            return "DEBUG_ENDPOINT_EXPOSURE"
     if raw in RULE_CATEGORY_MAP:
         return RULE_CATEGORY_MAP[raw]
     lowered = raw.lower()
@@ -178,6 +208,33 @@ def normalized_rule_category(rule_id: str | None, title: str | None = None) -> s
         return "DB_BREAKING_CHANGE"
     if "jolt.config.hardcoded-password" in combined or "jolt.hardcoded-password" in combined:
         return "SECRET_LEAK"
+    if "jolt.java.signature-string-equals" in combined:
+        return "WEAK_SIGNATURE_COMPARE"
+    if "jolt.java.spring-debug-endpoint-method" in combined:
+        return "DEBUG_ENDPOINT_EXPOSURE"
+    if "jolt.java.trust-x-forwarded-for" in combined:
+        return "UNTRUSTED_FORWARDED_HEADER"
+    if "use-of-sha1" in combined or "sha-1" in combined or "sha1" in combined:
+        if any(marker in combined for marker in ["signature", "digest", "crypto", "message-digest", "签名", "摘要"]):
+            return "WEAK_SIGNATURE_COMPARE"
+    if "jolt.java.threadlocal-set-without-remove" in combined or "jolt.java.threadlocal-read-in-new-thread" in combined:
+        return "THREADLOCAL_LEAK"
+    if "jolt.java.static-mutable-collection" in combined:
+        return "THREAD_UNSAFE_SHARED_STATE"
+    if "jolt.java.static-simpledateformat" in combined:
+        return "THREAD_UNSAFE_DATE_FORMAT"
+    if "jolt.java.bigdecimal-double-constructor" in combined or "jolt.java.bigdecimal-floating-literal-constructor" in combined:
+        return "BIGDECIMAL_PRECISION"
+    if "jolt.java.localdatetime-now-idempotency-window" in combined:
+        return "IDEMPOTENCY_GUARD"
+    if "jolt.java.new-thread-in-spring-code" in combined:
+        return "UNBOUNDED_EXECUTOR"
+    if "jolt.java.return-internal-mutable-collection" in combined:
+        return "STATE_MACHINE_INTEGRITY"
+    if "jolt.java.transactional-self-invocation" in combined:
+        return "TRANSACTION_PROXY_INVALID"
+    if "jolt.java.jdbc-autocommit-not-restored" in combined:
+        return "DB_CONNECTION_STATE_LEAK"
     if "sql" in combined and ("inject" in combined or "concat" in combined or "注入" in combined or "拼接" in combined):
         return "SQL_INJECTION"
     if ("redis" in combined or "keyspace" in combined) and "keys" in combined:
@@ -193,6 +250,10 @@ def normalized_rule_category(rule_id: str | None, title: str | None = None) -> s
         or "known high-risk" in combined
     ):
         return "DEPENDENCY_CVE"
+    if any(marker in combined for marker in ["sha-1", "sha1", "signature", "签名"]) and any(
+        marker in combined for marker in ["equals", "常量时间", "constant-time", "弱摘要", "weak", "message digest"]
+    ):
+        return "WEAK_SIGNATURE_COMPARE"
     if "password" in combined or "secret" in combined or "token" in combined or "敏感" in combined or "密码" in combined or "凭据" in combined or "密钥" in combined:
         return "SECRET_LEAK"
     if "scope" in combined and ("junit" in combined or "test" in combined):
@@ -221,8 +282,14 @@ def normalized_rule_category(rule_id: str | None, title: str | None = None) -> s
         return "BIGDECIMAL_PRECISION"
     if "executors" in combined or "线程池" in combined:
         return "UNBOUNDED_EXECUTOR"
+    if "new thread" in combined or "raw thread" in combined or "直接创建线程" in combined:
+        return "UNBOUNDED_EXECUTOR"
     if "simpledateformat" in combined:
         return "THREAD_UNSAFE_DATE_FORMAT"
+    if "threadlocal" in combined:
+        return "THREADLOCAL_LEAK"
+    if "x-forwarded-for" in combined:
+        return "UNTRUSTED_FORWARDED_HEADER"
     if "printstacktrace" in combined:
         return "PRINT_STACK_TRACE"
     if "system.out" in combined or "system.err" in combined:

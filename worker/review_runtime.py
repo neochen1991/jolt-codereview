@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import time
@@ -1504,25 +1505,89 @@ def builtin_java_heuristics_enabled(project_config: dict[str, Any] | None) -> bo
     )
 
 
+def _decode_subprocess_output(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
+
+
+def _static_process_kwargs(env: dict[str, str] | None = None) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "env": env,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        kwargs["startupinfo"] = startupinfo
+    else:
+        kwargs["start_new_session"] = True
+    return kwargs
+
+
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            process.kill()
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            process.kill()
+
+
+def _run_static_process(
+    argv: list[str],
+    *,
+    timeout_seconds: int,
+    env: dict[str, str] | None = None,
+) -> tuple[str, str, int, bool]:
+    process = subprocess.Popen(argv, **_static_process_kwargs(env))
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        return stdout or "", stderr or "", int(process.returncode or 0), False
+    except subprocess.TimeoutExpired as exc:
+        stdout = _decode_subprocess_output(exc.stdout)
+        stderr = _decode_subprocess_output(exc.stderr)
+        _terminate_process_tree(process)
+        try:
+            tail_stdout, tail_stderr = process.communicate(timeout=5)
+            stdout += tail_stdout or ""
+            stderr += tail_stderr or ""
+        except subprocess.TimeoutExpired:
+            process.kill()
+        return stdout, stderr or "timeout", int(process.returncode or -1), True
+
+
 def command_version(command: str, args: list[str]) -> tuple[str | None, int]:
     executable = shutil.which(command)
     if not executable:
         return None, 0
     started = time.time()
     try:
-        completed = subprocess.run(
-            [executable, *args],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=10,
-            check=False,
-        )
-        output = (completed.stdout or completed.stderr or "").strip().splitlines()
+        stdout, stderr, _returncode, timed_out = _run_static_process([executable, *args], timeout_seconds=10)
+        if timed_out:
+            return "version_failed:TimeoutExpired", int((time.time() - started) * 1000)
+        output = (stdout or stderr or "").strip().splitlines()
         version = output[0][:120] if output else "available"
         return version, int((time.time() - started) * 1000)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except OSError as exc:
         return f"version_failed:{type(exc).__name__}", int((time.time() - started) * 1000)
 
 
@@ -1533,7 +1598,7 @@ def run_static_command(
     args: list[str],
     output_path: Path | None = None,
     ok_returncodes: set[int] | None = None,
-    timeout_seconds: int = 40,
+    timeout_seconds: int = 120,
 ) -> dict[str, Any]:
     ok_codes = ok_returncodes or {0}
     record_trace_event(
@@ -1579,18 +1644,20 @@ def run_static_command(
     try:
         if output_path:
             output_path.parent.mkdir(parents=True, exist_ok=True)
-        completed = subprocess.run(
+        env = None
+        if command == "semgrep":
+            env = os.environ.copy()
+            env.setdefault("SEMGREP_SEND_METRICS", "off")
+            env.setdefault("SEMGREP_ENABLE_VERSION_CHECK", "0")
+        stdout, stderr, returncode, timed_out = _run_static_process(
             [executable or command, *args],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_seconds,
-            check=False,
+            timeout_seconds=timeout_seconds,
+            env=env,
         )
-        stdout = completed.stdout or ""
-        stderr = completed.stderr or ""
-        returncode = completed.returncode
+        if timed_out:
+            status = "timeout"
+            stderr = stderr or "timeout"
+            raise subprocess.TimeoutExpired([executable or command, *args], timeout_seconds, output=stdout, stderr=stderr)
         status = "completed" if returncode in ok_codes else "failed"
         if command == "semgrep" and status == "failed":
             try:
@@ -1728,6 +1795,7 @@ def static_tool_enabled(project_config: dict[str, Any] | None, tool_name: str) -
 
 def static_tool_timeout_seconds(project_config: dict[str, Any] | None, tool_name: str) -> int:
     runner_cfg = static_runner_config(project_config, tool_name)
+    default_timeout = 180 if tool_name in {"dependency-check", "osv-scanner", "trivy"} else 120
     configured = runner_cfg.get("timeout_seconds")
     if configured is None:
         configured = runner_cfg.get("timeout_ms")
@@ -1735,13 +1803,13 @@ def static_tool_timeout_seconds(project_config: dict[str, Any] | None, tool_name
             try:
                 return max(1, int(configured) // 1000)
             except (TypeError, ValueError):
-                return 180 if tool_name in {"dependency-check", "osv-scanner", "trivy"} else 40
+                return default_timeout
     try:
         if configured is not None:
             return max(1, int(configured))
-        return 180 if tool_name in {"dependency-check", "osv-scanner", "trivy"} else 40
+        return default_timeout
     except (TypeError, ValueError):
-        return 180 if tool_name in {"dependency-check", "osv-scanner", "trivy"} else 40
+        return default_timeout
 
 
 def record_trace_event(
@@ -1768,7 +1836,7 @@ def tree_sitter_graph_options(project_config: dict[str, Any] | None, files: list
         "include_paths": [changed.filename for changed in files],
         "max_files": runner_cfg.get("max_files", 260),
         "max_file_bytes": runner_cfg.get("max_file_bytes", 512 * 1024),
-        "timeout_seconds": runner_cfg.get("timeout_seconds", 20),
+        "timeout_seconds": runner_cfg.get("timeout_seconds", 120),
         "ignore_dirs": runner_cfg.get("ignore_dirs", []),
     }
 

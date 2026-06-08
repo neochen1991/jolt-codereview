@@ -1,0 +1,184 @@
+rules:
+  - id: jolt.java.threadlocal-set-without-remove
+    message: ThreadLocal is written in a request/service path without remove(); servlet worker threads can leak the previous operator or tenant context.
+    severity: ERROR
+    languages: [java]
+    patterns:
+      - pattern: $TL.set($VALUE);
+      - pattern-not-inside: |
+          try {
+            ...
+          } finally {
+            ...
+            $TL.remove();
+            ...
+          }
+    metadata:
+      jolt_primary_rule: ALI-CONCURRENCY-003
+
+  - id: jolt.java.threadlocal-read-in-new-thread
+    message: A newly created thread reads ThreadLocal context; request ThreadLocal values are unreliable across threads and may become stale or null.
+    severity: ERROR
+    languages: [java]
+    pattern-regex: '(?s)new\s+Thread\s*\(.{0,1200}\b[A-Za-z_][A-Za-z0-9_]*\.get\s*\(\s*\).{0,600}\)\s*\.start\s*\('
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: ALI-CONCURRENCY-003
+
+  - id: jolt.java.static-mutable-collection
+    message: Static mutable HashMap/ArrayList state is shared by all Spring requests; use a bounded concurrent cache or an external store with tenant isolation.
+    severity: ERROR
+    languages: [java]
+    pattern-regex: 'private\s+static\s+final\s+(Map|List|Set)\s*<[^;]+>\s+\w+\s*=\s*new\s+(HashMap|ArrayList|HashSet)\s*<'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: ALI-CONCURRENCY-002
+
+  - id: jolt.java.static-simpledateformat
+    message: Static SimpleDateFormat is not thread-safe; use DateTimeFormatter or create a formatter per call.
+    severity: ERROR
+    languages: [java]
+    pattern: private static final SimpleDateFormat $NAME = new SimpleDateFormat(...);
+    metadata:
+      jolt_primary_rule: ALI-CONCURRENCY-002
+
+  - id: jolt.java.bigdecimal-double-constructor
+    message: BigDecimal is constructed from double/float arithmetic; use BigDecimal.valueOf or decimal string and explicit rounding.
+    severity: ERROR
+    languages: [java]
+    pattern-either:
+      - pattern: new BigDecimal($X.doubleValue())
+      - pattern: new BigDecimal($X.doubleValue() * $Y)
+      - pattern: new BigDecimal($X * $Y.doubleValue())
+      - pattern: new BigDecimal($X.doubleValue() * $Y.doubleValue())
+      - patterns:
+          - pattern-inside: |
+              double $D = ...;
+              ...
+          - pattern: new BigDecimal($D)
+      - patterns:
+          - pattern-inside: |
+              float $F = ...;
+              ...
+          - pattern: new BigDecimal($F)
+    metadata:
+      jolt_primary_rule: ALI-BIGDECIMAL-001
+
+  - id: jolt.java.bigdecimal-floating-literal-constructor
+    message: BigDecimal is constructed from a floating-point literal; use BigDecimal.valueOf or decimal string and explicit rounding.
+    severity: ERROR
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern: new BigDecimal($DOUBLE_LITERAL)
+      - metavariable-regex:
+          metavariable: $DOUBLE_LITERAL
+          regex: '^[0-9]+\.[0-9]+[dDfF]?$'
+    metadata:
+      jolt_primary_rule: ALI-BIGDECIMAL-001
+
+  - id: jolt.java.localdatetime-now-idempotency-window
+    message: Idempotency or business window is built from LocalDateTime.now()/system default time; use Clock with an explicit ZoneId/Instant.
+    severity: WARNING
+    languages: [java]
+    pattern-regex: '(?s)(idempot|window|businessDate|bizDate)[A-Za-z0-9_]*\s*=.{0,220}LocalDateTime\.now\s*\('
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: BE-IDEMP-004
+
+  - id: jolt.java.signature-string-equals
+    message: Security signature is compared with String.equals; use MessageDigest.isEqual or a constant-time verifier.
+    severity: ERROR
+    languages: [java]
+    pattern-regex: '(?i)(signature|hmac|digest|token)\w*\s*\.equals\s*\(\s*(expected|actual|provided|request)?\w*(signature|hmac|digest|token)\w*\s*\)'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-CRYPTO-010
+
+  - id: jolt.java.trust-x-forwarded-for
+    message: X-Forwarded-For is trusted directly; validate trusted proxy chain or use server-provided remote address.
+    severity: ERROR
+    languages: [java]
+    pattern: $REQ.getHeader("X-Forwarded-For")
+    metadata:
+      jolt_primary_rule: SEC-RISK-006
+
+  - id: jolt.java.new-thread-in-spring-code
+    message: Request or service code creates a raw Thread; use a managed bounded executor with backpressure and lifecycle control.
+    severity: ERROR
+    languages: [java]
+    pattern: new Thread(...).start();
+    metadata:
+      jolt_primary_rule: ALI-CONCURRENCY-001
+
+  - id: jolt.java.return-internal-mutable-collection
+    message: Method returns an internal mutable collection directly; return an immutable copy to protect service state.
+    severity: WARNING
+    languages: [java]
+    patterns:
+      - pattern: |
+          public $RET $METHOD(...) {
+            return $FIELD;
+          }
+      - metavariable-regex:
+          metavariable: $FIELD
+          regex: '^[A-Z_][A-Z0-9_]*$'
+    metadata:
+      jolt_primary_rule: CODE-STATE-004
+
+  - id: jolt.java.spring-debug-endpoint-method
+    message: Spring MVC debug endpoint exposes runtime state; remove it from production or require strong authorization and redaction.
+    severity: ERROR
+    languages: [java]
+    pattern-regex: '@(GetMapping|PostMapping|RequestMapping)\s*\(\s*"[^"]*(debug|internal|actuator/state)[^"]*"\s*\)'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-DEBUG-011
+
+  - id: jolt.java.transactional-self-invocation
+    message: A @Transactional method is invoked through this/self inside the same class; Spring proxy transaction semantics will not apply as expected.
+    severity: ERROR
+    languages: [java]
+    pattern-regex: '(?s)(@Transactional[\s\S]{0,900}\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*\{[\s\S]{0,1800}\b\2\s*\(|\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^;\n]*\);[\s\S]{0,1800}@Transactional[\s\S]{0,900}\b\3\s*\()'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: HW-TX-001
+
+  - id: jolt.java.jdbc-autocommit-not-restored
+    message: JDBC connection disables autoCommit without commit/rollback/reset in the same method; pooled connection state can leak.
+    severity: ERROR
+    languages: [java]
+    patterns:
+      - pattern: $CONN.setAutoCommit(false);
+      - pattern-not-inside: |
+          try {
+            ...
+          } finally {
+            ...
+            $CONN.setAutoCommit(true);
+            ...
+          }
+      - pattern-not-inside: |
+          try {
+            ...
+            $CONN.commit();
+            ...
+          } catch (...) {
+            ...
+            $CONN.rollback();
+            ...
+          }
+    metadata:
+      jolt_primary_rule: CODE-RESOURCE-005

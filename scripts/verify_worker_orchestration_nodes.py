@@ -23,6 +23,8 @@ from review_runtime import (
     prepare_source_worktree,
     run_static_command,
     static_tool_enabled,
+    static_tool_timeout_seconds,
+    tree_sitter_graph_options,
     source_content_candidate_count,
     source_worktree_mode,
 )
@@ -118,6 +120,10 @@ assert "llm_request_timeout_seconds" in runtime_text
 assert "llm_stream_enabled" in runtime_text
 assert "http_json as llm_http_json" in runtime_text
 assert "response = llm_http_json(" in runtime_text
+assert static_tool_timeout_seconds({}, "semgrep") == 120
+assert static_tool_timeout_seconds({}, "checkstyle") == 120
+assert static_tool_timeout_seconds({}, "dependency-check") == 180
+assert tree_sitter_graph_options({}, [ChangedFile("src/App.java", "modified", 1, 0, 1, "+class App {}")])["timeout_seconds"] == 120
 
 sse_response = collect_openai_sse_response(
     [
@@ -300,6 +306,27 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     assert result["status"] == "completed", result
     assert out.exists(), out
+
+    marker = Path(tmp) / "static_tool_child_survived.txt"
+    result = run_static_command(
+        recorder,
+        "span_verify",
+        sys.executable,
+        [
+            "-c",
+            (
+                "import subprocess, sys, time; "
+                f"subprocess.Popen([sys.executable, '-c', \"import pathlib, time; time.sleep(1.2); pathlib.Path(r'{marker}').write_text('alive')\"]); "
+                "time.sleep(20)"
+            ),
+        ],
+        None,
+        {0},
+        1,
+    )
+    time.sleep(1.8)
+    assert result["status"] == "timeout", result
+    assert not marker.exists(), "timed-out static tool left a child process running"
 
 
 findings = [
@@ -577,6 +604,63 @@ assert {item["tool_rule_id"] for item in semgrep_domain_promoted} == {
     "SEC-CONFIG-007",
     "TEST-COVER-001",
 }, semgrep_domain_promoted
+semgrep_rare_java_promoted = promote_tool_observations(
+    [
+        {
+            "tool_name": "semgrep",
+            "rule_id": "jolt.java.threadlocal-set-without-remove",
+            "severity": "high",
+            "confidence": 0.92,
+            "file_path": "src/main/java/com/acme/payment/RareIssueAuditService.java",
+            "line_start": 49,
+            "message": "ThreadLocal is written in a request/service path without remove().",
+        },
+        {
+            "tool_name": "semgrep",
+            "rule_id": "jolt.java.bigdecimal-double-constructor",
+            "severity": "high",
+            "confidence": 0.92,
+            "file_path": "src/main/java/com/acme/payment/RareIssueAuditService.java",
+            "line_start": 65,
+            "message": "BigDecimal is constructed from double arithmetic.",
+        },
+        {
+            "tool_name": "semgrep",
+            "rule_id": "jolt.java.signature-string-equals",
+            "severity": "high",
+            "confidence": 0.92,
+            "file_path": "src/main/java/com/acme/payment/RareIssueAuditService.java",
+            "line_start": 57,
+            "message": "Security signature is compared with String.equals.",
+        },
+        {
+            "tool_name": "semgrep",
+            "rule_id": "jolt.java.spring-debug-endpoint-method",
+            "severity": "high",
+            "confidence": 0.92,
+            "file_path": "src/main/java/com/acme/payment/RareIssueAuditController.java",
+            "line_start": 39,
+            "message": "Spring MVC debug endpoint exposes runtime state.",
+        },
+        {
+            "tool_name": "semgrep",
+            "rule_id": "jolt.java.transactional-self-invocation",
+            "severity": "high",
+            "confidence": 0.92,
+            "file_path": "src/main/java/com/acme/payment/RareIssueAuditService.java",
+            "line_start": 96,
+            "message": "A @Transactional method is invoked through self inside the same class.",
+        },
+    ],
+    [],
+)
+assert {item["tool_rule_id"] for item in semgrep_rare_java_promoted} == {
+    "ALI-CONCURRENCY-003",
+    "ALI-BIGDECIMAL-001",
+    "SEC-CRYPTO-010",
+    "SEC-DEBUG-011",
+    "HW-TX-001",
+}, semgrep_rare_java_promoted
 
 with tempfile.TemporaryDirectory() as tmp_semgrep:
     worktree = Path(tmp_semgrep) / "worktree"

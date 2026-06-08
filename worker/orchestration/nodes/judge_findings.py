@@ -44,6 +44,8 @@ PROMOTABLE_TOOL_RULES = {
     "REDIS-CMD-003",
     "REDIS-TTL-002",
     "SEC-CONFIG-007",
+    "SEC-CRYPTO-010",
+    "SEC-DEBUG-011",
     "SEC-AUTHN-001",
     "SEC-AUTHZ-002",
     "SEC-INJECT-003",
@@ -56,6 +58,7 @@ PROMOTABLE_TOOL_RULES = {
     "ALI-BIGDECIMAL-001",
     "ALI-CONCURRENCY-001",
     "ALI-CONCURRENCY-002",
+    "ALI-CONCURRENCY-003",
     "ALI-DB-001",
     "ALI-DB-002",
     "ALI-EQUALS-001",
@@ -97,6 +100,9 @@ AGENT_BY_RULE = {
     "HW-LAYER-001": "backend_agent",
     "HW-TX-001": "backend_agent",
     "ALI-CONCURRENCY-001": "performance_agent",
+    "ALI-CONCURRENCY-003": "coding_agent",
+    "SEC-CRYPTO-010": "security_agent",
+    "SEC-DEBUG-011": "security_agent",
     "ALI-DB-001": "database_agent",
     "ALI-DB-002": "database_agent",
     "ALI-MYBATIS-001": "security_agent",
@@ -232,6 +238,24 @@ if (!trusted) {
     throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid webhook signature");
 }''',
     },
+    "SEC-CRYPTO-010": {
+        "title": "安全签名比较未使用常量时间算法",
+        "recommendation": "签名、HMAC、摘要或 token 比较必须使用常量时间比较，并结合 HMAC-SHA256/密钥管理避免弱摘要。",
+        "suggested_code": '''byte[] expectedBytes = expectedSignature.getBytes(StandardCharsets.UTF_8);
+byte[] actualBytes = signature.getBytes(StandardCharsets.UTF_8);
+if (!MessageDigest.isEqual(expectedBytes, actualBytes)) {
+    throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid signature");
+}''',
+    },
+    "SEC-DEBUG-011": {
+        "title": "生产接口暴露调试状态",
+        "recommendation": "删除生产调试接口，或至少增加强认证授权、环境开关和敏感字段脱敏。",
+        "suggested_code": '''@PreAuthorize("hasAuthority('SYSTEM_DEBUG_VIEW')")
+@GetMapping("/debug")
+Map<String, Object> debugState() {
+    return debugStateSanitizer.redactedState();
+}''',
+    },
     "SEC-SSRF-009": {
         "title": "用户可控回调地址触发服务端外连",
         "recommendation": "回调地址必须进行协议、域名白名单、DNS/IP 段、重定向和超时校验，禁止请求内网、环回地址或云元数据地址。",
@@ -284,6 +308,29 @@ while (rs.next() && count++ < pageSize) {
     new ArrayBlockingQueue<>(queueSize),
     new ThreadPoolExecutor.CallerRunsPolicy()
 );''',
+    },
+    "ALI-CONCURRENCY-002": {
+        "title": "共享非线程安全对象",
+        "recommendation": "Spring 单例中的 static 可变集合和 SimpleDateFormat 需要替换为线程安全、可控生命周期的实现。",
+        "suggested_code": '''private static final DateTimeFormatter WINDOW_FORMAT =
+    DateTimeFormatter.ofPattern("yyyyMMdd-HHmm", Locale.US).withZone(ZoneId.of("Asia/Shanghai"));
+
+private final Cache<TenantKey, List<String>> auditCache = Caffeine.newBuilder()
+    .maximumSize(10_000)
+    .expireAfterWrite(Duration.ofMinutes(30))
+    .build();''',
+    },
+    "ALI-CONCURRENCY-003": {
+        "title": "ThreadLocal 上下文未清理或跨线程读取",
+        "recommendation": "请求线程写入 ThreadLocal 后必须在 finally 中 remove；后台任务应显式传参，不要读取请求线程 ThreadLocal。",
+        "suggested_code": '''try {
+    CURRENT_OPERATOR.set(operatorId);
+    return doAudit(paymentId, operatorId, request);
+} finally {
+    CURRENT_OPERATOR.remove();
+}
+
+executor.execute(() -> jdbcGateway.writeBalanceAdjustment(merchantId, fee, operatorId, Instant.now(clock)));''',
     },
     "ALI-MYBATIS-001": {
         "title": "MyBatis SQL 中使用 ${} 存在注入风险",
@@ -341,6 +388,30 @@ def _text_blob(finding: dict[str, Any]) -> str:
 def _root_cause_signature(finding: dict[str, Any]) -> str | None:
     text = _text_blob(finding)
     path = str(finding.get("file_path") or "").replace("\\", "/").lower()
+    if any(marker in text for marker in ["connection", "statement", "resultset", "autocommit", "jdbc", "连接", "连接池", "资源"]):
+        if any(marker in text for marker in ["未关闭", "close", "泄漏", "释放", "autocommit", "commit", "rollback"]):
+            if "loadrecentauditpaymentids" in text or "loadrecent" in text or "读取" in text:
+                return "JDBC_RESOURCE_LIFECYCLE_LOAD"
+            if "writebalanceadjustment" in text or "写入" in text or "余额调整" in text:
+                return "JDBC_RESOURCE_LIFECYCLE_WRITE"
+            return "JDBC_RESOURCE_LIFECYCLE"
+    if any(marker in text for marker in ["bean validation", "@valid", "requestbody", "请求体"]) and path.endswith(".java"):
+        return "REQUEST_BODY_VALIDATION"
+    if any(marker in text for marker in ["debug", "调试", "内部状态"]) and any(marker in text for marker in ["endpoint", "接口", "@getmapping", "@requestmapping"]):
+        return "DEBUG_ENDPOINT_EXPOSURE"
+    if "threadlocal" in text:
+        if "remove" in text or "清理" in text or "泄漏" in text:
+            return "THREADLOCAL_LIFECYCLE"
+        if "new thread" in text or "后台线程" in text or "跨线程" in text:
+            return "THREADLOCAL_CROSS_THREAD"
+    if any(marker in text for marker in ["static hashmap", "static arraylist", "静态可变集合", "非线程安全的静态", "spring 单例服务中使用非线程安全"]):
+        return "STATIC_MUTABLE_SHARED_STATE"
+    if any(marker in text for marker in ["mutabletenantkey", "hashmap key", "map key", "hashcode", "equals", "可变对象", "参与 hash"]):
+        if "key" in text or "键" in text or path.endswith("mutabletenantkey.java"):
+            return "MUTABLE_HASH_KEY"
+    if any(marker in text for marker in ["sha-1", "sha1", "use-of-sha1", "message-digest", "弱摘要"]):
+        if any(marker in text for marker in ["signature", "digest", "签名", "摘要", "crypto"]):
+            return "WEAK_SIGNATURE_ALGORITHM"
     if path.endswith("refundservice.java") and ("manual_override" in text or ("reason" in text and "绕过" in text)):
         if any(marker in text for marker in ["null", "npe", "空指针", "空值"]) and not any(marker in text for marker in ["绕过", "bypass", "manual_override"]):
             return None
@@ -371,6 +442,10 @@ def _business_subcategory(category: str, finding: dict[str, Any]) -> str:
     if category == "DDD_AGGREGATE_OWNERSHIP":
         return "DDD_AGGREGATE_OWNERSHIP"
     if category in {"UNBOUNDED_QUERY", "UNBOUNDED_DATA_ACCESS"}:
+        if any(marker in text for marker in ["requestbody", "@requestbody", "list<", "批量", "bulk", "数组", "请求体", "json array"]):
+            return "UNBOUNDED_REQUEST_BODY"
+        if any(marker in text for marker in ["cache", "缓存", "static", "ttl", "过期", "容量"]):
+            return "UNBOUNDED_CACHE_STATE"
         if any(
             marker in text
             for marker in [
@@ -417,7 +492,7 @@ def _semantic_dedupe_key(finding: dict[str, Any]) -> tuple[str, str, int]:
     return (
         root_cause or _selection_category_key(item),
         str(item.get("file_path") or ""),
-        line_bucket(item.get("line_start")),
+        0 if root_cause else line_bucket(item.get("line_start")),
     )
 
 
@@ -451,6 +526,9 @@ CORE_IMPACT_CATEGORIES = {
     "RISK_CONTROL_BYPASS",
     "WEAK_WEBHOOK_TRUST",
     "SSRF_CALLBACK",
+    "WEAK_SIGNATURE_COMPARE",
+    "DEBUG_ENDPOINT_EXPOSURE",
+    "UNTRUSTED_FORWARDED_HEADER",
     "SQL_INJECTION",
     "MYBATIS_SQL_INJECTION",
     "SENSITIVE_DATA_EXPOSURE",
@@ -468,11 +546,17 @@ CORE_IMPACT_CATEGORIES = {
     "STATE_MACHINE_WEBHOOK",
     "STATE_MACHINE_PAYMENT",
     "BIGDECIMAL_PRECISION",
+    "THREADLOCAL_LEAK",
+    "THREAD_UNSAFE_SHARED_STATE",
+    "DB_CONNECTION_STATE_LEAK",
+    "TRANSACTION_PROXY_INVALID",
     "SPRING_TRANSACTION",
     "DB_TX_005",
     "DDD_AGGREGATE_OWNERSHIP",
     "UNBOUNDED_QUERY",
     "UNBOUNDED_RESULT_MEMORY",
+    "UNBOUNDED_REQUEST_BODY",
+    "UNBOUNDED_CACHE_STATE",
     "LIKE_LEADING_WILDCARD_INDEX_RISK",
     "NULL_SAFETY",
     "BROAD_EXCEPTION",
@@ -788,6 +872,8 @@ def _category_impact_score(finding: dict[str, Any], category: str) -> int:
         score += 8
     if category in {"LIKE_LEADING_WILDCARD_INDEX_RISK", "MISSING_APP_SERVICE_TEST_COVERAGE"}:
         score += 6
+    if category in {"UNBOUNDED_REQUEST_BODY", "UNBOUNDED_CACHE_STATE"}:
+        score += 7
     if category.startswith("SENSITIVE_DATA_"):
         score += 5
     if category.startswith("SEC_") or any(rule.startswith("SEC-") for rule in covered):
@@ -806,6 +892,27 @@ def _category_impact_score(finding: dict[str, Any], category: str) -> int:
 def _is_core_impact_finding(finding: dict[str, Any]) -> bool:
     category = _selection_category_key(finding)
     return category in CORE_IMPACT_CATEGORIES or _category_impact_score(finding, category) >= 8
+
+
+def _is_secondary_advisory_finding(finding: dict[str, Any]) -> bool:
+    if _is_tool_backed_finding(finding):
+        return False
+    item = normalize_tool_finding(finding)
+    covered = {str(rule) for rule in (item.get("covered_rules") or [])}
+    category = _selection_category_key(item)
+    text = _text_blob(item)
+    confidence = float(item.get("confidence") or 0)
+    if any(rule.startswith("TEST-") for rule in covered):
+        return True
+    if category in {"DDD_AGGREGATE_OWNERSHIP", "DDD_APP_003", "DDD_REPO_004"}:
+        return True
+    if any(rule in {"DDD-APP-003", "DDD-REPO-004"} for rule in covered):
+        return True
+    if category == "DDD_VO_002" and "mutabletenantkey" not in text and "hash" not in text and "key" not in text:
+        return True
+    if category in {"SPRING_TRANSACTION"} and confidence <= 0.76:
+        return True
+    return False
 
 
 def _is_auxiliary_finding(finding: dict[str, Any]) -> bool:
@@ -1149,6 +1256,8 @@ def _promotable_tool_observation(observation: dict[str, Any]) -> bool:
             "REDIS-CMD-003",
             "REDIS-TTL-002",
             "SEC-AUTHZ-002",
+            "SEC-CRYPTO-010",
+            "SEC-DEBUG-011",
             "SEC-CONFIG-007",
             "SEC-INJECT-003",
             "SEC-RISK-006",
@@ -1157,6 +1266,11 @@ def _promotable_tool_observation(observation: dict[str, Any]) -> bool:
             "SEC-SSRF-009",
             "SEC-WEBHOOK-008",
             "TEST-COVER-001",
+            "ALI-CONCURRENCY-001",
+            "ALI-CONCURRENCY-002",
+            "ALI-CONCURRENCY-003",
+            "CODE-RESOURCE-005",
+            "HW-TX-001",
         } and confidence >= 0.76
     if tool_name in {"trivy", "osv"}:
         return rule_id == "DEP-CVE-001" and confidence >= 0.78 and bool(observation.get("file_path"))
@@ -1556,7 +1670,22 @@ def judge_candidate_findings(
             rejected.append({**item, "rejected_reasons": ["deduped_lower_rank"]})
             by_key[key] = _merge_finding_metadata(current, item)
 
-    ordered = sorted(by_key.values(), key=_priority_sort_key, reverse=True)
+    candidates = list(by_key.values())
+    if len(candidates) > max_findings:
+        primary_candidates: list[dict[str, Any]] = []
+        advisory_candidates: list[dict[str, Any]] = []
+        for candidate in candidates:
+            if _is_secondary_advisory_finding(candidate):
+                advisory_candidates.append(candidate)
+            else:
+                primary_candidates.append(candidate)
+        if len(primary_candidates) >= max_findings:
+            rejected.extend({**candidate, "rejected_reasons": ["secondary_advisory_overflow"]} for candidate in advisory_candidates)
+            candidates = primary_candidates
+        else:
+            candidates = [*primary_candidates, *advisory_candidates]
+
+    ordered = sorted(candidates, key=_priority_sort_key, reverse=True)
     selected, selection_rejected = _select_with_category_coverage(ordered, max_findings)
     rejected.extend(selection_rejected)
     selected, auxiliary_rejected = _drop_auxiliary_overlaps(selected)

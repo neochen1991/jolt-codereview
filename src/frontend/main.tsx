@@ -20,6 +20,7 @@ import {
   Loader2,
   LockKeyhole,
   RefreshCw,
+  Plus,
   Search,
   Send,
   Settings,
@@ -437,6 +438,7 @@ function formatDurationMs(value: unknown) {
 }
 
 const ACTIVE_REVIEW_STATUSES = ["fetching", "pre_scanning", "reviewing", "judging", "running"];
+const SYSTEM_AGENT_IDS = new Set(["router_agent", "budget_guard", "summary_agent", "system", "unknown_agent"]);
 const REVIEW_STEPS = [
   { key: "queued", label: "等待开始", description: "任务已提交，正在等待后台处理" },
   { key: "fetching", label: "读取变更", description: "读取 MR 的变更文件和代码内容" },
@@ -499,6 +501,65 @@ function findingSource(finding: Finding) {
     label: "AI 语义检出",
     detail: agentLabel(finding.agent_id)
   };
+}
+
+function isReviewExpertAgent(agentId: string) {
+  const normalized = String(agentId || "").trim();
+  return Boolean(normalized) && !SYSTEM_AGENT_IDS.has(normalized);
+}
+
+function addAgentId(target: Set<string>, value: unknown) {
+  const agentId = String(value || "").trim();
+  if (isReviewExpertAgent(agentId)) target.add(agentId);
+}
+
+function addAgentIdsFromPayload(target: Set<string>, payload: Record<string, unknown>) {
+  const agents = payload.agents;
+  if (Array.isArray(agents)) agents.forEach((agent) => addAgentId(target, agent));
+  const selectedAgents = payload.selected_agents;
+  if (Array.isArray(selectedAgents)) {
+    selectedAgents.forEach((agent) => {
+      if (typeof agent === "string") addAgentId(target, agent);
+      if (agent && typeof agent === "object") addAgentId(target, (agent as Record<string, unknown>).agent_id);
+    });
+  }
+}
+
+function participatingAgentIds(detail: Detail) {
+  const startedAgents = new Set<string>();
+  for (const row of detail.trace || []) {
+    if (String(row.event_type || "") === "agent_started") addAgentId(startedAgents, row.agent_id);
+  }
+  if (startedAgents.size) return Array.from(startedAgents).sort();
+
+  const routedAgents = new Set<string>();
+  for (const row of detail.trace || []) {
+    if (String(row.event_type || "") !== "agent_routed") continue;
+    addAgentIdsFromPayload(routedAgents, safeJson(String(row.payload_json || "{}")));
+  }
+  if (routedAgents.size) return Array.from(routedAgents).sort();
+
+  const coverageAgents = new Set<string>();
+  for (const run of detail.runs || []) {
+    const coverage = safeJson(String(run.coverage_json || "{}"));
+    const agents = Array.isArray(coverage.agents_executed) ? coverage.agents_executed : [];
+    agents.forEach((agent) => addAgentId(coverageAgents, agent));
+  }
+  if (coverageAgents.size) return Array.from(coverageAgents).sort();
+
+  const activityAgents = new Set<string>();
+  const sessionLogs = detail.session_logs;
+  [
+    ...(sessionLogs?.messages || []),
+    ...(sessionLogs?.tool_calls || []),
+    ...(sessionLogs?.llm_calls || []),
+    ...(sessionLogs?.mcp_calls || [])
+  ].forEach((row) => addAgentId(activityAgents, row.agent_id));
+  if (activityAgents.size) return Array.from(activityAgents).sort();
+
+  const findingAgents = new Set<string>();
+  detail.findings.forEach((finding) => addAgentId(findingAgents, finding.agent_id));
+  return Array.from(findingAgents).sort();
 }
 
 function riskLevel(score: number) {
@@ -1463,6 +1524,58 @@ function ProjectSelectionPage({
   enterProject: (projectId: string) => void;
   logout: () => void;
 }) {
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createDescription, setCreateDescription] = useState("");
+  const [createProvider, setCreateProvider] = useState("github");
+  const [createRepoUrl, setCreateRepoUrl] = useState("");
+  const [createRepoName, setCreateRepoName] = useState("");
+  const [createError, setCreateError] = useState("");
+
+  async function createProject() {
+    const name = createName.trim();
+    const gitUrl = createRepoUrl.trim();
+    if (!name) {
+      setCreateError("请输入项目名称");
+      return;
+    }
+    if (gitUrl && (!gitUrl.includes("/") || !gitUrl.includes(".git"))) {
+      setCreateError("请输入有效的 Git 仓库链接，例如 https://git.example.com/team/repo.git");
+      return;
+    }
+    setCreating(true);
+    setCreateError("");
+    try {
+      const result = await api<{ project: Project }>("/api/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          description: createDescription.trim(),
+          repository: gitUrl
+            ? {
+                provider: createProvider,
+                git_url: gitUrl,
+                name: createRepoName.trim() || repoNameFromGitUrl(gitUrl),
+                default_branch: "main"
+              }
+            : null
+        })
+      });
+      await refreshProjects();
+      setCreateOpen(false);
+      setCreateName("");
+      setCreateDescription("");
+      setCreateRepoUrl("");
+      setCreateRepoName("");
+      enterProject(result.project.id);
+    } catch (error) {
+      setCreateError((error as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
   return (
     <main className="project-home">
       <header className="project-home-top">
@@ -1483,8 +1596,55 @@ function ProjectSelectionPage({
         {projects.map((project) => (
           <ProjectCard key={project.id} project={project} refreshProjects={refreshProjects} enterProject={enterProject} />
         ))}
+        <button className="project-create-card" type="button" onClick={() => setCreateOpen(true)}>
+          <span><Plus size={22} /></span>
+          <strong>新建项目</strong>
+          <em>创建项目后可立即绑定 Git 仓库，并进入独立 MR 工作台。</em>
+        </button>
         {!projects.length && <div className="config-table-empty">暂无可访问项目</div>}
       </section>
+      {createOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setCreateOpen(false)}>
+          <section className="project-maintenance-modal project-create-modal" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <span>新建项目</span>
+                <strong>创建独立检视空间</strong>
+                <p>项目会隔离仓库、规范、专家 Agent、模型配置和检视队列。可在创建时顺手绑定一个代码仓。</p>
+              </div>
+            </header>
+            <div className="project-maintenance project-create-form">
+              <section className="project-maintenance-section">
+                <h3>项目信息</h3>
+                <label>
+                  <span>项目名称</span>
+                  <input value={createName} onChange={(event) => setCreateName(event.target.value)} placeholder="例如 支付交易中台" autoFocus />
+                </label>
+                <label>
+                  <span>项目描述</span>
+                  <textarea value={createDescription} onChange={(event) => setCreateDescription(event.target.value)} placeholder="说明这个项目覆盖的业务或团队范围" />
+                </label>
+              </section>
+              <section className="project-maintenance-section">
+                <h3>绑定代码仓（可选）</h3>
+                <div className="project-repo-editor create">
+                  <select value={createProvider} onChange={(event) => setCreateProvider(event.target.value)}>
+                    <option value="github">GitHub</option>
+                    <option value="codehub">CodeHub</option>
+                  </select>
+                  <input value={createRepoUrl} onChange={(event) => setCreateRepoUrl(event.target.value)} placeholder="Git 仓库链接，例如 https://git.example.com/team/repo.git" />
+                  <input value={createRepoName} onChange={(event) => setCreateRepoName(event.target.value)} placeholder="仓库显示名，默认从链接识别" />
+                </div>
+                <p className="project-create-hint">也可以先创建项目，进入项目维护后再绑定多个代码仓。</p>
+                {createError && <div className="form-error">{createError}</div>}
+                <button type="button" onClick={createProject} disabled={creating}>
+                  {creating ? "创建中..." : "创建并进入项目"}
+                </button>
+              </section>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
@@ -3322,7 +3482,7 @@ function DetailPanel({
   const selectedCount = detail.findings.filter((finding) => finding.selected).length;
   const allSelected = detail.findings.length > 0 && selectedCount === detail.findings.length;
   const highCount = detail.findings.filter((finding) => finding.severity === "high" || finding.severity === "critical").length;
-  const agentCount = new Set(detail.findings.map((finding) => finding.agent_id)).size || (hasRun ? 3 : 0);
+  const agentCount = participatingAgentIds(detail).length;
   const duration = estimateDuration(detail);
   const currentStatus = effectiveReviewStatus(detail);
   const sortedFindings = sortFindingsBySeverity(detail.findings);

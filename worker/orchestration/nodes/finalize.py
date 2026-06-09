@@ -156,11 +156,13 @@ def make_finalize_node(
 
         agent_rows = conn.execute(
             """
-            SELECT agent_id, COUNT(*) AS spans
+            SELECT s.agent_id, COUNT(*) AS starts
             FROM agent_trace_spans
+            JOIN agent_trace_events e ON e.span_id = s.id
             WHERE review_run_id = ? AND agent_id IS NOT NULL AND agent_id <> ''
-            GROUP BY agent_id
-            ORDER BY agent_id
+              AND e.event_type = 'agent_started'
+            GROUP BY s.agent_id
+            ORDER BY s.agent_id
             """,
             (run_id,),
         ).fetchall()

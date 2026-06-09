@@ -169,6 +169,48 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
   } = ctx;
   const routes: Route[] = [
     route("GET", "/api/projects", () => projectRepository.listProjects()),
+    route("POST", "/api/projects", ({ body, req }) => {
+      const actorId = currentUserId(req);
+      const input = body as Record<string, unknown>;
+      const name = String(input.name || "").trim();
+      if (!name) return badRequest("project name is required");
+      const repo = input.repository && typeof input.repository === "object" ? input.repository as Record<string, unknown> : null;
+      const gitUrl = String(repo?.git_url || "").trim();
+      if (repo && gitUrl && (!gitUrl.includes("/") || !gitUrl.includes(".git"))) return badRequest("repository git url is invalid");
+      const projectId = id("project");
+      const project = projectRepository.createProject({
+        id: projectId,
+        name,
+        description: String(input.description || "").trim(),
+        ownerUserId: actorId,
+        memberId: `member_${sha1(`${projectId}:${actorId}`).slice(0, 12)}`,
+        cloneFromProjectId: "project_default"
+      });
+      let repository = null;
+      if (repo && gitUrl) {
+        const provider = String(repo.provider || "github").trim() || "github";
+        const nameFromUrl = gitUrl.replace(/\\/g, "/").split("/").pop()?.replace(/\.git$/, "") || "repository";
+        repository = repositoryRepository.upsert({
+          id: id("repo"),
+          projectId,
+          provider,
+          externalRepoId: gitUrl,
+          name: String(repo.name || "").trim() || nameFromUrl,
+          defaultBranch: String(repo.default_branch || "main").trim() || "main",
+          providerConfig: { git_url: gitUrl }
+        });
+      }
+      auditLog({
+        userId: actorId,
+        projectId,
+        action: "projects.create",
+        resourceType: "project",
+        resourceId: projectId,
+        summary: repository ? "created project and bound repository" : "created project",
+        metadata: repository ? { repository_id: (repository as { id?: string }).id } : {}
+      });
+      return { project, repository };
+    }),
     route("GET", "/api/projects/:projectId", ({ params }) => projectRepository.findProjectById(params.projectId) ?? notFound()),
     route("PATCH", "/api/projects/:projectId", ({ params, body, req }) => {
       const actorId = currentUserId(req);

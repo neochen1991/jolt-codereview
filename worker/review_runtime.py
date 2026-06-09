@@ -110,6 +110,36 @@ def ensure_worker_schema(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_mr_finding_history_mr_status
           ON mr_finding_history(merge_request_id, status);
+        CREATE TABLE IF NOT EXISTS candidate_findings (
+          id TEXT PRIMARY KEY,
+          review_run_id TEXT NOT NULL REFERENCES review_runs(id),
+          dedupe_hash TEXT NOT NULL,
+          stage TEXT NOT NULL,
+          status TEXT NOT NULL,
+          source_type TEXT NOT NULL DEFAULT 'agent',
+          agent_id TEXT,
+          tool_name TEXT,
+          rule_id TEXT,
+          severity TEXT,
+          confidence REAL NOT NULL DEFAULT 0,
+          file_path TEXT NOT NULL DEFAULT '',
+          line_start INTEGER,
+          line_end INTEGER,
+          title TEXT NOT NULL DEFAULT '',
+          problem_description TEXT NOT NULL DEFAULT '',
+          evidence TEXT NOT NULL DEFAULT '',
+          rejected_reasons_json TEXT NOT NULL DEFAULT '[]',
+          source_observations_json TEXT NOT NULL DEFAULT '[]',
+          raw_json TEXT NOT NULL DEFAULT '{}',
+          final_finding_id TEXT REFERENCES review_findings(id),
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(review_run_id, dedupe_hash, stage)
+        );
+        CREATE INDEX IF NOT EXISTS idx_candidate_findings_run_stage
+          ON candidate_findings(review_run_id, stage, status);
+        CREATE INDEX IF NOT EXISTS idx_candidate_findings_rule
+          ON candidate_findings(rule_id, status);
         CREATE TABLE IF NOT EXISTS rule_precision_history (
           id TEXT PRIMARY KEY,
           project_id TEXT NOT NULL REFERENCES projects(id),
@@ -1278,7 +1308,7 @@ rules:
     message: Public reassignMerchant/merchantId rewrite changes aggregate ownership; require ownership authorization and domain invariant checks.
     severity: ERROR
     languages: [java]
-    pattern-regex: '(?s)(reassignMerchant|merchantId)[\\s\\S]{0,220}(this\\.merchantId\\s*=|order\\.reassignMerchant)'
+    pattern-regex: '(?s)(reassignMerchant|setMerchantId|overrideMerchant|forceMerchant|transferMerchant)\\s*\\([^)]*merchantId[^)]*\\)[\\s\\S]{0,260}(this\\.merchantId\\s*=|order\\.reassignMerchant)'
     paths:
       include:
         - "*.java"
@@ -2209,7 +2239,7 @@ def agent_for_static_rule(rule_id: str, message: str = "") -> str:
         return "performance_agent"
     if category in {"REDIS_DANGEROUS_COMMAND", "REDIS_MISSING_TTL"}:
         return "redis_agent"
-    if category in {"DDD_WEAK_DOMAIN_MODEL", "LAYER_VIOLATION"}:
+    if category.startswith("DDD_") or category in {"DDD_WEAK_DOMAIN_MODEL", "DDD_AGGREGATE_OWNERSHIP", "LAYER_VIOLATION"}:
         return "ddd_agent"
     if category in {"DB_BREAKING_CHANGE", "DB_NOT_NULL_NO_DEFAULT", "DB_MAP_RESULT_TYPE", "IBATIS_MEMORY_PAGINATION"}:
         return "database_agent"
@@ -3700,9 +3730,49 @@ def agent_matches_files(agent: dict[str, Any], files: list[ChangedFile], change_
         return any(token in change_text for token in ["redis", "cache", "ttl", "expire", "pipeline", "lua", "keys("])
     if agent_id == "ddd_agent":
         return any(
-            file_matches_patterns(changed.filename, ["domain/**", "**/domain/**", "**/aggregate/**", "**/entity/**"])
+            file_matches_patterns(
+                changed.filename,
+                [
+                    "domain/**",
+                    "**/domain/**",
+                    "**/aggregate/**",
+                    "**/entity/**",
+                    "**/application/**",
+                    "**/service/**",
+                    "**/repository/**",
+                    "**/event/**",
+                    "**/interfaces/**",
+                    "**/controller/**",
+                ],
+            )
             for changed in files
-        ) or any(token in change_text for token in ["aggregate", "entity", "valueobject", "value_object", "repository", "domain event"])
+        ) or any(
+            token in change_text
+            for token in [
+                "aggregate",
+                "entity",
+                "valueobject",
+                "value_object",
+                "repository",
+                "applicationservice",
+                "application service",
+                "domainservice",
+                "domain service",
+                "domain event",
+                "eventpublisher",
+                "outbox",
+                "saga",
+                "processmanager",
+                "bounded context",
+                "anti-corruption",
+                "tenantid",
+                "merchantid",
+                "setstatus",
+                "forcetransition",
+                "override",
+                "reassign",
+            ]
+        )
     if agent_id == "performance_agent":
         return any(token in change_text for token in ["fetchall", "select *", "query(", "timeout", "sleep(", "batch", "n+1", "large_payload"])
     if agent_id == "dependency_agent":
@@ -3862,7 +3932,37 @@ def required_java_agent_ids(files: list[ChangedFile], text: str) -> list[str]:
         required.append("performance_agent")
     if any(token in text for token in ["redis", "redistemplate", ".keys(", "opsforvalue"]):
         required.append("redis_agent")
-    if any("/domain/" in name or token in text for name in filenames for token in ["aggregate", "valueobject", "entity", "domain event", "map<string, object>"]):
+    if any(
+        "/domain/" in name
+        or "/application/" in name
+        or "/service/" in name
+        or "/repository/" in name
+        or "/event/" in name
+        or "/controller/" in name
+        for name in filenames
+    ) or any(
+        token in text
+        for token in [
+            "aggregate",
+            "valueobject",
+            "value_object",
+            "entity",
+            "domain event",
+            "eventpublisher",
+            "outbox",
+            "map<string, object>",
+            "applicationservice",
+            "domainservice",
+            "bounded context",
+            "anti-corruption",
+            "tenantid",
+            "merchantid",
+            "setstatus",
+            "forcetransition",
+            "override",
+            "reassign",
+        ]
+    ):
         required.append("ddd_agent")
     if any(name.endswith("pom.xml") or name.endswith("build.gradle") or name.endswith("build.gradle.kts") for name in filenames):
         required.append("dependency_agent")
@@ -4002,7 +4102,7 @@ def load_feedback_boosts(conn: sqlite3.Connection, project_id: str) -> set[str]:
     return {row["dedupe_hash"] for row in rows}
 
 
-def verify_findings(
+def verify_findings_detailed(
     recorder: Recorder,
     span_id: str,
     findings: list[dict[str, Any]],
@@ -4012,7 +4112,7 @@ def verify_findings(
     boosted_hashes: set[str],
     tool_observations: list[dict[str, Any]] | None = None,
     source_file_contents: dict[str, str] | None = None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     valid_files = {item.filename for item in files}
     adjusted_findings: list[dict[str, Any]] = []
     for finding in findings:
@@ -4064,6 +4164,31 @@ def verify_findings(
             f"{finding.get('title', 'candidate')} 被过滤：{','.join(reasons)}",
             {"dedupe_hash": finding.get("dedupe_hash"), "reasons": reasons},
         )
+    return accepted, rejected
+
+
+def verify_findings(
+    recorder: Recorder,
+    span_id: str,
+    findings: list[dict[str, Any]],
+    files: list[ChangedFile],
+    agent_config_by_id: dict[str, dict[str, Any]],
+    suppressed_hashes: set[str],
+    boosted_hashes: set[str],
+    tool_observations: list[dict[str, Any]] | None = None,
+    source_file_contents: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    accepted, _rejected = verify_findings_detailed(
+        recorder,
+        span_id,
+        findings,
+        files,
+        agent_config_by_id,
+        suppressed_hashes,
+        boosted_hashes,
+        tool_observations,
+        source_file_contents,
+    )
     return accepted
 
 
@@ -4299,7 +4424,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
             agent_config_by_id=agent_config_by_id,
             load_feedback_suppressions=load_feedback_suppressions,
             load_feedback_boosts=load_feedback_boosts,
-            verify_findings=verify_findings,
+            verify_findings=verify_findings_detailed,
             load_tool_observations=load_tool_observations,
         )
         detect_conflicts_node = make_detect_conflicts_node(

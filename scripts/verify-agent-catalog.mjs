@@ -16,6 +16,27 @@ const expectedAgents = [
   "backend_agent"
 ];
 
+const dddRequiredRules = [
+  "DDD-CTX-001",
+  "DDD-CTX-002",
+  "DDD-CTX-003",
+  "DDD-AGG-001",
+  "DDD-AGG-004",
+  "DDD-AGG-007",
+  "DDD-ENT-001",
+  "DDD-VO-001",
+  "DDD-APP-001",
+  "DDD-DOM-SVC-001",
+  "DDD-REPO-002",
+  "DDD-INFRA-001",
+  "DDD-EVENT-001",
+  "DDD-LAYER-001",
+  "DDD-RULE-002",
+  "DDD-CQRS-001",
+  "DDD-EVO-001",
+  "DDD-TENANT-001"
+];
+
 function dbPath() {
   const config = loadConfig();
   return path.resolve(root, config.server?.database_path || "data/jolt-codereview.sqlite");
@@ -81,6 +102,17 @@ for (const agentId of expectedAgents) {
   }
   const ruleCount = (standardText.match(/^##\s+[A-Z][A-Z0-9_-]+-\d+/gm) || []).length;
   if (ruleCount < 5) throw new Error(`${agentId} standard ${skills[0]}/JAVA_WEB_STANDARD.md must contain at least 5 structured rules`);
+  if (agentId === "ddd_agent") {
+    if (ruleCount < 45) throw new Error(`ddd_agent standard must contain at least 45 structured DDD rules, got ${ruleCount}`);
+    for (const ruleId of dddRequiredRules) {
+      if (!standardText.includes(`## ${ruleId} `)) {
+        throw new Error(`ddd_agent standard misses required rule ${ruleId}`);
+      }
+    }
+    for (const section of ["战略设计", "聚合与事务边界", "实体和值对象", "应用服务与领域服务", "仓储与基础设施隔离", "领域事件", "分层架构", "业务规则表达", "CQRS", "演进与兼容"]) {
+      if (!standardText.includes(section)) throw new Error(`ddd_agent standard misses section ${section}`);
+    }
+  }
 }
 
 console.log(JSON.stringify({

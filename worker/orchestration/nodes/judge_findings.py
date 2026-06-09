@@ -7,7 +7,8 @@ from typing import Any
 
 from calibration.precision_history import calibrate_findings_with_history, load_rule_precision_history
 from diff.slicer import extract_added_lines
-from tools.tool_normalizer import CATEGORY_PRIMARY_RULE, canonical_rule_id, line_bucket, normalize_tool_finding, normalized_rule_category, sha1
+from tools.candidate_store import upsert_candidate_finding, upsert_candidate_findings
+from tools.tool_normalizer import DDD_RULE_IDS, CATEGORY_PRIMARY_RULE, canonical_rule_id, line_bucket, normalize_tool_finding, normalized_rule_category, sha1
 
 SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 SELECTABLE_SEVERITIES = {"critical", "high", "medium"}
@@ -74,6 +75,7 @@ PROMOTABLE_TOOL_RULES = {
     "HW-SEC-001",
     "HW-TX-001",
 }
+PROMOTABLE_TOOL_RULES.update(DDD_RULE_IDS)
 
 PROMOTABLE_EXTERNAL_TOOL_RULES = {
     "AvoidCatchingGenericException": "CODE-EXC-003",
@@ -133,6 +135,18 @@ idempotencyGuard.executeOnce(requestId, () -> {
         "title": "Map 入参字段缺少显式空值和类型校验",
         "recommendation": "使用 DTO + Bean Validation，或对 Map 字段做显式 required/type 校验后再进入业务逻辑。",
         "suggested_code": '''String userId = requireText(payload, "userId");''',
+    },
+    "CODE-STATE-004": {
+        "title": "业务状态或缓存键缺少上下文隔离",
+        "recommendation": "状态、缓存 key 或策略结果必须包含租户、商户、业务对象、版本等上下文，避免跨请求、跨租户或跨策略复用。",
+        "suggested_code": '''String cacheKey = String.join(":",
+    "payment-policy",
+    tenantId,
+    merchantId,
+    policyId,
+    policyVersion
+);
+policyCache.put(cacheKey, decision);''',
     },
     "CODE-RESOURCE-005": {
         "title": "JDBC 资源未使用 try-with-resources 关闭",
@@ -201,6 +215,16 @@ public record PaymentAttributes(String channel, String scene) {}''',
     ownershipPolicy.requireTransferAllowed(this, targetMerchant, operator);
     this.merchantId = targetMerchant.value();
 }''',
+    },
+    "DDD-POLICY-001": {
+        "title": "策略优先级字段未参与决策选择",
+        "recommendation": "策略、规则或风控配置中的 priority/getPriority 字段必须参与排序、冲突裁决或最终选择，并在审计记录中写入命中的策略版本和优先级，避免配置字段形同虚设。",
+        "suggested_code": '''List<DynamicRiskPolicy> orderedPolicies = policies.stream()
+    .sorted(Comparator.comparingInt(DynamicRiskPolicy::getPriority).reversed())
+    .toList();
+
+DynamicRiskPolicy selected = policySelector.selectByPriorityAndCondition(orderedPolicies, request);
+auditRecorder.recordSelectedPolicy(selected.getPolicyId(), selected.getPriority(), request.requestId());''',
     },
     "SEC-SECRET-004": {
         "title": "配置或代码中包含明文密钥",
@@ -317,6 +341,16 @@ while (rs.next() && count++ < pageSize) {
     new ArrayBlockingQueue<>(queueSize),
     new ThreadPoolExecutor.CallerRunsPolicy()
 );''',
+    },
+    "HW-SEC-001": {
+        "title": "安全或风控决策使用弱随机源",
+        "recommendation": "安全 token、抽样审计、风控灰度或策略命中不得依赖固定种子 Random/Math.random；安全场景使用 SecureRandom，业务抽样使用可审计的服务端配置和稳定哈希。",
+        "suggested_code": '''private final SecureRandom secureRandom = new SecureRandom();
+
+boolean selectedForAudit(String merchantId, String paymentId, int percent) {
+    int bucket = Math.floorMod(Objects.hash(merchantId, paymentId), 100);
+    return bucket < percent;
+}''',
     },
     "ALI-CONCURRENCY-002": {
         "title": "共享非线程安全对象",
@@ -518,11 +552,88 @@ def _business_subcategory(category: str, finding: dict[str, Any]) -> str:
 def _semantic_dedupe_key(finding: dict[str, Any]) -> tuple[str, str, int]:
     item = normalize_tool_finding(finding)
     root_cause = _root_cause_signature(item)
+    primary_rule = _primary_rule_key(item)
+    primary_category = normalized_rule_category(primary_rule, item.get("title")) if primary_rule else str(item.get("normalized_rule_category") or "")
+    typed_signature = "|".join(
+        part
+        for part in [
+            _selection_category_key(item),
+            primary_rule or primary_category,
+            _typed_issue_signature(item),
+        ]
+        if part
+    )
     return (
-        root_cause or _selection_category_key(item),
+        root_cause or typed_signature or _selection_category_key(item),
         str(item.get("file_path") or ""),
         0 if root_cause else line_bucket(item.get("line_start")),
     )
+
+
+def _typed_issue_signature(finding: dict[str, Any]) -> str:
+    text = _text_blob(finding)
+    category = _category_for_priority(finding)
+    if category in {"SECRET_LEAK", "SENSITIVE_DATA_EXPOSURE"}:
+        if any(marker in text for marker in ["@requestparam", "query", "url", "请求参数", "参数传递", "adminkey", "apikey"]):
+            return "credential_in_request_parameter"
+        if any(marker in text for marker in ["hardcoded", "硬编码", "源码", "常量", "static final"]):
+            return "hardcoded_credential"
+        if any(marker in text for marker in ["log", "日志"]):
+            return "sensitive_logging"
+        if any(marker in text for marker in ["response", "响应", "dto"]):
+            return "sensitive_response"
+        if any(marker in text for marker in ["temp", "临时文件", "可预测"]):
+            return "predictable_sensitive_file"
+    if category in {"SQL_INJECTION", "SPEL_INJECTION", "UNSAFE_REFLECTION", "UNSAFE_DESERIALIZATION", "ZIP_SLIP"}:
+        if any(marker in text for marker in ["new java.", "默认表达式", "t(", "runtime", "getruntime", "getclass"]) and any(
+            marker in text for marker in ["spel", "expression", "表达式"]
+        ):
+            return "spel_executable_default_expression"
+        if "spel" in text or "evaluationcontext" in text:
+            return "spel_execution"
+        if any(marker in text for marker in ["reflection", "class.forname", "类名", "反射"]):
+            return "unsafe_reflection"
+        if any(marker in text for marker in ["objectinputstream", "readobject", "反序列化"]):
+            return "unsafe_deserialization"
+        if any(marker in text for marker in ["zip", "entry", "normalize", "路径归一化", "路径穿越"]):
+            return "zip_path_traversal"
+    if category in {"BIGDECIMAL_PRECISION"}:
+        if ".equals" in text or "equals" in text:
+            return "bigdecimal_equals_scale"
+        if any(marker in text for marker in ["double", "float", "浮点"]):
+            return "bigdecimal_float_constructor"
+    if category in {"THREAD_UNSAFE_SHARED_STATE", "THREAD_UNSAFE_DATE_FORMAT", "THREADLOCAL_LEAK"}:
+        if "threadlocal" in text:
+            return "threadlocal_lifecycle"
+        if "simpledateformat" in text:
+            return "simpledateformat_shared"
+        if any(marker in text for marker in ["hashmap", "arraylist", "静态", "static"]):
+            return "static_mutable_collection"
+    if category in {"STATE_MACHINE_INTEGRITY", "CACHE_KEY_COLLISION"}:
+        if any(marker in text for marker in ['"active"', "固定 key", "固定缓存", "cache key", "缓存键"]):
+            return "fixed_cache_key"
+        if any(marker in text for marker in ["ttl", "过期", "容量", "上限"]):
+            return "cache_lifecycle_limit"
+    if category in {"DDD_POLICY_001"}:
+        if any(marker in text for marker in ["priority", "getpriority", "优先级"]) and any(
+            marker in text for marker in ["未使用", "未参与", "排序", "选择", "select", "sort", "形同虚设"]
+        ):
+            return "policy_priority_not_used"
+    if category in {"CODE_RESOURCE_005", "DB_CONNECTION_STATE_LEAK", "ZIP_STREAM_RESOURCE_LEAK", "ZIP_ENTRY_MKDIRS_IGNORED"}:
+        if any(marker in text for marker in ["autocommit", "commit", "rollback"]):
+            return "connection_state_restore"
+        if any(marker in text for marker in ["zipinputstream", "try-with-resources", "未关闭"]):
+            return "archive_stream_close"
+        if any(marker in text for marker in ["mkdirs", "createdirectories", "目录创建"]):
+            return "directory_creation_checked"
+    if category in {"UNBOUNDED_QUERY", "UNBOUNDED_RESULT_MEMORY", "ARCHIVE_BOMB_RISK"}:
+        if any(marker in text for marker in ["zip", "archive", "压缩", "entry"]):
+            return "archive_size_limit"
+        if any(marker in text for marker in ["findall", "select *", "无分页", "limit", "查询"]):
+            return "unbounded_query"
+        if any(marker in text for marker in ["csv", "stringbuilder", "内存"]):
+            return "in_memory_export"
+    return ""
 
 
 def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
@@ -560,6 +671,13 @@ CORE_IMPACT_CATEGORIES = {
     "DEBUG_ENDPOINT_EXPOSURE",
     "UNTRUSTED_FORWARDED_HEADER",
     "SQL_INJECTION",
+    "SPEL_INJECTION",
+    "UNSAFE_REFLECTION",
+    "UNSAFE_DESERIALIZATION",
+    "ZIP_SLIP",
+    "CSV_OUTPUT_INJECTION",
+    "UNSAFE_FILE_RESPONSE",
+    "REGEX_DOS",
     "MYBATIS_SQL_INJECTION",
     "SENSITIVE_DATA_EXPOSURE",
     "SENSITIVE_DATA_STORAGE",
@@ -575,7 +693,16 @@ CORE_IMPACT_CATEGORIES = {
     "STATE_MACHINE_REFUND_AMOUNT",
     "STATE_MACHINE_WEBHOOK",
     "STATE_MACHINE_PAYMENT",
+    "FAILURE_DEFAULT_ALLOW",
     "BIGDECIMAL_PRECISION",
+    "INSECURE_RANDOM",
+    "ARCHIVE_BOMB_RISK",
+    "CACHE_KEY_COLLISION",
+    "ZIP_ENTRY_MKDIRS_IGNORED",
+    "ZIP_STREAM_RESOURCE_LEAK",
+    "DEFAULT_CHARSET_IO",
+    "AUDIT_TIME_ZONE",
+    "PREDICTABLE_TEMP_FILE",
     "THREADLOCAL_LEAK",
     "THREAD_UNSAFE_SHARED_STATE",
     "DB_CONNECTION_STATE_LEAK",
@@ -583,10 +710,79 @@ CORE_IMPACT_CATEGORIES = {
     "SPRING_TRANSACTION",
     "DB_TX_005",
     "DDD_AGGREGATE_OWNERSHIP",
+    "DDD_CTX_001",
+    "DDD_CTX_002",
+    "DDD_CTX_003",
+    "DDD_CTX_004",
+    "DDD_CTX_005",
+    "DDD_AGG_001",
+    "DDD_AGG_002",
+    "DDD_AGG_003",
+    "DDD_AGG_004",
+    "DDD_AGG_005",
+    "DDD_AGG_006",
+    "DDD_AGG_007",
+    "DDD_AGG_008",
+    "DDD_AGG_009",
+    "DDD_AGG_010",
+    "DDD_ENT_001",
+    "DDD_ENT_002",
+    "DDD_VO_001",
+    "DDD_VO_002",
+    "DDD_VO_003",
+    "DDD_VO_004",
+    "DDD_VO_005",
+    "DDD_VO_006",
+    "DDD_VO_007",
+    "DDD_APP_001",
+    "DDD_APP_002",
+    "DDD_APP_003",
+    "DDD_APP_004",
+    "DDD_APP_005",
+    "DDD_DOM_SVC_001",
+    "DDD_DOM_SVC_002",
+    "DDD_POLICY_001",
+    "DDD_REPO_001",
+    "DDD_REPO_002",
+    "DDD_REPO_003",
+    "DDD_REPO_004",
+    "DDD_INFRA_001",
+    "DDD_INFRA_002",
+    "DDD_INFRA_003",
+    "DDD_EVENT_001",
+    "DDD_EVENT_002",
+    "DDD_EVENT_003",
+    "DDD_EVENT_004",
+    "DDD_EVENT_005",
+    "DDD_EVENT_006",
+    "DDD_LAYER_001",
+    "DDD_LAYER_002",
+    "DDD_LAYER_003",
+    "DDD_LAYER_004",
+    "DDD_LAYER_005",
+    "DDD_RULE_001",
+    "DDD_RULE_002",
+    "DDD_RULE_003",
+    "DDD_RULE_004",
+    "DDD_RULE_005",
+    "DDD_RULE_006",
+    "DDD_CQRS_001",
+    "DDD_CQRS_002",
+    "DDD_CQRS_003",
+    "DDD_CQRS_004",
+    "DDD_EVO_001",
+    "DDD_EVO_002",
+    "DDD_EVO_003",
+    "DDD_EVO_004",
+    "DDD_TENANT_001",
+    "DDD_TENANT_002",
+    "DDD_TENANT_003",
     "UNBOUNDED_QUERY",
     "UNBOUNDED_RESULT_MEMORY",
+    "ARCHIVE_BOMB_RISK",
     "UNBOUNDED_REQUEST_BODY",
     "UNBOUNDED_CACHE_STATE",
+    "CACHE_KEY_COLLISION",
     "SWALLOWED_EXCEPTION",
     "SWALLOWED_EXCEPTION_WRITE",
     "SWALLOWED_EXCEPTION_READ",
@@ -952,6 +1148,40 @@ def _is_secondary_advisory_finding(finding: dict[str, Any]) -> bool:
     return False
 
 
+def _is_weak_unbacked_ddd_design_finding(finding: dict[str, Any]) -> bool:
+    if _is_tool_backed_finding(finding):
+        return False
+    item = normalize_tool_finding(finding)
+    if str(item.get("agent_id") or "") != "ddd_agent":
+        return False
+    covered = {str(rule) for rule in (item.get("covered_rules") or [])}
+    category = _selection_category_key(item)
+    if not any(rule.startswith("DDD-") for rule in covered) and not category.startswith("DDD_"):
+        return False
+    flags = {str(flag) for flag in (item.get("verification_flags") or [])}
+    if "low_evidence_match" not in flags:
+        return False
+    try:
+        evidence_score = float(item.get("evidence_match_score") or 0)
+    except (TypeError, ValueError):
+        evidence_score = 0.0
+    if evidence_score >= 0.35:
+        return False
+    broad_design_categories = {
+        "DDD_CTX_001",
+        "DDD_CTX_002",
+        "DDD_CTX_003",
+        "DDD_CTX_004",
+        "DDD_CTX_005",
+        "DDD_WEAK_DOMAIN_MODEL",
+        "DDD_VO_001",
+        "DDD_VO_002",
+        "DDD_VO_004",
+        "DDD_VO_005",
+    }
+    return category in broad_design_categories or any(rule in {"DDD-CTX-005", "DDD-VO-002"} for rule in covered)
+
+
 def _is_auxiliary_finding(finding: dict[str, Any]) -> bool:
     category = _selection_category_key(finding)
     covered = {str(rule) for rule in (finding.get("covered_rules") or [])}
@@ -1215,6 +1445,248 @@ def dependency_suggested_code_from_observation(observation: dict[str, Any]) -> s
 
 def remediation_for_observation(rule_id: str, observation: dict[str, Any]) -> dict[str, str]:
     remediation = dict(RULE_REMEDIATION.get(rule_id, {}))
+    category = normalized_rule_category(str(observation.get("rule_id") or rule_id), observation.get("message"))
+    primary_rule = CATEGORY_PRIMARY_RULE.get(category, rule_id)
+    observation_text = _text_blob(observation)
+    if category == "SPEL_INJECTION" and any(
+        marker in observation_text for marker in ["spel-executable-default-expression", "new java.", "默认表达式", "t(", "runtime", "getruntime", "getclass"]
+    ):
+        remediation.update(
+            {
+                "title": "默认 SpEL 表达式包含构造调用扩大执行攻击面",
+                "recommendation": "不要在默认策略表达式中内嵌 new/T()/Runtime/getClass 等可执行能力；将默认规则改为服务端白名单策略枚举或受限 DSL，并用 SimpleEvaluationContext 限制表达式能力。",
+                "suggested_code": '''RiskPolicy defaultPolicy = RiskPolicy.highAmountThreshold(Money.of("10000"));
+RiskDecision decision = policyEvaluator.evaluate(defaultPolicy, SafeRiskContext.from(order));
+
+SimpleEvaluationContext context = SimpleEvaluationContext
+    .forReadOnlyDataBinding()
+    .build();''',
+            }
+        )
+        return remediation
+    if str(primary_rule).startswith("DDD-") and not remediation:
+        group = str(primary_rule).split("-")[1] if "-" in str(primary_rule) else "RULE"
+        if group == "AGG":
+            remediation.update(
+                {
+                    "title": "聚合边界或业务不变量表达不完整",
+                    "recommendation": "将状态变更和不变量保护收敛到聚合业务方法中，应用服务只传入命令、策略或外部决策结果。",
+                    "suggested_code": '''payment.confirmCallback(callbackResult, operator);
+paymentRepository.save(payment);''',
+                }
+            )
+        elif group in {"APP", "DOM", "POLICY"}:
+            remediation.update(
+                {
+                    "title": "应用服务或领域服务承载规则边界不清",
+                    "recommendation": "应用服务只编排事务和端口调用；核心业务规则下沉到聚合、领域服务、Policy 或 Specification。",
+                    "suggested_code": '''PaymentDecision decision = settlementPolicy.decide(payment, command);
+payment.applySettlementDecision(decision);''',
+                }
+            )
+        elif group in {"REPO", "INFRA", "LAYER"}:
+            remediation.update(
+                {
+                    "title": "领域层与基础设施边界被污染",
+                    "recommendation": "领域接口使用业务类型，基础设施类型留在 adapter/infra 层，并通过 mapper/ACL 转换。",
+                    "suggested_code": '''Optional<Payment> find(PaymentId paymentId);
+PaymentEntity entity = paymentMapper.toEntity(payment);''',
+                }
+            )
+        elif group == "EVENT":
+            remediation.update(
+                {
+                    "title": "领域事件语义或发布一致性不清",
+                    "recommendation": "事件命名为已发生事实，携带 ID/快照，并通过 outbox 或事务后发布保证可靠投递。",
+                    "suggested_code": '''paymentRepository.save(payment);
+outboxRepository.saveAll(payment.pullDomainEvents());''',
+                }
+            )
+        else:
+            remediation.update(
+                {
+                    "title": "DDD 领域规则表达不完整",
+                    "recommendation": "用限界上下文、值对象、聚合方法、领域事件或策略对象显式表达业务语义，避免让调用方或基础设施承担领域规则。",
+                    "suggested_code": '''Payment payment = Payment.create(command.paymentId(), command.money());
+payment.apply(policy.evaluate(command));''',
+                }
+            )
+    if category == "SPEL_INJECTION":
+        remediation.update(
+            {
+                "title": "SpEL 表达式执行暴露完整 EvaluationContext",
+                "recommendation": "禁止用用户可控表达式配合 StandardEvaluationContext 执行业务对象；改为白名单表达式、SimpleEvaluationContext 或显式策略枚举。",
+                "suggested_code": '''ExpressionParser parser = new SpelExpressionParser();
+SimpleEvaluationContext context = SimpleEvaluationContext
+    .forReadOnlyDataBinding()
+    .build();
+Boolean matched = parser.parseExpression(allowedExpression)
+    .getValue(context, safePolicyView, Boolean.class);''',
+            }
+        )
+    elif category == "UNSAFE_REFLECTION":
+        remediation.update(
+            {
+                "title": "外部可控类名进入反射加载",
+                "recommendation": "不要直接使用请求参数调用 Class.forName/newInstance；改为服务端白名单插件注册表或策略枚举，并对插件失败执行 fail closed。",
+                "suggested_code": '''RiskPlugin plugin = pluginRegistry.requireAllowed(pluginId);
+RiskDecision decision = plugin.evaluate(safePolicyContext);
+if (decision.failed()) {
+    return RiskDecision.deny("PLUGIN_FAILED");
+}''',
+            }
+        )
+    elif category == "FAILURE_DEFAULT_ALLOW":
+        remediation.update(
+            {
+                "title": "安全或风控失败时默认放行",
+                "recommendation": "安全、风控、策略插件失败时应 fail closed，并记录可观测事件；只有经过审批的显式降级策略才能放行。",
+                "suggested_code": '''try {
+    return policyPlugin.evaluate(command);
+} catch (PolicyPluginException e) {
+    auditLogger.warn("policy plugin failed, fail closed requestId={}", command.requestId(), e);
+    return PolicyDecision.deny("POLICY_PLUGIN_FAILED");
+}''',
+            }
+        )
+    elif category == "UNSAFE_DESERIALIZATION":
+        remediation.update(
+            {
+                "title": "使用 ObjectInputStream 反序列化不可信对象",
+                "recommendation": "不要在接口中接收 Java 原生序列化对象；改用 JSON DTO + Bean Validation，或至少配置 ObjectInputFilter 和命令白名单。",
+                "suggested_code": '''ObjectInputFilter filter = ObjectInputFilter.Config.createFilter(
+    "com.example.payment.SafeCommand;java.base/*;!*"
+);
+try (ObjectInputStream input = new ObjectInputStream(stream)) {
+    input.setObjectInputFilter(filter);
+    SafeCommand command = (SafeCommand) input.readObject();
+}''',
+            }
+        )
+    elif category == "ZIP_SLIP":
+        remediation.update(
+            {
+                "title": "ZIP 解压写文件缺少路径归一化保护",
+                "recommendation": "解压每个 entry 前必须 normalize 并校验仍在目标目录内，同时拒绝 symlink、特殊文件和目录穿越。",
+                "suggested_code": '''Path target = outputDir.resolve(entry.getName()).normalize();
+if (!target.startsWith(outputDir) || Files.isSymbolicLink(target)) {
+    throw new SecurityException("invalid zip entry: " + entry.getName());
+}
+Files.copy(zipInputStream, target, StandardCopyOption.REPLACE_EXISTING);''',
+            }
+        )
+    elif category == "ARCHIVE_BOMB_RISK":
+        remediation.update(
+            {
+                "title": "压缩包处理缺少大小和条目数量限制",
+                "recommendation": "处理 ZIP/TAR 时限制最大 entry 数、单文件大小、总解压字节和压缩比，超过阈值立即终止。",
+                "suggested_code": '''long totalBytes = 0;
+int entryCount = 0;
+while ((entry = zip.getNextEntry()) != null) {
+    if (++entryCount > maxEntries) throw new BadRequestException("too many entries");
+    totalBytes += copyWithLimit(zip, target, maxEntryBytes);
+    if (totalBytes > maxTotalBytes) throw new BadRequestException("archive too large");
+}''',
+            }
+        )
+    elif category == "REGEX_DOS":
+        remediation.update(
+            {
+                "title": "用户可控正则存在 ReDoS 风险",
+                "recommendation": "不要直接编译用户输入正则；改用 contains/equals/前缀匹配，或限制正则长度、语法和执行时间。",
+                "suggested_code": '''String keyword = request.filter();
+if (keyword.length() > 64) {
+    throw new BadRequestException("filter too long");
+}
+boolean matched = customerId.contains(keyword);''',
+            }
+        )
+    elif category == "CSV_OUTPUT_INJECTION":
+        remediation.update(
+            {
+                "title": "CSV 输出未做单元格转义",
+                "recommendation": "使用 CSV 库处理逗号、引号、换行和公式前缀字符，禁止手写字符串拼接生成 CSV。",
+                "suggested_code": '''try (CSVPrinter printer = new CSVPrinter(writer, CSVFormat.DEFAULT)) {
+    printer.printRecord(
+        safeCsvCell(record.account()),
+        safeCsvCell(record.amount().toPlainString())
+    );
+}''',
+            }
+        )
+    elif category == "UNSAFE_FILE_RESPONSE":
+        remediation.update(
+            {
+                "title": "下载响应文件名未净化",
+                "recommendation": "Content-Disposition filename 必须净化路径分隔符、控制字符、长度和编码，避免响应头注入或路径信息泄漏。",
+                "suggested_code": '''String safeName = filename.replaceAll("[\\\\r\\\\n/\\\\\\\\]", "_");
+ContentDisposition disposition = ContentDisposition.attachment()
+    .filename(safeName, StandardCharsets.UTF_8)
+    .build();
+headers.setContentDisposition(disposition);''',
+            }
+        )
+    elif category == "ZIP_ENTRY_MKDIRS_IGNORED":
+        remediation.update(
+            {
+                "title": "解压目录创建失败未中止写入",
+                "recommendation": "检查 mkdirs/createDirectories 的结果和异常，目录不可用时立即失败，避免在错误路径继续写文件。",
+                "suggested_code": '''Path parent = target.getParent();
+try {
+    Files.createDirectories(parent);
+} catch (IOException e) {
+    throw new BadRequestException("cannot create extraction directory", e);
+}''',
+            }
+        )
+    elif category == "ZIP_STREAM_RESOURCE_LEAK":
+        remediation.update(
+            {
+                "title": "ZipInputStream 未使用 try-with-resources 关闭",
+                "recommendation": "所有归档输入流必须放入 try-with-resources，确保异常路径也能关闭底层请求流和解压流。",
+                "suggested_code": '''try (ZipInputStream zip = new ZipInputStream(request.getInputStream())) {
+    ZipEntry entry;
+    while ((entry = zip.getNextEntry()) != null) {
+        handleEntry(zip, entry);
+    }
+}''',
+            }
+        )
+    elif category == "DEFAULT_CHARSET_IO":
+        remediation.update(
+            {
+                "title": "文件或 CSV 输出使用平台默认字符集",
+                "recommendation": "跨平台导出必须显式指定 StandardCharsets.UTF_8，避免 Windows/Linux 默认编码不同导致内容损坏。",
+                "suggested_code": '''byte[] bytes = csv.toString().getBytes(StandardCharsets.UTF_8);
+Files.writeString(outputPath, csv.toString(), StandardCharsets.UTF_8);''',
+            }
+        )
+    elif category == "AUDIT_TIME_ZONE":
+        remediation.update(
+            {
+                "title": "审计或导出时间缺少显式 Clock/时区",
+                "recommendation": "审计、结算和导出时间应使用注入的 Clock 与 Instant/ZoneId，保证跨区域和测试场景一致。",
+                "suggested_code": '''private final Clock clock;
+
+Instant exportedAt = Instant.now(clock);
+String exportedDate = DateTimeFormatter.ISO_OFFSET_DATE_TIME
+    .withZone(ZoneId.of("Asia/Shanghai"))
+    .format(exportedAt);''',
+            }
+        )
+    elif category == "PREDICTABLE_TEMP_FILE":
+        remediation.update(
+            {
+                "title": "临时文件名可预测导致覆盖或数据泄露",
+                "recommendation": "不要用商户、用户或固定前缀拼接临时文件；使用 Files.createTempFile，限制权限并在请求结束后清理。",
+                "suggested_code": '''Path tempFile = Files.createTempFile("settlement-", ".csv");
+try {
+    Files.writeString(tempFile, csv, StandardCharsets.UTF_8);
+} finally {
+    Files.deleteIfExists(tempFile);
+}''',
+            }
+        )
     if rule_id == "DEP-CVE-001":
         suggested_code = dependency_suggested_code_from_observation(observation)
         if suggested_code:
@@ -1288,6 +1760,7 @@ def _promotable_tool_observation(observation: dict[str, Any]) -> bool:
             "CODE-STATE-004",
             "DB-DDL-001",
             "DDD-AGG-001",
+            "DDD-POLICY-001",
             "DDD-VO-002",
             "ALI-BIGDECIMAL-001",
             "PERF-LIKE-002",
@@ -1310,7 +1783,9 @@ def _promotable_tool_observation(observation: dict[str, Any]) -> bool:
             "ALI-CONCURRENCY-002",
             "ALI-CONCURRENCY-003",
             "CODE-RESOURCE-005",
+            "HW-SEC-001",
             "HW-TX-001",
+            "PERF-MEM-004",
         } and confidence >= 0.76
     if tool_name in {"trivy", "osv"}:
         return rule_id == "DEP-CVE-001" and confidence >= 0.78 and bool(observation.get("file_path"))
@@ -1336,7 +1811,7 @@ def _tool_candidate_hash(rule_id: str, observation: dict[str, Any]) -> str:
     )
 
 
-def _tool_observation_group_key(rule_id: str, observation: dict[str, Any]) -> tuple[str, str, str, str]:
+def _tool_observation_group_key(rule_id: str, observation: dict[str, Any]) -> tuple[str, str, str, str, int]:
     raw_rule = canonical_rule_id(observation.get("rule_id"))
     artifact = str(observation.get("raw_artifact_id") or "")
     return (
@@ -1344,6 +1819,7 @@ def _tool_observation_group_key(rule_id: str, observation: dict[str, Any]) -> tu
         raw_rule,
         str(observation.get("file_path") or ""),
         artifact,
+        line_bucket(_as_int(observation.get("line_start"))),
     )
 
 
@@ -1429,7 +1905,7 @@ def promote_tool_observations(
             "|".join(
                 [
                     "tool-promoted",
-                    *group_key,
+                    *(str(item) for item in group_key),
                     str(line_bucket(line_start)),
                     evidence[:240],
                 ]
@@ -1675,6 +2151,58 @@ def _mark_observations_adopted(
         )
 
 
+def _mark_observation_state(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    observation: dict[str, Any],
+    state: str,
+    agent_id: str | None = None,
+) -> None:
+    conn.execute(
+        """
+        UPDATE tool_observations
+        SET adopted_by_agent = COALESCE(?, adopted_by_agent),
+            adoption_state = ?
+        WHERE review_run_id = ?
+          AND tool_name = ?
+          AND COALESCE(rule_id, '') = COALESCE(?, '')
+          AND file_path = ?
+          AND COALESCE(line_start, -1) = COALESCE(?, -1)
+          AND message = ?
+        """,
+        (
+            agent_id,
+            state,
+            run_id,
+            observation.get("tool_name"),
+            observation.get("rule_id"),
+            observation.get("file_path"),
+            observation.get("line_start"),
+            observation.get("message"),
+        ),
+    )
+
+
+def _mark_promoted_rejection_sources(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    rejections: list[dict[str, Any]],
+) -> None:
+    for rejected in rejections:
+        observation = rejected.get("source_tool_observation")
+        if not isinstance(observation, dict):
+            continue
+        _mark_observation_state(
+            conn,
+            run_id=run_id,
+            observation=observation,
+            state="rejected_by_judge",
+            agent_id=str(rejected.get("agent_id") or "") or None,
+        )
+
+
 def judge_candidate_findings(
     findings: list[dict[str, Any]],
     conflicts: list[dict[str, Any]],
@@ -1695,6 +2223,9 @@ def judge_candidate_findings(
 
     for finding in findings:
         item = dict(finding)
+        if _is_weak_unbacked_ddd_design_finding(item):
+            rejected.append({**item, "rejected_reasons": ["weak_unbacked_ddd_design_evidence"]})
+            continue
         if item.get("dedupe_hash") in weak_high_severity_hashes and item.get("severity") in {"critical", "high"}:
             item["severity"] = "medium"
             item["judge_adjustment"] = "downgraded_high_severity_weak_evidence"
@@ -1757,6 +2288,12 @@ def make_judge_findings_node(
         tool_observations = state.get("tool_observations") or load_tool_observations(conn, run_id)
         tool_observations, diff_rejected_observations = filter_tool_observations_to_added_lines(tool_observations, state.get("files") or [])
         for observation in diff_rejected_observations:
+            _mark_observation_state(
+                conn,
+                run_id=run_id,
+                observation=observation,
+                state="rejected_not_on_diff",
+            )
             recorder.event(
                 judge_span,
                 "tool_observation_dropped",
@@ -1771,6 +2308,13 @@ def make_judge_findings_node(
             )
         promoted_findings = promote_tool_observations(tool_observations, state["verified_findings"])
         if promoted_findings:
+            upsert_candidate_findings(
+                conn,
+                review_run_id=run_id,
+                items=promoted_findings,
+                stage="tool_promotion",
+                status="candidate",
+            )
             recorder.event(
                 judge_span,
                 "tool_observations_promoted",
@@ -1804,6 +2348,14 @@ def make_judge_findings_node(
             judge_rejections.append({**item, "rejected_reasons": ["not_selected_final_issue"]})
         final_findings = final_selected_findings
         for rejected in judge_rejections:
+            upsert_candidate_finding(
+                conn,
+                review_run_id=run_id,
+                item=rejected,
+                stage="judge",
+                status="rejected",
+                rejected_reasons=rejected.get("rejected_reasons") or [],
+            )
             reasons = rejected.get("rejected_reasons") or []
             recorder.event(
                 judge_span,
@@ -1811,6 +2363,8 @@ def make_judge_findings_node(
                 f"{rejected.get('title', 'candidate')} 被 Judge 过滤：{','.join(reasons)}",
                 {"dedupe_hash": rejected.get("dedupe_hash"), "reasons": reasons},
             )
+        _mark_promoted_rejection_sources(conn, run_id=run_id, rejections=judge_rejections)
+        persisted_findings: list[dict[str, Any]] = []
         for finding in final_findings:
             source_observations = match_tool_observations_for_finding(finding, tool_observations)
             own_observation = finding.get("source_tool_observation")
@@ -1826,6 +2380,7 @@ def make_judge_findings_node(
                     source_observations.insert(0, own_trace)
             finding = reconcile_rules_with_tool_observations(finding, source_observations)
             if _drop_without_tool_support(finding, source_observations):
+                judge_rejections.append({**finding, "rejected_reasons": ["unsupported_low_precision_llm_finding"]})
                 recorder.event(
                     judge_span,
                     "finding_dropped",
@@ -1839,6 +2394,8 @@ def make_judge_findings_node(
             ]
             tool_provenance = _tool_provenance(finding, source_observations)
             quality_trace = build_quality_trace(finding, source_observations)
+            finding["source_observations"] = source_observations
+            finding_id = new_id("finding")
             conn.execute(
                 """
                 INSERT INTO review_findings (
@@ -1850,7 +2407,7 @@ def make_judge_findings_node(
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?)
                 """,
                 (
-                    new_id("finding"),
+                    finding_id,
                     run_id,
                     finding["severity"],
                     finding["confidence"],
@@ -1873,12 +2430,34 @@ def make_judge_findings_node(
                     int(finding.get("selected", 0)),
                 ),
             )
+            finding["persisted_finding_id"] = finding_id
+            upsert_candidate_finding(
+                conn,
+                review_run_id=run_id,
+                item=finding,
+                stage="judge",
+                status="final",
+                final_finding_id=finding_id,
+            )
             _mark_observations_adopted(
                 conn,
                 run_id=run_id,
                 agent_id=str(finding.get("agent_id") or ""),
                 observations=source_observations,
             )
+            persisted_findings.append(finding)
+        final_findings = persisted_findings
+        _mark_promoted_rejection_sources(conn, run_id=run_id, rejections=judge_rejections)
+        for rejected in judge_rejections:
+            upsert_candidate_finding(
+                conn,
+                review_run_id=run_id,
+                item=rejected,
+                stage="judge",
+                status="rejected",
+                rejected_reasons=rejected.get("rejected_reasons") or [],
+            )
+        conn.commit()
         recorder.event(
             judge_span,
             "finding_merged",
@@ -1891,6 +2470,21 @@ def make_judge_findings_node(
             },
         )
         recorder.finish(judge_span)
-        return {**state, "final_findings": final_findings}
+        verifier_rejections = state.get("verifier_rejections") or []
+        return {
+            **state,
+            "final_findings": final_findings,
+            "judge_rejections": judge_rejections,
+            "candidate_rejections": [*verifier_rejections, *judge_rejections],
+            "candidate_quality": {
+                **(state.get("candidate_quality") or {}),
+                "tool_observation_count": len(tool_observations),
+                "tool_observation_rejected_not_on_diff_count": len(diff_rejected_observations),
+                "promoted_tool_candidate_count": len(promoted_findings),
+                "judge_rejected_count": len(judge_rejections),
+                "final_finding_count": len(final_findings),
+                "candidate_rejected_count": len(verifier_rejections) + len(judge_rejections),
+            },
+        }
 
     return judge_findings_node

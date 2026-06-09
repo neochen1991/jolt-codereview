@@ -5,6 +5,7 @@ import re
 from collections import Counter
 from typing import Any
 
+from tools.candidate_store import upsert_candidate_finding
 from tools.tool_normalizer import normalized_rule_category
 
 
@@ -36,6 +37,55 @@ def _evidence_matches_source(evidence: str, source_snippet: str) -> dict[str, An
         containment_score = 1.0
     score = max(_token_jaccard(evidence_text, source_text), containment_score)
     return {"matched": score >= 0.5, "score": round(score, 4)}
+
+
+def _source_contradiction_reasons(finding: dict[str, Any], source_snippet: str) -> list[str]:
+    text = " ".join(
+        str(part or "")
+        for part in (
+            finding.get("title"),
+            finding.get("problem_description"),
+            finding.get("evidence"),
+            finding.get("recommendation"),
+        )
+    ).lower()
+    source = str(source_snippet or "")
+    compact_source = re.sub(r"\s+", " ", source)
+    source_lower = compact_source.lower()
+    reasons: list[str] = []
+
+    mentions_bigdecimal_double = (
+        "bigdecimal" in text
+        and any(marker in text for marker in ["double", "float", "浮点", "精度", "金额"])
+        and any(marker in text for marker in ["构造", "constructor", "new bigdecimal"])
+    )
+    if mentions_bigdecimal_double:
+        has_string_constructor = bool(re.search(r"new\s+BigDecimal\s*\(\s*['\"]", source))
+        has_double_constructor = bool(
+            re.search(r"new\s+BigDecimal\s*\(\s*(?:[0-9]+\.[0-9]+|[A-Za-z_][\w.]*\.doubleValue\s*\(\s*\)|[A-Za-z_][\w.]*Double[A-Za-z_]*|double\s+[A-Za-z_])", source)
+        )
+        if has_string_constructor and not has_double_constructor:
+            reasons.append("source_contradicts_bigdecimal_double_constructor")
+
+    mentions_return_null = any(marker in text for marker in ["return null", "返回 null", "返回null", "map 返回 null", "集合返回 null"])
+    if mentions_return_null and "return null" not in source_lower:
+        reasons.append("source_contradicts_return_null")
+
+    mentions_first_without_empty_guard = any(
+        marker in text
+        for marker in ["首元素", "第一个", "first element", "get(0)", "findfirst", "未判空", "未判断为空", "未检查为空"]
+    )
+    if mentions_first_without_empty_guard and re.search(r"\b(isEmpty|isNotEmpty)\s*\(", source) and re.search(r"\.get\s*\(\s*0\s*\)", source):
+        reasons.append("source_has_empty_guard_for_first_element")
+
+    mentions_no_try_with_resources = any(
+        marker in text
+        for marker in ["未关闭", "没有关闭", "未使用 try-with-resources", "resource leak", "资源泄漏"]
+    )
+    if mentions_no_try_with_resources and re.search(r"try\s*\([^)]*(InputStream|OutputStream|Connection|Statement|ResultSet|Reader|Writer)", source):
+        reasons.append("source_has_try_with_resources")
+
+    return reasons
 
 
 def _with_flag(finding: dict[str, Any], flag: str) -> dict[str, Any]:
@@ -136,16 +186,28 @@ def verify_candidate_findings(
             and line_no > 0
             and source_snippet_loader is not None
             and _requires_source_evidence(finding)
+        ):
+            source_snippet = source_snippet_loader(file_path, line_no, window=5)
+            contradiction_reasons = _source_contradiction_reasons(finding, source_snippet)
+            reasons.extend(contradiction_reasons)
+        if (
+            file_path in valid_files
+            and evidence
+            and line_no > 0
+            and source_snippet_loader is not None
+            and _requires_source_evidence(finding)
+            and not reasons
             and not _has_tool_observation_support(finding, tool_observations, line_tolerance=line_tolerance)
         ):
+            source_snippet = source_snippet_loader(file_path, line_no, window=5)
             evidence_signal = "\n".join(
                 str(part or "").strip()
                 for part in (evidence, finding.get("title"), finding.get("problem_description"))
                 if str(part or "").strip()
             )
-            evidence_match = _evidence_matches_source(evidence_signal, source_snippet_loader(file_path, line_no, window=5))
+            evidence_match = _evidence_matches_source(evidence_signal, source_snippet)
             evidence_score = float(evidence_match["score"])
-            if evidence_score <= 0.0:
+            if evidence_score < 0.1:
                 reasons.append("evidence_not_in_source")
             elif evidence_score < min_evidence_jaccard:
                 penalty = 0.05 if evidence_score >= 0.2 else 0.08
@@ -204,7 +266,7 @@ def make_verify_findings_node(
         suppressed_hashes = load_feedback_suppressions(conn, project_id)
         boosted_hashes = load_feedback_boosts(conn, project_id)
         tool_observations = state.get("tool_observations") or load_tool_observations(conn, run_id)
-        verified_findings = verify_findings(
+        verification_result = verify_findings(
             recorder,
             verifier_span,
             all_findings,
@@ -215,6 +277,32 @@ def make_verify_findings_node(
             tool_observations,
             state.get("source_file_contents") or {},
         )
+        if isinstance(verification_result, tuple):
+            verified_findings, verifier_rejections = verification_result
+        else:
+            verified_findings = verification_result
+            verifier_rejections = [item for item in all_findings if item.get("rejected_reasons")]
+        accepted_hashes = {str(item.get("dedupe_hash") or "") for item in verified_findings}
+        for finding in all_findings:
+            dedupe_hash = str(finding.get("dedupe_hash") or "")
+            if dedupe_hash in accepted_hashes:
+                upsert_candidate_finding(
+                    conn,
+                    review_run_id=run_id,
+                    item=finding,
+                    stage="verifier",
+                    status="accepted",
+                )
+        for finding in verifier_rejections:
+            upsert_candidate_finding(
+                conn,
+                review_run_id=run_id,
+                item=finding,
+                stage="verifier",
+                status="rejected",
+                rejected_reasons=finding.get("rejected_reasons") or [],
+            )
+        conn.commit()
         recorder.event(
             verifier_span,
             "finding_verified",
@@ -225,12 +313,22 @@ def make_verify_findings_node(
                 "tool_observation_count": len(tool_observations),
                 "suppressed_feedback_count": len(suppressed_hashes),
                 "boosted_feedback_count": len(boosted_hashes),
-                "rejected_reason_counts": rejected_reason_counts(
-                    [item for item in all_findings if item.get("rejected_reasons")]
-                ),
+                "rejected": len(verifier_rejections),
+                "rejected_reason_counts": rejected_reason_counts(verifier_rejections),
             },
         )
         recorder.finish(verifier_span)
-        return {**state, "verified_findings": verified_findings}
+        return {
+            **state,
+            "verified_findings": verified_findings,
+            "verifier_rejections": verifier_rejections,
+            "candidate_quality": {
+                **(state.get("candidate_quality") or {}),
+                "expert_candidate_count": len(all_findings),
+                "verifier_accepted_count": len(verified_findings),
+                "verifier_rejected_count": len(verifier_rejections),
+                "verifier_rejected_reason_counts": rejected_reason_counts(verifier_rejections),
+            },
+        }
 
     return verify_findings_node

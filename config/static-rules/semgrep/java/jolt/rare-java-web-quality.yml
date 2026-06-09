@@ -182,3 +182,266 @@ rules:
           }
     metadata:
       jolt_primary_rule: CODE-RESOURCE-005
+
+  - id: jolt.java.spel-standard-evaluation-context
+    message: User-controlled SpEL evaluation uses StandardEvaluationContext; restrict expression features and do not expose domain objects to arbitrary expressions.
+    severity: ERROR
+    languages: [java]
+    pattern-regex: '(?s)(SpelExpressionParser|ExpressionParser).{0,1200}(parseExpression|StandardEvaluationContext|EvaluationContext).{0,1200}\.(getValue|setVariable)\s*\('
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-INJECT-003
+
+  - id: jolt.java.spel-executable-default-expression
+    message: 默认 SpEL 表达式包含 new/T()/Runtime/getClass 等构造或方法调用能力，会扩大表达式执行攻击面；应使用白名单策略枚举或受限 SimpleEvaluationContext。
+    severity: ERROR
+    languages: [java]
+    pattern-regex: '(?s)new\s+[A-Za-z0-9_.]*(Policy|Rule|Expression|Decision)[A-Za-z0-9_]*\s*\([^;\n]{0,500}"[^"]*(new\s+java\.|T\s*\(|Runtime|getRuntime|getClass\s*\()[^"]*"'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-INJECT-003
+
+  - id: jolt.java.failure-default-allow
+    message: Failure handling returns an allow/pass/active decision; security, risk, and policy plugins should fail closed or require an explicit fallback policy.
+    severity: ERROR
+    languages: [java]
+    pattern-regex: '(?s)(catch\s*\([^)]*(Exception|Throwable)[^)]*\)|orElse|orElseGet|default).{0,500}(return\s+(true|ALLOW|Allow|PASS|Pass)|Decision\.(ALLOW|PASS)|RiskDecision\.(ALLOW|PASS)|PolicyDecision\.(ALLOW|PASS)|"active")'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-RISK-006
+
+  - id: jolt.java.fixed-active-cache-key
+    message: Cache lookup or write uses a fixed active key; include tenant, merchant, policy id, and version in the key to avoid cross-context pollution.
+    severity: WARNING
+    languages: [java]
+    pattern-regex: '(?i)(cache|map|policy|rule)[A-Za-z0-9_]*\.(get|put|computeIfAbsent|containsKey)\s*\(\s*"active"\s*[,)]'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: CODE-STATE-004
+
+  - id: jolt.java.bigdecimal-equals-money
+    message: BigDecimal.equals compares scale as well as numeric value; use compareTo(...) == 0 for monetary equality checks.
+    severity: WARNING
+    languages: [java]
+    pattern-regex: '\b(BigDecimal|amount|fee|price|balance|money|total|limit)[A-Za-z0-9_]*\.equals\s*\('
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: ALI-BIGDECIMAL-001
+
+  - id: jolt.java.bigdecimal-getter-equals-money
+    message: BigDecimal amount/fee/price/balance getter is compared with equals; use compareTo(...) == 0 for monetary equality checks.
+    severity: WARNING
+    languages: [java]
+    pattern-regex: '\bget[A-Za-z0-9_]*(Amount|Fee|Price|Balance|Money|Total|Limit)\s*\(\s*\)\.equals\s*\('
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: ALI-BIGDECIMAL-001
+
+  - id: jolt.java.sensitive-request-param-secret
+    message: Sensitive credential is accepted through @RequestParam; move secrets/tokens to authenticated headers or platform auth context and avoid URL/query logging.
+    severity: ERROR
+    languages: [java]
+    pattern-regex: '@RequestParam(?:\s*\([^)]*\))?\s+(?:String|CharSequence)\s+\w*(adminKey|apiKey|secret|token|password|credential|accessKey)\w*'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-SECRET-004
+
+  - id: jolt.java.random-in-risk-or-security-decision
+    message: java.util.Random/Math.random is used in a risk, sampling, token, or security decision; use SecureRandom for security or deterministic configuration for business policy.
+    severity: ERROR
+    languages: [java]
+    pattern-regex: '(?i)(risk|sample|token|nonce|signature|security|policy|audit|adjust).{0,500}(new\s+Random\s*\(|Math\.random\s*\(|java\.util\.Random)'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: HW-SEC-001
+
+  - id: jolt.java.secure-random-fixed-seed
+    message: SecureRandom is initialized or reseeded with a fixed literal seed; generated tokens or sampling decisions become predictable.
+    severity: ERROR
+    languages: [java]
+    pattern-either:
+      - pattern: new SecureRandom(new byte[] { ... })
+      - pattern: new SecureRandom($SEED)
+      - pattern: $RANDOM.setSeed($SEED)
+    metadata:
+      jolt_primary_rule: HW-SEC-001
+
+  - id: jolt.java.preview-findall-cross-tenant-leak
+    message: Preview/read-only endpoint loads all records with findAll and returns global summary data; constrain by tenant/resource ownership before returning counts or identifiers.
+    severity: ERROR
+    languages: [java]
+    pattern-regex: '(?s)(preview|summary|debug|inspect)[A-Za-z0-9_]*\s*\([^)]*(merchantId|tenantId|userId|accountId)[^)]*\)\s*\{.{0,1800}findAll\s*\(\s*\).{0,1200}(totalLoaded|firstPaymentId|first[A-Za-z0-9_]*Id|Map\.of|put\s*\()'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-AUTHZ-002
+
+  - id: jolt.java.policy-priority-stored-not-selected
+    message: Policy/Rule priority is accepted or stored but no nearby selection, sort, conflict resolution, or decision audit uses getPriority/priority.
+    severity: WARNING
+    languages: [java]
+    patterns:
+      - pattern-regex: '(?s)(class\s+\w*(Policy|Rule|Strategy)\w*|new\s+\w*(Policy|Rule|Strategy)\w*\s*\([^)]*priority|int\s+priority|Integer\s+priority).{0,1800}(getPriority\s*\(\s*\)|this\.priority\s*=|priority\s*=)'
+      - pattern-not-regex: '(?s)(sorted\s*\([^)]*(priority|getPriority)|Comparator\.[A-Za-z]*comparing\s*\([^)]*(priority|getPriority)|Order\.by\s*\([^)]*priority|sort\s*\([^)]*(priority|getPriority)|max\s*\([^)]*(priority|getPriority)|min\s*\([^)]*(priority|getPriority))'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: DDD-POLICY-001
+
+  - id: jolt.java.objectinputstream-readobject
+    message: ObjectInputStream.readObject deserializes untrusted object graphs; replace Java serialization or enforce a strict ObjectInputFilter and command whitelist.
+    severity: ERROR
+    languages: [java]
+    pattern-regex: '(?s)new\s+ObjectInputStream\s*\([^)]*\).{0,800}\.readObject\s*\('
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-INJECT-003
+
+  - id: jolt.java.zip-entry-write-without-normalize-guard
+    message: ZIP entry is written to disk without an obvious normalized path guard; validate target.normalize().startsWith(baseDir) and reject symlinks/special files.
+    severity: ERROR
+    languages: [java]
+    pattern-regex: '(?s)(ZipInputStream|ZipFile|ZipEntry).{0,1600}(new\s+FileOutputStream|Files\.copy|Files\.write|transferTo)\s*\('
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-INJECT-003
+
+  - id: jolt.java.zip-processing-without-size-limit
+    message: ZIP archive processing lacks an obvious entry count or extracted byte limit; enforce max entries, max total bytes, and compression-ratio limits.
+    severity: WARNING
+    languages: [java]
+    pattern-regex: '(?s)(while\s*\([^)]*(getNextEntry|entries\s*\(\s*\)).{0,1600})(new\s+FileOutputStream|Files\.copy|read\s*\(|transferTo)'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: PERF-MEM-004
+
+  - id: jolt.java.csv-response-without-escaping
+    message: CSV response is built by string concatenation/joining; escape delimiters, quotes, CR/LF, and formula-prefix cells with a CSV library.
+    severity: WARNING
+    languages: [java]
+    pattern-regex: '(?s)(text/csv|\.csv|Content-Disposition).{0,1200}(StringBuilder|String\.join|append\s*\().{0,1200}("|,|\\n)'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: CODE-STATE-004
+
+  - id: jolt.java.content-disposition-unsanitized-filename
+    message: Content-Disposition filename appears to use request/domain data directly; sanitize path separators, control characters, and length before returning headers.
+    severity: WARNING
+    languages: [java]
+    pattern-regex: '(?s)Content-Disposition.{0,600}(filename|attachment).{0,600}(\+|String\.format|formatted\s*\()'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-INJECT-003
+
+  - id: jolt.java.zip-parent-mkdirs-unchecked
+    message: Directory creation return value is ignored before archive extraction/write; fail fast if mkdirs() cannot create the target directory.
+    severity: WARNING
+    languages: [java]
+    patterns:
+      - pattern: $TARGET.getParentFile().mkdirs();
+      - pattern-not-inside: |
+          if (!$TARGET.getParentFile().mkdirs()) {
+            ...
+          }
+      - pattern-not-inside: |
+          if ($TARGET.getParentFile().mkdirs()) {
+            ...
+          }
+    metadata:
+      jolt_primary_rule: CODE-RESOURCE-005
+
+  - id: jolt.java.zipinputstream-without-try-resources
+    message: ZipInputStream is allocated without try-with-resources; close archive streams on every exception path.
+    severity: WARNING
+    languages: [java]
+    patterns:
+      - pattern: ZipInputStream $ZIP = new ZipInputStream(...);
+      - pattern-not-inside: |
+          try (ZipInputStream $ZIP = new ZipInputStream(...)) {
+            ...
+          }
+    metadata:
+      jolt_primary_rule: CODE-RESOURCE-005
+
+  - id: jolt.java.regex-pattern-compile-user-input
+    message: Pattern.compile uses request or filter input; validate regex complexity or avoid user-controlled regular expressions to prevent ReDoS.
+    severity: WARNING
+    languages: [java]
+    pattern-regex: '(?s)(RequestParam|request|filter|query|keyword|criteria|payload).{0,1200}Pattern\.compile\s*\('
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-RISK-006
+
+  - id: jolt.java.default-charset-csv-io
+    message: CSV or file IO uses the platform default charset; specify StandardCharsets.UTF_8 for stable cross-platform output.
+    severity: WARNING
+    languages: [java]
+    pattern-either:
+      - pattern: $CSV.toString().getBytes()
+      - pattern: Files.writeString($PATH, $CONTENT)
+      - pattern: $STRING.getBytes()
+    metadata:
+      jolt_primary_rule: CODE-STATE-004
+
+  - id: jolt.java.localdatetime-now-export-audit
+    message: Export/audit timestamp uses LocalDateTime.now() without Clock/ZoneId; use Instant/Clock with an explicit audit timezone.
+    severity: WARNING
+    languages: [java]
+    pattern-regex: '(?s)(export|settlement|audit|archive|reconcile|report).{0,900}LocalDateTime\.now\s*\('
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: CODE-STATE-004
+
+  - id: jolt.java.predictable-temp-file
+    message: Temporary output path is predictable or derived from business identifiers; use Files.createTempFile and restrict permissions/lifetime.
+    severity: WARNING
+    languages: [java]
+    pattern-regex: '(?s)(java\.io\.tmpdir|System\.getProperty\s*\(\s*"java\.io\.tmpdir"\s*\)).{0,500}(merchant|user|customer|payment|settlement|archive|last-)'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-RISK-006
+
+  - id: jolt.java.serializable-command-without-filter
+    message: Serializable import/command object is accepted by service code; avoid Java serialization or enforce ObjectInputFilter, command whitelist, and field validation.
+    severity: WARNING
+    languages: [java]
+    pattern-regex: '(?s)class\s+\w*(Command|Request|Payload)\w*\s+implements\s+Serializable'
+    paths:
+      include:
+        - "*.java"
+    metadata:
+      jolt_primary_rule: SEC-INJECT-003

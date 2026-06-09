@@ -47,7 +47,6 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
     ensureProjectRole,
     ensureProjectWrite,
     auditLog,
-    syncProject,
     publishFindings,
     projectRepository,
     repositoryRepository,
@@ -60,7 +59,6 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
     reviewQueueService
   } = ctx;
   const routes: Route[] = [
-    route("POST", "/api/mr-review/projects/:projectId/sync", async ({ params }) => syncProject(params.projectId)),
     route("POST", "/api/webhooks/:provider/:projectId/jolt-comment", async ({ params, body, req }) => {
       const provider = params.provider;
       if (!["github", "codehub"].includes(provider)) return badRequest("provider must be github or codehub");

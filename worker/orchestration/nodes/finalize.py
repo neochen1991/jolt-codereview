@@ -181,6 +181,7 @@ def make_finalize_node(
             ],
             "agents_executed": [str(row["agent_id"]) for row in agent_rows],
             "finding_count": len(final_findings),
+            "candidate_quality": state.get("candidate_quality") or {},
         }
         budget_used = {
             "llm_calls": int(usage["llm_calls"] or 0),

@@ -30,6 +30,78 @@ function inferSkillAssetType(path: string, explicit?: unknown) {
   return "reference";
 }
 
+type ParsedRuleDetail = {
+  rule_id: string;
+  title: string;
+  document_name: string;
+  version: string;
+  sections: Record<string, string>;
+  raw_excerpt: string;
+};
+
+const RULE_HEADING_RE = /^##\s+([A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)?)\s+(.+)$/;
+const RULE_SECTION_RE = /^###\s+(.+)$/;
+
+function requestedRuleIds(url: URL) {
+  const values = [
+    ...url.searchParams.getAll("rule_id"),
+    ...url.searchParams.getAll("rule_ids")
+  ];
+  return [...new Set(
+    values
+      .flatMap((value) => value.split(","))
+      .map((value) => value.trim())
+      .filter(Boolean)
+  )].slice(0, 50);
+}
+
+function parseRuleDetailsFromDocument(document: { name?: string; version?: string; content?: string }, wanted: Set<string>) {
+  const details = new Map<string, ParsedRuleDetail>();
+  const lines = String(document.content || "").split(/\r?\n/);
+  let current: { ruleId: string; title: string; body: string[] } | null = null;
+
+  function flush() {
+    if (!current) return;
+    if (wanted.has(current.ruleId)) {
+      const sections: Record<string, string> = {};
+      let sectionName = "说明";
+      const rawExcerpt: string[] = [];
+      for (const line of current.body) {
+        rawExcerpt.push(line);
+        const section = line.trim().match(RULE_SECTION_RE);
+        if (section) {
+          sectionName = section[1].trim();
+          sections[sectionName] = "";
+          continue;
+        }
+        if (!line.trim()) continue;
+        sections[sectionName] = [sections[sectionName], line.trim()].filter(Boolean).join("\n");
+      }
+      details.set(current.ruleId, {
+        rule_id: current.ruleId,
+        title: current.title,
+        document_name: String(document.name || "规则文档"),
+        version: String(document.version || "v1"),
+        sections,
+        raw_excerpt: rawExcerpt.join("\n").trim().slice(0, 4000)
+      });
+    }
+    current = null;
+  }
+
+  for (const line of lines) {
+    const heading = line.trim().match(RULE_HEADING_RE);
+    if (heading) {
+      flush();
+      current = { ruleId: heading[1], title: heading[2].trim(), body: [] };
+      continue;
+    }
+    if (current) current.body.push(line);
+  }
+  flush();
+  return details;
+}
+
 export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
   const {
     all,
@@ -83,6 +155,39 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
     route("GET", "/api/projects/:projectId/rule-documents", ({ params }) =>
       ruleDocumentRepository.listRuleDocuments(params.projectId)
     ),
+    route("GET", "/api/projects/:projectId/rule-details", ({ params, url }) => {
+      const ruleIds = requestedRuleIds(url);
+      if (!ruleIds.length) return { items: [] };
+      const wanted = new Set(ruleIds);
+      const documents = all<{ project_id: string; name: string; version: string; content: string }>(
+        `
+        SELECT project_id, name, version, content
+        FROM rule_documents
+        WHERE status = 'active'
+          AND project_id IN (?, 'project_default')
+        ORDER BY CASE WHEN project_id = ? THEN 0 ELSE 1 END, created_at DESC
+        `,
+        [params.projectId, params.projectId]
+      );
+      const found = new Map<string, ParsedRuleDetail>();
+      for (const document of documents) {
+        const parsed = parseRuleDetailsFromDocument(document, wanted);
+        for (const [ruleId, detail] of parsed) {
+          if (!found.has(ruleId)) found.set(ruleId, detail);
+        }
+      }
+      return {
+        items: ruleIds.map((ruleId) => found.get(ruleId) ?? {
+          rule_id: ruleId,
+          title: ruleId,
+          document_name: "",
+          version: "",
+          sections: {},
+          raw_excerpt: "",
+          missing: true
+        })
+      };
+    }),
     route("POST", "/api/projects/:projectId/rule-documents", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectWrite(params.projectId, actorId);

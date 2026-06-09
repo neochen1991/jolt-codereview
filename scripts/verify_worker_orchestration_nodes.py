@@ -21,6 +21,7 @@ from review_runtime import (
     Recorder,
     parse_semgrep_findings,
     prepare_source_worktree,
+    route_agents,
     run_static_command,
     static_tool_enabled,
     static_tool_timeout_seconds,
@@ -225,6 +226,88 @@ prompt_items = prompt_payload["structured_diff"]["items"]
 assert len(prompt_items) <= 12, len(prompt_items)
 assert prompt_items[0]["file"] == "src/test/java/com/acme/payment/PaymentServiceTest.java", prompt_items[0]
 assert len(prompt) < 60000, len(prompt)
+
+java_ddd_route_agents = [
+    {
+        "agent_id": "ddd_agent",
+        "display_name": "DDD Design Agent",
+        "applies_to": {
+            "persona": "DDD 设计专家",
+            "exclusive_scope": "ddd_design",
+            "review_scope": "领域建模、聚合、应用服务、仓储、领域事件和上下文边界",
+            "languages": ["java"],
+            "paths": ["src/main/java/**/domain/**", "src/main/java/**/application/**", "src/main/java/**/service/**", "src/main/java/**/repository/**"],
+            "triggers": ["domain", "aggregate", "application service", "bounded context", "domain event"],
+        },
+    },
+    {
+        "agent_id": "backend_agent",
+        "display_name": "Backend Agent",
+        "applies_to": {
+            "persona": "后端专家",
+            "exclusive_scope": "backend",
+            "review_scope": "API、服务编排和事务",
+            "languages": ["java"],
+            "paths": ["src/main/java/**"],
+            "triggers": ["transaction", "service", "exception"],
+        },
+    },
+    {
+        "agent_id": "coding_agent",
+        "display_name": "Coding Agent",
+        "applies_to": {
+            "persona": "通用编码专家",
+            "exclusive_scope": "general_coding",
+            "review_scope": "实现正确性",
+            "languages": ["java"],
+            "paths": ["src/main/java/**"],
+            "triggers": ["null", "exception", "state"],
+        },
+    },
+    {
+        "agent_id": "security_agent",
+        "display_name": "Security Agent",
+        "applies_to": {
+            "persona": "安全专家",
+            "exclusive_scope": "security",
+            "review_scope": "安全漏洞",
+            "languages": ["java"],
+            "paths": ["src/main/java/**"],
+            "triggers": ["auth", "token"],
+        },
+    },
+    {
+        "agent_id": "test_agent",
+        "display_name": "Test Agent",
+        "applies_to": {
+            "persona": "测试专家",
+            "exclusive_scope": "test_coverage",
+            "review_scope": "测试覆盖",
+            "languages": ["java"],
+            "paths": ["src/test/java/**"],
+            "triggers": ["test", "assert"],
+        },
+    },
+]
+java_ddd_files = [
+    ChangedFile(
+        "src/main/java/com/acme/payment/application/PaymentDddApplicationService.java",
+        "modified",
+        7,
+        0,
+        7,
+        "@@ -20,0 +21,7 @@\n"
+        "+public void forceTransition(String paymentId, String nextStatus, String merchantId) {\n"
+        "+    PaymentOrder order = paymentMapper.find(paymentId);\n"
+        "+    order.setStatus(PaymentStatus.valueOf(nextStatus));\n"
+        "+    order.setMerchantId(merchantId);\n"
+        "+    paymentMapper.save(order);\n"
+        "+}\n",
+    )
+]
+java_ddd_selected = route_agents(java_ddd_route_agents, java_ddd_files, "standard")
+java_ddd_selected_ids = [agent["agent_id"] for agent in java_ddd_selected]
+assert "ddd_agent" in java_ddd_selected_ids, java_ddd_selected_ids
 
 partial_findings = parse_llm_findings(
     "security_agent",
@@ -758,9 +841,13 @@ aggregated_tool_promoted = promote_tool_observations(
     ],
     [],
 )
-assert len(aggregated_tool_promoted) == 2, aggregated_tool_promoted
-payment_order_promoted = next(item for item in aggregated_tool_promoted if item["file_path"].endswith("PaymentOrder.java"))
-assert "24" in payment_order_promoted["evidence"] and "40" in payment_order_promoted["evidence"], payment_order_promoted
+assert len(aggregated_tool_promoted) == 3, aggregated_tool_promoted
+payment_order_lines = {
+    item["line_start"]
+    for item in aggregated_tool_promoted
+    if item["file_path"].endswith("PaymentOrder.java")
+}
+assert payment_order_lines == {24, 40}, aggregated_tool_promoted
 static_priority_findings, static_priority_rejected = judge_candidate_findings(
     [
         *[

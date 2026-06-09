@@ -538,6 +538,28 @@ BigDecimal amount = BigDecimal.valueOf(value);''',
                 rule_id="HW-SEC-001",
             )
         )
+    if re.search(r"new\s+SecureRandom\s*\(\s*(new\s+byte\s*\[\]\s*\{|\"[^\"]*\"|[A-Za-z_][A-Za-z0-9_]*\.getBytes\s*\()", line) or re.search(r"\.setSeed\s*\(\s*(new\s+byte\s*\[\]\s*\{|\"[^\"]*\"|\d+L?)", line):
+        findings.append(
+            _finding(
+                agent_id="security_agent",
+                severity="high",
+                confidence=0.9,
+                file_path=file_path,
+                line=line_no,
+                title="SecureRandom 使用固定种子",
+                description="SecureRandom 被固定字节、字符串或常量重新播种后会产生可预测序列，用于 token、抽样、风控或审计时会削弱随机性。",
+                recommendation="不要传入固定种子或调用 setSeed 固定值；安全随机直接使用系统熵初始化，业务抽样使用可审计的稳定哈希。",
+                suggested_code='''private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+
+public String nextReviewToken() {
+    byte[] bytes = new byte[32];
+    SECURE_RANDOM.nextBytes(bytes);
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+}''',
+                evidence=line,
+                rule_id="HW-SEC-001",
+            )
+        )
     return findings
 
 
@@ -566,6 +588,140 @@ def _scan_class_level_rules(
                 rule_id="HW-LAYER-001",
             )
         )
+    if (
+        ("/application/" in lower_path or "/service/" in lower_path)
+        and re.search(r"\.(setStatus|setMerchantId|setTenantId|setAmount|setOwnerId|setState)\s*\(", content)
+        and re.search(r"(force|override|transition|reassign|PaymentStatus\.valueOf|Status\.valueOf)", content, re.I)
+    ):
+        line_no = next((no for no, line in lines if re.search(r"\.(setStatus|setMerchantId|setTenantId|setAmount|setOwnerId|setState)\s*\(", line)), 1)
+        findings.append(
+            _finding(
+                agent_id="ddd_agent",
+                severity="high",
+                confidence=0.84,
+                file_path=file_path,
+                line=line_no,
+                title="应用服务直接改写聚合状态或归属",
+                description="应用服务通过 setter/force/override 直接改写聚合核心状态或租户商户归属，聚合无法维护状态机和业务不变量。",
+                recommendation="将状态流转、归属变更和校验收敛到聚合业务方法或领域服务，应用服务只编排命令、事务和端口调用。",
+                suggested_code='''payment.transferMerchant(new MerchantId(merchantId), transferPolicy);
+payment.transitionTo(PaymentStatus.fromExternal(nextStatus), transitionPolicy);
+paymentRepository.save(payment);''',
+                evidence="应用服务中出现聚合 setter 与 force/override/transition/reassign 状态流转组合。",
+                rule_id="DDD-AGG-002",
+            )
+        )
+    preview_start = next(
+        (
+            no
+            for no, line in lines
+            if re.search(r"\bpreview[A-Za-z0-9_]*\s*\([^)]*(merchantId|tenantId|userId|accountId)[^)]*\)", line, re.I)
+        ),
+        None,
+    )
+    preview_findall_line = next((no for no, line in lines if preview_start and preview_start <= no <= preview_start + 80 and "findAll(" in line), None)
+    preview_window = "\n".join(line for no, line in lines if preview_start and preview_start <= no <= preview_start + 80)
+    if preview_start and preview_findall_line and re.search(r"\b(totalLoaded|first[A-Za-z0-9_]*Id|Map\.of|put\s*\()", preview_window):
+        line_no = preview_findall_line
+        findings.append(
+            _finding(
+                agent_id="security_agent",
+                severity="high",
+                confidence=0.88,
+                file_path=file_path,
+                line=line_no,
+                title="预览接口返回全局数据摘要",
+                description="带有商户、租户或用户入参的 preview/summary 方法调用 findAll 后返回全局数量或首条资源 ID，可能泄露跨租户数据。",
+                recommendation="按当前主体和资源归属过滤查询，只返回该主体可访问的数据，不返回全局总量或无关资源标识。",
+                suggested_code='''List<PaymentOrder> orders = paymentRepository.findByMerchantId(merchantId, PageRequest.of(0, 20));
+return Map.of(
+    "merchantId", merchantId,
+    "totalLoaded", orders.size()
+);''',
+                evidence="preview/summary 方法中出现 findAll 并返回 total/first id 类摘要字段。",
+                rule_id="SEC-AUTHZ-002",
+            )
+        )
+    if (
+        re.search(r"\b(class\s+\w*(Policy|Rule|Strategy)\w*|new\s+\w*(Policy|Rule|Strategy)\w*\s*\([^)]*priority|int\s+priority|Integer\s+priority)", content)
+        and re.search(r"\b(getPriority\s*\(\s*\)|this\.priority\s*=|priority\s*=)", content)
+        and not re.search(r"\b(sorted|sort|max|min|Comparator\.[A-Za-z]*comparing|Order\.by)\s*\([^)]*(priority|getPriority)", content)
+    ):
+        line_no = next((no for no, line in lines if "priority" in line or "getPriority" in line), 1)
+        findings.append(
+            _finding(
+                agent_id="ddd_agent",
+                severity="medium",
+                confidence=0.86,
+                file_path=file_path,
+                line=line_no,
+                title="策略优先级字段未参与决策选择",
+                description="Policy/Rule/Strategy 接收或保存 priority，但当前变更中没有看到排序、选择、冲突解决或决策审计使用该字段，策略优先级可能形同虚设。",
+                recommendation="在策略选择流程中显式按 priority/version/effectiveAt 进行排序或冲突解决，并在决策日志中记录命中的策略优先级。",
+                suggested_code='''RiskPolicy selected = policies.stream()
+    .filter(policy -> policy.appliesTo(order))
+    .sorted(Comparator.comparingInt(RiskPolicy::getPriority).reversed())
+    .findFirst()
+    .orElseThrow(() -> new PolicyNotFoundException(merchantId));''',
+                evidence="策略对象出现 priority/getPriority，但未发现排序或选择逻辑使用该字段。",
+                rule_id="DDD-POLICY-001",
+            )
+        )
+    if ("/domain/" in lower_path and "repository" in lower_path) or lower_path.endswith("repository.java"):
+        if re.search(r"\b(QueryWrapper|EntityManager|Pageable|Specification|CriteriaBuilder|SqlSession|Wrapper<|Example)\b", content):
+            line_no = next((no for no, line in lines if re.search(r"\b(QueryWrapper|EntityManager|Pageable|Specification|CriteriaBuilder|SqlSession|Wrapper<|Example)\b", line)), 1)
+            findings.append(
+                _finding(
+                    agent_id="ddd_agent",
+                    severity="medium",
+                    confidence=0.82,
+                    file_path=file_path,
+                    line=line_no,
+                    title="领域 Repository 接口泄漏 ORM 或查询实现细节",
+                    description="领域层仓储接口暴露 QueryWrapper、EntityManager、Pageable 等基础设施类型，会让领域层依赖存储实现并削弱聚合边界。",
+                    recommendation="领域 Repository 只暴露业务值对象、聚合根和业务查询条件；复杂查询放入 query service/read model。",
+                    suggested_code='''Optional<PaymentOrder> find(PaymentId paymentId);
+List<PaymentSummary> findPendingPayments(MerchantId merchantId);''',
+                    evidence="领域 Repository 签名中出现 ORM/查询基础设施类型。",
+                    rule_id="DDD-REPO-002",
+                )
+            )
+    if lower_path.endswith("event.java") or "/event/" in lower_path:
+        event_class = re.search(r"\b(class|record)\s+([A-Z][A-Za-z0-9_]*Event)\b", content)
+        if event_class and re.match(r"(Pay|Create|Update|Delete|Cancel|Refund|Set|Sync)[A-Z].*Event", event_class.group(2)):
+            line_no = next((no for no, line in lines if event_class.group(2) in line), 1)
+            findings.append(
+                _finding(
+                    agent_id="ddd_agent",
+                    severity="medium",
+                    confidence=0.8,
+                    file_path=file_path,
+                    line=line_no,
+                    title="领域事件命名为命令式动作",
+                    description="领域事件应表达已经发生的业务事实，命令式事件名会混淆意图和事实，导致消费方语义不清。",
+                    recommendation="将事件命名为过去式事实，并由命令/应用服务触发领域动作。",
+                    suggested_code='''public record OrderPaidEvent(OrderId orderId, Money paidAmount, Instant occurredAt) {}''',
+                    evidence=event_class.group(2),
+                    rule_id="DDD-EVENT-001",
+                )
+            )
+        if re.search(r"\b[A-Z][A-Za-z0-9_]*(Order|Payment|Aggregate|Entity)\s+\w+", content):
+            line_no = next((no for no, line in lines if re.search(r"\b[A-Z][A-Za-z0-9_]*(Order|Payment|Aggregate|Entity)\s+\w+", line)), 1)
+            findings.append(
+                _finding(
+                    agent_id="ddd_agent",
+                    severity="medium",
+                    confidence=0.8,
+                    file_path=file_path,
+                    line=line_no,
+                    title="领域事件直接携带聚合或实体对象",
+                    description="事件直接携带可变聚合/实体会把对象图和持久化状态泄漏给消费方，破坏事件快照语义和兼容性。",
+                    recommendation="事件只携带领域 ID、版本、发生时间和值对象快照，消费方按自身上下文转换。",
+                    suggested_code='''public record PaymentConfirmedEvent(PaymentId paymentId, Money amount, Instant occurredAt) {}''',
+                    evidence="Event 字段或 record 参数中出现聚合/实体对象。",
+                    rule_id="DDD-EVENT-002",
+                )
+            )
     if "@transactional" in lowered_content:
         for no, line in lines:
             lowered = line.lower()

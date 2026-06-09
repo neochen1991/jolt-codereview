@@ -12,7 +12,9 @@ import {
   Code2,
   Database,
   FileDown,
+  FileCode2,
   Filter,
+  Folder,
   GitBranch,
   Link2,
   Loader2,
@@ -25,6 +27,7 @@ import {
   SlidersHorizontal,
   Trash2,
   Wrench,
+  X,
   UserRound,
   Users,
   Zap
@@ -108,6 +111,16 @@ type Finding = {
   selected: number;
   publish_state: string;
   lifecycle_state: string;
+};
+
+type RuleDetail = {
+  rule_id: string;
+  title: string;
+  document_name?: string;
+  version?: string;
+  sections?: Record<string, string>;
+  raw_excerpt?: string;
+  missing?: boolean;
 };
 
 type Detail = {
@@ -525,7 +538,7 @@ function shortPath(value: string) {
 }
 
 function providerLabel(provider: string) {
-  if (provider === "github") return "CodeHub 兼容";
+  if (provider === "github") return "GitHub";
   if (provider === "codehub") return "CodeHub";
   return provider || "--";
 }
@@ -601,17 +614,49 @@ function parseUnifiedPatch(patch: string): ParsedDiffLine[] {
 }
 
 function buildFileTree(files: MrChangedFile[]) {
-  return files
-    .map((file) => {
-      const parts = file.filename.split("/");
-      return {
-        path: file.filename,
-        name: parts[parts.length - 1] || file.filename,
-        depth: Math.max(0, parts.length - 1),
-        status: file.status || "modified"
-      };
-    })
-    .sort((left, right) => left.path.localeCompare(right.path));
+  const sortedFiles = [...files].sort((left, right) => left.filename.localeCompare(right.filename));
+  const entries: Array<{
+    key: string;
+    path: string;
+    name: string;
+    depth: number;
+    kind: "directory" | "file";
+    status?: string;
+    file?: MrChangedFile;
+  }> = [];
+  const seenDirectories = new Set<string>();
+  for (const file of sortedFiles) {
+    const parts = file.filename.split("/").filter(Boolean);
+    const fileName = parts[parts.length - 1] || file.filename;
+    let currentPath = "";
+    parts.slice(0, -1).forEach((part, index) => {
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      if (seenDirectories.has(currentPath)) return;
+      seenDirectories.add(currentPath);
+      entries.push({
+        key: `dir:${currentPath}`,
+        path: currentPath,
+        name: part,
+        depth: index,
+        kind: "directory"
+      });
+    });
+    entries.push({
+      key: `file:${file.filename}`,
+      path: file.filename,
+      name: fileName,
+      depth: Math.max(0, parts.length - 1),
+      kind: "file",
+      status: file.status || "modified",
+      file
+    });
+  }
+  return entries;
+}
+
+function basename(path: string) {
+  const parts = String(path || "").split("/").filter(Boolean);
+  return parts[parts.length - 1] || path || "--";
 }
 
 function App() {
@@ -697,14 +742,25 @@ function App() {
 
   async function sync() {
     setSyncing(true);
-    setMessage("正在同步 CodeHub MR...");
+    setMessage("正在同步项目已绑定代码仓的 MR...");
     try {
-      const result = await api<{ merge_requests: number; jobs_created: number; errors: string[] }>(
+      const result = await api<{
+        repositories: number;
+        merge_requests: number;
+        jobs_created: number;
+        errors: string[];
+        repository_results?: Array<{ name: string; merge_requests: number; jobs_created: number; error?: string }>;
+      }>(
         `/api/mr-review/projects/${activeProjectId}/sync`,
         { method: "POST", body: "{}" }
       );
       await loadAll(activeMrId);
-      setMessage(`CodeHub 已同步 · ${result.merge_requests} 个 MR · 新增 ${result.jobs_created} 个任务`);
+      const repoSummary = (result.repository_results || [])
+        .slice(0, 4)
+        .map((repo) => `${repo.name}:${repo.merge_requests}${repo.error ? "!" : ""}`)
+        .join("，");
+      const suffix = repoSummary ? ` · ${repoSummary}${(result.repository_results?.length || 0) > 4 ? "…" : ""}` : "";
+      setMessage(`已同步 ${result.repositories} 个代码仓 · ${result.merge_requests} 个 MR · 新增 ${result.jobs_created} 个任务${suffix}`);
       if (result.errors.length) setMessage(`同步完成，但有错误：${result.errors.join("; ")}`);
     } catch (error) {
       setMessage((error as Error).message);
@@ -1427,7 +1483,7 @@ function ProjectCard({
       </div>
       <div className="project-card-metrics">
         <span>仓库 {repos.length}</span>
-        <span>CodeHub 兼容 {repos.filter((repo) => repo.provider === "github").length}</span>
+        <span>GitHub {repos.filter((repo) => repo.provider === "github").length}</span>
         <span>CodeHub {repos.filter((repo) => repo.provider === "codehub").length}</span>
       </div>
       <div className="project-card-actions">
@@ -1466,7 +1522,7 @@ function ProjectCard({
                 <h3>关联代码仓</h3>
                 <div className="project-repo-editor">
                   <select value={provider} onChange={(event) => setProvider(event.target.value)} disabled={!canEdit}>
-                    <option value="github">CodeHub 兼容</option>
+                    <option value="github">GitHub</option>
                     <option value="codehub">CodeHub</option>
                   </select>
                   <input value={repoId} onChange={(event) => setRepoId(event.target.value)} placeholder="Git 仓库链接，例如 https://git.example.com/team/repo.git" disabled={!canEdit} />
@@ -3529,7 +3585,11 @@ function FindingDetailModal({
 }) {
   const [sourceCode, setSourceCode] = useState("");
   const [sourcePatch, setSourcePatch] = useState("");
+  const [sourceByPath, setSourceByPath] = useState<Record<string, string>>({});
+  const [patchByPath, setPatchByPath] = useState<Record<string, string>>({});
   const [sourceLoading, setSourceLoading] = useState(false);
+  const [ruleDetails, setRuleDetails] = useState<RuleDetail[]>([]);
+  const [ruleDetailsLoading, setRuleDetailsLoading] = useState(false);
   const coveredRules = parseJsonArray(finding.covered_rules_json);
   const skippedRules = parseJsonArray(finding.skipped_rules_json);
   const sourceObservations = parseJsonObjectArray(finding.source_observations_json);
@@ -3538,26 +3598,46 @@ function FindingDetailModal({
   const traceLocation = qualityTrace.location as Record<string, unknown> | undefined;
   const location = formatFindingLocation(finding);
   const suggestedCode = (finding.suggested_code || extractSuggestedCode(finding.recommendation)).trim();
+  const primaryRules = coveredRules.length ? coveredRules : ["未声明具体 rule_id"];
+  const ruleKey = primaryRules.join(",");
+  const sourcePaths = Array.from(new Set(
+    [
+      finding.file_path,
+      ...sourceObservations.map(observationFilePath)
+    ].map((value) => String(value || "").trim()).filter(Boolean)
+  ));
+  const sourcePathKey = sourcePaths.join("\n");
   useEffect(() => {
     let cancelled = false;
     async function loadSource() {
-      if (!finding.file_path || !mr.id) return;
+      if (!mr.id || !sourcePaths.length) return;
       setSourceLoading(true);
-      try {
-        const result = await api<{ content: string }>(
-          `/api/vcs/${projectId}/merge-requests/${mr.id}/file?path=${encodeURIComponent(finding.file_path)}&sha=${encodeURIComponent(mr.latest_head_sha || "")}`
-        );
-        if (!cancelled) setSourceCode(result.content || "");
-      } catch {
-        if (!cancelled) setSourceCode("");
-      }
+      const nextPatchByPath: Record<string, string> = {};
       try {
         const files = await api<{ items: MrChangedFile[] }>(`/api/vcs/${projectId}/merge-requests/${mr.id}/files`);
-        const changed = (files.items || []).find((item) => item.filename === finding.file_path);
-        if (!cancelled) setSourcePatch(changed?.patch || "");
+        for (const file of files.items || []) {
+          if (file.filename) nextPatchByPath[file.filename] = file.patch || "";
+        }
       } catch {
-        if (!cancelled) setSourcePatch("");
+        // Source file loading below still gives useful context when changed-file metadata is unavailable.
       } finally {
+        const nextSourceByPath: Record<string, string> = {};
+        await Promise.all(sourcePaths.map(async (filePath) => {
+          try {
+            const result = await api<{ content: string }>(
+              `/api/vcs/${projectId}/merge-requests/${mr.id}/file?path=${encodeURIComponent(filePath)}&sha=${encodeURIComponent(mr.latest_head_sha || "")}`
+            );
+            nextSourceByPath[filePath] = result.content || "";
+          } catch {
+            nextSourceByPath[filePath] = "";
+          }
+        }));
+        if (!cancelled) {
+          setPatchByPath(nextPatchByPath);
+          setSourceByPath(nextSourceByPath);
+          setSourceCode(nextSourceByPath[finding.file_path] || "");
+          setSourcePatch(nextPatchByPath[finding.file_path] || "");
+        }
         if (!cancelled) setSourceLoading(false);
       }
     }
@@ -3565,7 +3645,32 @@ function FindingDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [finding.file_path, mr.id, mr.latest_head_sha, projectId]);
+  }, [finding.id, finding.file_path, mr.id, mr.latest_head_sha, projectId, sourcePathKey]);
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRuleDetails() {
+      const ruleIds = primaryRules.filter((rule) => rule !== "未声明具体 rule_id");
+      if (!ruleIds.length) {
+        setRuleDetails([]);
+        return;
+      }
+      setRuleDetailsLoading(true);
+      try {
+        const result = await api<{ items: RuleDetail[] }>(
+          `/api/projects/${projectId}/rule-details?rule_ids=${encodeURIComponent(ruleIds.join(","))}`
+        );
+        if (!cancelled) setRuleDetails(result.items || []);
+      } catch {
+        if (!cancelled) setRuleDetails(ruleIds.map((rule) => ({ rule_id: rule, title: rule, missing: true })));
+      } finally {
+        if (!cancelled) setRuleDetailsLoading(false);
+      }
+    }
+    loadRuleDetails();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, ruleKey]);
   const patchProblemLines = sourcePatch ? diffCodeWindow(sourcePatch, finding.line_start || 1, finding.line_end || finding.line_start || 1) : [];
   const problemLines = sourceCode
     ? patchProblemLines.length
@@ -3573,90 +3678,108 @@ function FindingDetailModal({
       : sourceCodeWindow(sourceCode, finding.line_start || 1, finding.line_end || finding.line_start || 1)
     : textCodeLines(finding.evidence || location, finding.line_start || 1);
   const suggestionLines = textCodeLines(suggestedCode || "// 当前 finding 未提供明确代码片段，请重新检视生成建议修改代码。", finding.line_start || 1);
+  const evidenceCount = sourceObservations.length || toolProvenance.length;
+  const ruleDetailsById = Object.fromEntries(ruleDetails.map((rule) => [rule.rule_id, rule]));
+  const sourceLinesForTarget = (filePath: string, startLine: number, endLine: number, fallback: string) => {
+    const patch = patchByPath[filePath] || "";
+    const source = sourceByPath[filePath] || "";
+    const patchLines = patch ? diffCodeWindow(patch, startLine, endLine) : [];
+    if (patchLines.length) return patchLines;
+    if (source) return sourceCodeWindow(source, startLine, endLine);
+    return textCodeLines(fallback || `${filePath}:${startLine}`, startLine);
+  };
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
       <section className="finding-modal" onClick={(event) => event.stopPropagation()}>
-        <header>
-          <div>
-            <SeverityBadge severity={finding.severity} />
+        <header className="finding-modal-header">
+          <div className="finding-modal-title">
+            <div className="finding-modal-kicker">
+              <SeverityBadge severity={finding.severity} />
+              <span>{agentLabel(finding.agent_id)}</span>
+              <span>置信度 {finding.confidence.toFixed(2)}</span>
+              {finding.publish_state && <span>{finding.publish_state}</span>}
+            </div>
             <strong>{finding.title}</strong>
+            <p>
+              <span title={location}>{location}</span>
+              <em>{primaryRules.slice(0, 3).join(" / ")}</em>
+              {primaryRules.length > 3 && <em>+{primaryRules.length - 3}</em>}
+            </p>
           </div>
+          <button className="finding-modal-close" type="button" onClick={onClose} aria-label="关闭问题详情" title="关闭">
+            <X size={18} />
+          </button>
         </header>
-        <div className="finding-modal-grid">
-          <article>
-            <span>问题位置</span>
-            <strong>{location}</strong>
-          </article>
-          <article>
-            <span>检视专家</span>
-            <strong>{agentLabel(finding.agent_id)}</strong>
-          </article>
-          <article>
-            <span>置信度</span>
-            <strong>{finding.confidence.toFixed(2)}</strong>
-          </article>
-          <article>
-            <span>发布状态</span>
-            <strong>{finding.publish_state}</strong>
-          </article>
+
+        <div className="finding-summary-grid">
+          <section>
+            <h3>问题影响</h3>
+            <p>{finding.problem_description || "暂无问题描述。"}</p>
+          </section>
+          <section>
+            <h3>修复建议</h3>
+            <p>{finding.recommendation || "暂无修复建议。"}</p>
+          </section>
         </div>
-        <div className="finding-detail-section">
-          <h3>质量回溯</h3>
-          <div className="trace-chain">
-            <p>
-              <span>专家</span>
-              <strong>{agentLabel(String(qualityTrace.agent_id || finding.agent_id))}</strong>
-            </p>
-            <p>
-              <span>位置</span>
-              <strong>{formatTraceLocation(traceLocation) || location}</strong>
-            </p>
-            <p>
-              <span>工具证据</span>
-              <strong>{sourceObservations.length} 条</strong>
-            </p>
-            <p>
-              <span>去重指纹</span>
-              <strong>{String(qualityTrace.dedupe_hash || finding.id)}</strong>
-            </p>
+
+        <div className="finding-detail-section finding-code-compare">
+          <h3>代码上下文</h3>
+          <div>
+            <GithubCodeBlock
+              filePath={finding.file_path}
+              label={sourceLoading ? "正在加载源代码" : "源问题代码"}
+              location={location}
+              lines={problemLines}
+              highlightStart={finding.line_start || undefined}
+              highlightEnd={finding.line_end || finding.line_start || undefined}
+            />
+            <GithubCodeBlock
+              filePath={finding.file_path}
+              label="建议代码"
+              location={location}
+              lines={suggestionLines}
+              mode="suggestion"
+            />
           </div>
         </div>
-        <div className="finding-detail-section">
-          <h3>问题描述</h3>
-          <p>{finding.problem_description}</p>
-        </div>
-        <div className="finding-detail-section">
+
+        <div className="finding-detail-section finding-rule-section">
           <h3>违反规范</h3>
-          <div className="rule-chip-line">
-            {(coveredRules.length ? coveredRules : ["未声明具体 rule_id"]).map((rule) => <span key={rule}>{rule}</span>)}
+          <div className="rule-detail-list">
+            {primaryRules.map((rule) => (
+              <RuleDetailCard
+                key={rule}
+                ruleId={rule}
+                detail={ruleDetailsById[rule]}
+                loading={ruleDetailsLoading}
+              />
+            ))}
           </div>
           {skippedRules.length > 0 && <small>已检查未命中：{skippedRules.join(", ")}</small>}
         </div>
-        <div className="finding-detail-section">
-          <h3>问题代码详情</h3>
-          <GithubCodeBlock
-            filePath={finding.file_path}
-            label={sourceLoading ? "正在加载源代码" : "源问题代码"}
-            location={location}
-            lines={problemLines}
-            highlightStart={finding.line_start || undefined}
-            highlightEnd={finding.line_end || finding.line_start || undefined}
-          />
+
+        <div className="finding-detail-section finding-trace-section">
+          <h3>证据摘要</h3>
+          <dl className="trace-list">
+            <div>
+              <dt>专家</dt>
+              <dd>{agentLabel(String(qualityTrace.agent_id || finding.agent_id))}</dd>
+            </div>
+            <div>
+              <dt>定位</dt>
+              <dd>{formatTraceLocation(traceLocation) || location}</dd>
+            </div>
+            <div>
+              <dt>工具证据</dt>
+              <dd>{evidenceCount} 条</dd>
+            </div>
+            <div>
+              <dt>去重指纹</dt>
+              <dd>{String(qualityTrace.dedupe_hash || finding.id)}</dd>
+            </div>
+          </dl>
         </div>
-        <div className="finding-detail-section">
-          <h3>建议修改方案</h3>
-          <p>{finding.recommendation}</p>
-        </div>
-        <div className="finding-detail-section">
-          <h3>建议修改代码</h3>
-          <GithubCodeBlock
-            filePath={finding.file_path}
-            label="建议代码"
-            location={location}
-            lines={suggestionLines}
-            mode="suggestion"
-          />
-        </div>
+
         <div className="finding-detail-section">
           <h3>工具证据</h3>
           {sourceObservations.length ? (
@@ -3670,6 +3793,21 @@ function FindingDetailModal({
                   </div>
                   <p>{String(item.message || "工具命中候选问题")}</p>
                   <small>{formatObservationLocation(item)}</small>
+                  {observationFilePath(item) && (
+                    <GithubCodeBlock
+                      filePath={observationFilePath(item)}
+                      label="工具命中源码"
+                      location={formatObservationLocation(item)}
+                      lines={sourceLinesForTarget(
+                        observationFilePath(item),
+                        observationLineStart(item),
+                        observationLineEnd(item),
+                        String(item.evidence || item.message || "工具命中候选问题")
+                      )}
+                      highlightStart={observationLineStart(item)}
+                      highlightEnd={observationLineEnd(item)}
+                    />
+                  )}
                 </article>
               ))}
             </div>
@@ -3680,6 +3818,38 @@ function FindingDetailModal({
         </div>
       </section>
     </div>
+  );
+}
+
+function RuleDetailCard({ ruleId, detail, loading }: { ruleId: string; detail?: RuleDetail; loading: boolean }) {
+  const sections = detail?.sections || {};
+  const preferredSections = ["规范说明", "检查点", "如何检查", "反例", "正例", "说明"];
+  const visibleSections = preferredSections
+    .map((name) => [name, sections[name]] as [string, string | undefined])
+    .filter(([, value]) => value && value.trim());
+  return (
+    <article className={`rule-detail-card ${detail?.missing ? "missing" : ""}`}>
+      <header>
+        <div>
+          <strong>{ruleId}</strong>
+          <span>{loading ? "正在加载规范详情..." : (detail?.document_name || "项目规范")}</span>
+        </div>
+        {detail?.version && <em>{detail.version}</em>}
+      </header>
+      <h4>{detail?.title || ruleId}</h4>
+      {detail?.missing && <p>当前项目绑定的规范文档中未找到该 rule_id 的详细说明。</p>}
+      {!detail?.missing && visibleSections.length > 0 && (
+        <div className="rule-detail-sections">
+          {visibleSections.map(([name, value]) => (
+            <section key={name}>
+              <span>{name}</span>
+              <p>{value}</p>
+            </section>
+          ))}
+        </div>
+      )}
+      {!detail?.missing && !visibleSections.length && detail?.raw_excerpt && <p>{detail.raw_excerpt}</p>}
+    </article>
   );
 }
 
@@ -3729,6 +3899,20 @@ function GithubCodeBlock({
       </div>
     </div>
   );
+}
+
+function observationFilePath(item: Record<string, unknown>) {
+  return String(item.file_path || item.path || item.filename || "").trim();
+}
+
+function observationLineStart(item: Record<string, unknown>) {
+  const value = Number(item.line_start || item.start_line || item.line || 1);
+  return Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+function observationLineEnd(item: Record<string, unknown>) {
+  const value = Number(item.line_end || item.end_line || observationLineStart(item));
+  return Number.isFinite(value) && value > 0 ? value : observationLineStart(item);
 }
 
 function ToolResultsPanel({ detail, onOpenFinding }: { detail: Detail; onOpenFinding: (finding: Finding) => void }) {
@@ -3842,7 +4026,7 @@ function ToolObservationModal({ observation, onClose }: { observation: Record<st
           </div>
           <em>{Number(observation.confidence || 0).toFixed(2)}</em>
         </header>
-        <div className="finding-modal-grid">
+        <div className="tool-observation-meta-grid">
           <article>
             <span>工具</span>
             <strong>{String(observation.tool_name || "--")}</strong>
@@ -3912,15 +4096,30 @@ function MrPreviewModal({
             <strong>变更文件</strong>
             {loading && <p>正在加载 diff...</p>}
             {!loading && !tree.length && <p>暂无变更文件。可能是空提交、平台未返回文件列表，或该 MR 只有元数据变化。</p>}
-            {!loading && tree.map((entry) => (
-              <button
-                key={entry.path}
-                type="button"
-                className={current?.filename === entry.path ? "active" : ""}
-                style={{ paddingLeft: `${12 + entry.depth * 14}px` }}
-                onClick={() => setActiveFile(entry.path)}
+            {!loading && tree.map((entry) => entry.kind === "directory" ? (
+              <div
+                key={entry.key}
+                className={`mr-file-tree-node directory ${current?.filename?.startsWith(`${entry.path}/`) ? "contains-active" : ""}`}
+                style={{ paddingLeft: `${10 + entry.depth * 14}px` }}
+                title={entry.path}
               >
+                <Folder size={14} />
                 <span>{entry.name}</span>
+              </div>
+            ) : (
+              <button
+                key={entry.key}
+                type="button"
+                className={`mr-file-tree-node file ${current?.filename === entry.path ? "active" : ""}`}
+                style={{ paddingLeft: `${10 + entry.depth * 14}px` }}
+                onClick={() => setActiveFile(entry.path)}
+                title={entry.path}
+              >
+                <FileCode2 size={14} />
+                <span>
+                  <strong>{entry.name}</strong>
+                  <small>{entry.path}</small>
+                </span>
                 <em>{entry.status}</em>
               </button>
             ))}
@@ -3929,7 +4128,10 @@ function MrPreviewModal({
             {current ? (
               <>
                 <div className="mr-diff-head">
-                  <strong>{current.filename}</strong>
+                  <div>
+                    <strong title={current.filename}>{basename(current.filename)}</strong>
+                    <small title={current.filename}>{current.filename}</small>
+                  </div>
                   <span>+{current.additions || 0} / -{current.deletions || 0}</span>
                 </div>
                 <GithubCodeBlock

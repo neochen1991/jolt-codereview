@@ -306,7 +306,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         resourceType: "project",
         resourceId: params.projectId,
         summary: `synced ${result.merge_requests} merge requests, queued ${result.jobs_created} jobs`,
-        metadata: { repositories: result.repositories, errors: result.errors }
+        metadata: { repositories: result.repositories, repository_results: result.repository_results, errors: result.errors }
       });
       return result;
     }),

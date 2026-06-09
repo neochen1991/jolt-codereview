@@ -16,6 +16,24 @@ import type { ProjectConfigService } from "../services/ProjectConfigService.js";
 import type { ReviewQueueService } from "../services/ReviewQueueService.js";
 import type { StaticToolAvailabilityService } from "../services/StaticToolAvailabilityService.js";
 
+export interface MrSyncRepositoryResult {
+  repository_id: string;
+  name: string;
+  provider: string;
+  external_repo_id: string;
+  merge_requests: number;
+  jobs_created: number;
+  error?: string;
+}
+
+export interface MrSyncProjectResult {
+  repositories: number;
+  merge_requests: number;
+  jobs_created: number;
+  errors: string[];
+  repository_results: MrSyncRepositoryResult[];
+}
+
 export interface BackendRouteContext {
   config: AppConfig;
   db: Db;
@@ -71,7 +89,7 @@ export interface BackendRouteContext {
     summary?: string;
     metadata?: Record<string, unknown>;
   }): void;
-  syncProject(projectId: string): Promise<{ repositories: number; merge_requests: number; jobs_created: number; errors: string[] }>;
+  syncProject(projectId: string): Promise<MrSyncProjectResult>;
   publishFindings(
     mrId: string,
     findingIds: string[],

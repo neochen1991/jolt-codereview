@@ -4,6 +4,23 @@ import hashlib
 import re
 from typing import Any
 
+DDD_RULE_IDS = {
+    "DDD-CTX-001", "DDD-CTX-002", "DDD-CTX-003", "DDD-CTX-004", "DDD-CTX-005",
+    "DDD-AGG-001", "DDD-AGG-002", "DDD-AGG-003", "DDD-AGG-004", "DDD-AGG-005", "DDD-AGG-006", "DDD-AGG-007", "DDD-AGG-008", "DDD-AGG-009", "DDD-AGG-010",
+    "DDD-ENT-001", "DDD-ENT-002",
+    "DDD-VO-001", "DDD-VO-002", "DDD-VO-003", "DDD-VO-004", "DDD-VO-005", "DDD-VO-006", "DDD-VO-007",
+    "DDD-APP-001", "DDD-APP-002", "DDD-APP-003", "DDD-APP-004", "DDD-APP-005",
+    "DDD-DOM-SVC-001", "DDD-DOM-SVC-002", "DDD-POLICY-001",
+    "DDD-REPO-001", "DDD-REPO-002", "DDD-REPO-003", "DDD-REPO-004",
+    "DDD-INFRA-001", "DDD-INFRA-002", "DDD-INFRA-003",
+    "DDD-EVENT-001", "DDD-EVENT-002", "DDD-EVENT-003", "DDD-EVENT-004", "DDD-EVENT-005", "DDD-EVENT-006",
+    "DDD-LAYER-001", "DDD-LAYER-002", "DDD-LAYER-003", "DDD-LAYER-004", "DDD-LAYER-005",
+    "DDD-RULE-001", "DDD-RULE-002", "DDD-RULE-003", "DDD-RULE-004", "DDD-RULE-005", "DDD-RULE-006",
+    "DDD-CQRS-001", "DDD-CQRS-002", "DDD-CQRS-003", "DDD-CQRS-004",
+    "DDD-EVO-001", "DDD-EVO-002", "DDD-EVO-003", "DDD-EVO-004",
+    "DDD-TENANT-001", "DDD-TENANT-002", "DDD-TENANT-003",
+}
+
 
 RULE_CATEGORY_MAP = {
     "SQL_INJECTION_JDBC": "SQL_INJECTION",
@@ -111,6 +128,47 @@ RULE_CATEGORY_MAP = {
     "jolt.java.return-internal-mutable-collection": "STATE_MACHINE_INTEGRITY",
     "jolt.java.transactional-self-invocation": "TRANSACTION_PROXY_INVALID",
     "jolt.java.jdbc-autocommit-not-restored": "DB_CONNECTION_STATE_LEAK",
+    "config.static-rules.semgrep.java.spring.security.audit.spel-injection": "SPEL_INJECTION",
+    "spring.security.audit.spel-injection": "SPEL_INJECTION",
+    "spel-injection": "SPEL_INJECTION",
+    "jolt.java.spel-standard-evaluation-context": "SPEL_INJECTION",
+    "jolt.java.spel-executable-default-expression": "SPEL_INJECTION",
+    "config.static-rules.semgrep.java.jolt.jolt.java.spel-executable-default-expression": "SPEL_INJECTION",
+    "config.static-rules.semgrep.java.lang.security.audit.unsafe-reflection": "UNSAFE_REFLECTION",
+    "lang.security.audit.unsafe-reflection": "UNSAFE_REFLECTION",
+    "unsafe-reflection": "UNSAFE_REFLECTION",
+    "jolt.java.failure-default-allow": "FAILURE_DEFAULT_ALLOW",
+    "jolt.java.fixed-active-cache-key": "CACHE_KEY_COLLISION",
+    "jolt.java.bigdecimal-equals-money": "BIGDECIMAL_PRECISION",
+    "config.static-rules.semgrep.java.jolt.jolt.java.bigdecimal-getter-equals-money": "BIGDECIMAL_PRECISION",
+    "jolt.java.bigdecimal-getter-equals-money": "BIGDECIMAL_PRECISION",
+    "config.static-rules.semgrep.java.jolt.jolt.java.sensitive-request-param-secret": "SECRET_LEAK",
+    "jolt.java.sensitive-request-param-secret": "SECRET_LEAK",
+    "jolt.java.random-in-risk-or-security-decision": "INSECURE_RANDOM",
+    "config.static-rules.semgrep.java.jolt.jolt.java.secure-random-fixed-seed": "INSECURE_RANDOM",
+    "jolt.java.secure-random-fixed-seed": "INSECURE_RANDOM",
+    "config.static-rules.semgrep.java.jolt.jolt.java.preview-findall-cross-tenant-leak": "AUTHORIZATION_BYPASS",
+    "jolt.java.preview-findall-cross-tenant-leak": "AUTHORIZATION_BYPASS",
+    "config.static-rules.semgrep.java.jolt.jolt.java.policy-priority-stored-not-selected": "DDD_POLICY_001",
+    "jolt.java.policy-priority-stored-not-selected": "DDD_POLICY_001",
+    "config.static-rules.semgrep.java.lang.security.audit.object-deserialization": "UNSAFE_DESERIALIZATION",
+    "lang.security.audit.object-deserialization": "UNSAFE_DESERIALIZATION",
+    "object-deserialization": "UNSAFE_DESERIALIZATION",
+    "jolt.java.objectinputstream-readobject": "UNSAFE_DESERIALIZATION",
+    "jolt.java.zip-entry-write-without-normalize-guard": "ZIP_SLIP",
+    "jolt.java.zip-processing-without-size-limit": "ARCHIVE_BOMB_RISK",
+    "config.static-rules.semgrep.java.lang.security.java-pattern-from-string-parameter": "REGEX_DOS",
+    "lang.security.java-pattern-from-string-parameter": "REGEX_DOS",
+    "java-pattern-from-string-parameter": "REGEX_DOS",
+    "jolt.java.csv-response-without-escaping": "CSV_OUTPUT_INJECTION",
+    "jolt.java.content-disposition-unsanitized-filename": "UNSAFE_FILE_RESPONSE",
+    "jolt.java.zip-parent-mkdirs-unchecked": "ZIP_ENTRY_MKDIRS_IGNORED",
+    "jolt.java.zipinputstream-without-try-resources": "ZIP_STREAM_RESOURCE_LEAK",
+    "jolt.java.regex-pattern-compile-user-input": "REGEX_DOS",
+    "jolt.java.default-charset-csv-io": "DEFAULT_CHARSET_IO",
+    "jolt.java.localdatetime-now-export-audit": "AUDIT_TIME_ZONE",
+    "jolt.java.predictable-temp-file": "PREDICTABLE_TEMP_FILE",
+    "jolt.java.serializable-command-without-filter": "UNSAFE_DESERIALIZATION",
 }
 
 CATEGORY_PRIMARY_RULE = {
@@ -163,7 +221,27 @@ CATEGORY_PRIMARY_RULE = {
     "STATE_MACHINE_INTEGRITY": "CODE-STATE-004",
     "LIKE_LEADING_WILDCARD_INDEX_RISK": "PERF-LIKE-002",
     "DDD_AGGREGATE_OWNERSHIP": "DDD-AGG-001",
+    "SPEL_INJECTION": "SEC-INJECT-003",
+    "UNSAFE_REFLECTION": "SEC-INJECT-003",
+    "FAILURE_DEFAULT_ALLOW": "SEC-RISK-006",
+    "CACHE_KEY_COLLISION": "CODE-STATE-004",
+    "INSECURE_RANDOM": "HW-SEC-001",
+    "UNSAFE_DESERIALIZATION": "SEC-INJECT-003",
+    "ZIP_SLIP": "SEC-INJECT-003",
+    "ARCHIVE_BOMB_RISK": "PERF-MEM-004",
+    "REGEX_DOS": "SEC-RISK-006",
+    "CSV_OUTPUT_INJECTION": "SEC-INJECT-003",
+    "UNSAFE_FILE_RESPONSE": "SEC-INJECT-003",
+    "ZIP_ENTRY_MKDIRS_IGNORED": "CODE-RESOURCE-005",
+    "ZIP_STREAM_RESOURCE_LEAK": "CODE-RESOURCE-005",
+    "DEFAULT_CHARSET_IO": "CODE-STATE-004",
+    "AUDIT_TIME_ZONE": "CODE-STATE-004",
+    "PREDICTABLE_TEMP_FILE": "SEC-RISK-006",
 }
+
+for _ddd_rule_id in DDD_RULE_IDS:
+    RULE_CATEGORY_MAP.setdefault(_ddd_rule_id, _ddd_rule_id.replace("-", "_"))
+    CATEGORY_PRIMARY_RULE.setdefault(_ddd_rule_id.replace("-", "_"), _ddd_rule_id)
 
 
 def sha1(value: str) -> str:
@@ -188,6 +266,8 @@ def normalized_rule_category(rule_id: str | None, title: str | None = None) -> s
             return "DEBUG_ENDPOINT_EXPOSURE"
     if raw in RULE_CATEGORY_MAP:
         return RULE_CATEGORY_MAP[raw]
+    if raw.upper().startswith("DDD-"):
+        return raw.upper().replace("-", "_")
     lowered = raw.lower()
     combined = f"{lowered} {title_text}"
     if "jolt.java.spring.missing-valid-request-body" in combined:
@@ -237,6 +317,49 @@ def normalized_rule_category(rule_id: str | None, title: str | None = None) -> s
         return "TRANSACTION_PROXY_INVALID"
     if "jolt.java.jdbc-autocommit-not-restored" in combined:
         return "DB_CONNECTION_STATE_LEAK"
+    if (
+        "spel-injection" in combined
+        or "jolt.java.spel-standard-evaluation-context" in combined
+        or "jolt.java.spel-executable-default-expression" in combined
+        or ("spel" in combined and "standardevaluationcontext" in combined)
+    ):
+        return "SPEL_INJECTION"
+    if "unsafe-reflection" in combined or ("class.forname" in combined and ("request" in combined or "user" in combined or "external" in combined or "外部" in combined)):
+        return "UNSAFE_REFLECTION"
+    if "jolt.java.failure-default-allow" in combined or ("default" in combined and ("allow" in combined or "pass" in combined)):
+        return "FAILURE_DEFAULT_ALLOW"
+    if "jolt.java.fixed-active-cache-key" in combined:
+        return "CACHE_KEY_COLLISION"
+    if "jolt.java.bigdecimal-equals-money" in combined:
+        return "BIGDECIMAL_PRECISION"
+    if "jolt.java.random-in-risk-or-security-decision" in combined or "jolt.java.secure-random-fixed-seed" in combined:
+        return "INSECURE_RANDOM"
+    if "jolt.java.preview-findall-cross-tenant-leak" in combined:
+        return "AUTHORIZATION_BYPASS"
+    if "jolt.java.policy-priority-stored-not-selected" in combined:
+        return "DDD_POLICY_001"
+    if "object-deserialization" in combined or "jolt.java.objectinputstream-readobject" in combined or "objectinputstream" in combined:
+        return "UNSAFE_DESERIALIZATION"
+    if "jolt.java.zip-entry-write-without-normalize-guard" in combined or "zip slip" in combined or "zipslip" in combined:
+        return "ZIP_SLIP"
+    if "jolt.java.zip-processing-without-size-limit" in combined or "zip bomb" in combined:
+        return "ARCHIVE_BOMB_RISK"
+    if "java-pattern-from-string-parameter" in combined or "jolt.java.regex-pattern-compile-user-input" in combined or "redos" in combined:
+        return "REGEX_DOS"
+    if "jolt.java.csv-response-without-escaping" in combined or "csv formula" in combined:
+        return "CSV_OUTPUT_INJECTION"
+    if "jolt.java.content-disposition-unsanitized-filename" in combined:
+        return "UNSAFE_FILE_RESPONSE"
+    if "jolt.java.zip-parent-mkdirs-unchecked" in combined or ("mkdirs" in combined and "return" in combined):
+        return "ZIP_ENTRY_MKDIRS_IGNORED"
+    if "jolt.java.zipinputstream-without-try-resources" in combined or ("zipinputstream" in combined and ("close" in combined or "try-with-resources" in combined)):
+        return "ZIP_STREAM_RESOURCE_LEAK"
+    if "jolt.java.default-charset-csv-io" in combined or ("default charset" in combined and ("csv" in combined or "file" in combined)):
+        return "DEFAULT_CHARSET_IO"
+    if "jolt.java.localdatetime-now-export-audit" in combined or ("localdatetime.now" in combined and ("audit" in combined or "export" in combined or "settlement" in combined)):
+        return "AUDIT_TIME_ZONE"
+    if "jolt.java.predictable-temp-file" in combined or ("java.io.tmpdir" in combined and ("predictable" in combined or "last-" in combined)):
+        return "PREDICTABLE_TEMP_FILE"
     if "sql" in combined and ("inject" in combined or "concat" in combined or "注入" in combined or "拼接" in combined):
         return "SQL_INJECTION"
     if ("redis" in combined or "keyspace" in combined) and "keys" in combined:
@@ -351,11 +474,27 @@ def normalize_tool_finding(finding: dict[str, Any]) -> dict[str, Any]:
     file_path_text = str(item.get("file_path") or "").replace("\\", "/").lower()
     ddd_context = (
         "/domain/" in file_path_text
+        or "/application/" in file_path_text
+        or "/service/" in file_path_text
+        or "/repository/" in file_path_text
+        or "/event/" in file_path_text
         or "domain model" in title_text
         or "aggregate" in title_text
+        or "application service" in title_text
+        or "repository" in title_text
+        or "domain event" in title_text
+        or "bounded context" in title_text
+        or "tenant" in title_text
+        or "merchant" in title_text
         or "领域模型" in title_text
         or "聚合" in title_text
         or "值对象" in title_text
+        or "应用服务" in title_text
+        or "仓储" in title_text
+        or "领域事件" in title_text
+        or "限界上下文" in title_text
+        or "租户" in title_text
+        or "商户" in title_text
         or "value object" in title_text
     )
     if "redis" in title_text and "keys" in title_text and "REDIS-CMD-003" not in covered:

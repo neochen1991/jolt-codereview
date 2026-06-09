@@ -150,6 +150,39 @@ export function migrate(db: Db) {
 
     CREATE INDEX IF NOT EXISTS idx_finding_dedupe ON review_findings(dedupe_hash);
 
+    CREATE TABLE IF NOT EXISTS candidate_findings (
+      id TEXT PRIMARY KEY,
+      review_run_id TEXT NOT NULL REFERENCES review_runs(id),
+      dedupe_hash TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      status TEXT NOT NULL,
+      source_type TEXT NOT NULL DEFAULT 'agent',
+      agent_id TEXT,
+      tool_name TEXT,
+      rule_id TEXT,
+      severity TEXT,
+      confidence REAL NOT NULL DEFAULT 0,
+      file_path TEXT NOT NULL DEFAULT '',
+      line_start INTEGER,
+      line_end INTEGER,
+      title TEXT NOT NULL DEFAULT '',
+      problem_description TEXT NOT NULL DEFAULT '',
+      evidence TEXT NOT NULL DEFAULT '',
+      rejected_reasons_json TEXT NOT NULL DEFAULT '[]',
+      source_observations_json TEXT NOT NULL DEFAULT '[]',
+      raw_json TEXT NOT NULL DEFAULT '{}',
+      final_finding_id TEXT REFERENCES review_findings(id),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(review_run_id, dedupe_hash, stage)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_candidate_findings_run_stage
+      ON candidate_findings(review_run_id, stage, status);
+
+    CREATE INDEX IF NOT EXISTS idx_candidate_findings_rule
+      ON candidate_findings(rule_id, status);
+
     CREATE TABLE IF NOT EXISTS mr_finding_history (
       id TEXT PRIMARY KEY,
       merge_request_id TEXT NOT NULL REFERENCES merge_requests(id),

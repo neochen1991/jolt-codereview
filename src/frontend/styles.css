@@ -3855,6 +3855,53 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .tool-observation-table em { color: #107a3f; font-style: normal; }
 .tool-observation-table p { color: #2f3e54; }
 
+.tool-observation-footer {
+  min-height: 46px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #edf2f8;
+  background: #f8fbff;
+}
+
+.tool-observation-footer span {
+  min-width: 0;
+  color: #60728b;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-observation-footer div {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.tool-observation-footer button {
+  min-height: 32px;
+  border: 1px solid var(--blue-line);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--blue);
+  font-weight: 800;
+  padding: 0 12px;
+}
+
+.tool-observation-footer button:hover {
+  background: var(--blue-soft);
+}
+
+.tool-observation-footer button:disabled {
+  border-color: var(--line);
+  background: #f3f6fa;
+  color: #98a4b5;
+}
+
 .tool-observation-modal {
   width: min(920px, calc(100vw - 64px));
   max-height: min(760px, calc(100vh - 64px));

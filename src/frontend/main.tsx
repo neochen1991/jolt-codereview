@@ -4257,6 +4257,7 @@ function observationLineEnd(item: Record<string, unknown>) {
 
 function ToolResultsPanel({ detail, onOpenFinding }: { detail: Detail; onOpenFinding: (finding: Finding) => void }) {
   const [activeObservation, setActiveObservation] = useState<Record<string, unknown> | null>(null);
+  const [toolPages, setToolPages] = useState<Record<string, number>>({});
   const toolCalls = detail.session_logs?.tool_calls || [];
   const observations = detail.tool_observations || [];
   const observationsByTool = observations.reduce<Record<string, Array<Record<string, unknown>>>>((acc, item) => {
@@ -4273,12 +4274,27 @@ function ToolResultsPanel({ detail, onOpenFinding }: { detail: Detail; onOpenFin
     }
     setActiveObservation(row);
   };
+  const pageSize = 12;
+  const pageForTool = (key: string, total: number, size = pageSize) => {
+    const totalPages = Math.max(1, Math.ceil(total / size));
+    const current = Number(toolPages[key] || 1);
+    return Math.max(1, Math.min(totalPages, Number.isFinite(current) ? current : 1));
+  };
+  const setPageForTool = (key: string, page: number, total: number, size = pageSize) => {
+    const totalPages = Math.max(1, Math.ceil(total / size));
+    const next = Math.max(1, Math.min(totalPages, page));
+    setToolPages((current) => ({ ...current, [key]: next }));
+  };
   return (
     <>
       <div className="tool-results-panel">
         {staticCalls.map((call, index) => {
           const toolName = String(call.tool_name || "static.tool");
           const rows = observationsByTool[toolName.replace(/^static\./, "")] || observationsByTool[toolName] || [];
+          const toolKey = `${toolName}-${index}`;
+          const currentPage = pageForTool(toolKey, rows.length);
+          const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+          const visibleRows = rows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
           const outputRef = safeJson(String(call.output_ref_json || "{}"));
           return (
             <section className="tool-result-card" key={`${toolName}-${index}`}>
@@ -4296,7 +4312,7 @@ function ToolResultsPanel({ detail, onOpenFinding }: { detail: Detail; onOpenFin
               </div>
               <p className="tool-output-summary">{String(call.output_summary || "工具已执行，暂无输出摘要。")}</p>
               <div className="tool-observation-table">
-                {rows.slice(0, 12).map((row, rowIndex) => (
+                {visibleRows.map((row, rowIndex) => (
                   <button className="tool-observation-row" type="button" key={rowIndex} onClick={() => openObservation(row)}>
                     <strong>{String(row.rule_id || "--")}</strong>
                     <span>{formatObservationLocation(row)}</span>
@@ -4304,6 +4320,16 @@ function ToolResultsPanel({ detail, onOpenFinding }: { detail: Detail; onOpenFin
                     <p>{String(row.message || "--")}</p>
                   </button>
                 ))}
+                {rows.length > 12 && (
+                  <ToolObservationPager
+                    page={currentPage}
+                    totalPages={totalPages}
+                    total={rows.length}
+                    pageSize={pageSize}
+                    onPrev={() => setPageForTool(toolKey, currentPage - 1, rows.length)}
+                    onNext={() => setPageForTool(toolKey, currentPage + 1, rows.length)}
+                  />
+                )}
                 {!rows.length && <div className="static-tool-empty">该工具本次没有产生可归一化检测结果。</div>}
               </div>
             </section>
@@ -4319,14 +4345,30 @@ function ToolResultsPanel({ detail, onOpenFinding }: { detail: Detail; onOpenFin
               <em className="tool-run-status completed">completed</em>
             </header>
             <div className="tool-observation-table">
-              {observations.slice(0, 30).map((row, rowIndex) => (
+              {(() => {
+                const toolKey = "tool_observations";
+                const fallbackPageSize = 30;
+                const totalPages = Math.max(1, Math.ceil(observations.length / fallbackPageSize));
+                const currentPage = pageForTool(toolKey, observations.length, fallbackPageSize);
+                return observations.slice((currentPage - 1) * fallbackPageSize, currentPage * fallbackPageSize).map((row, rowIndex) => (
                 <button className="tool-observation-row" type="button" key={rowIndex} onClick={() => openObservation(row)}>
                   <strong>{String(row.rule_id || "--")}</strong>
                   <span>{formatObservationLocation(row)}</span>
                   <em>{Number(row.confidence || 0).toFixed(2)}</em>
                   <p>{String(row.message || "--")}</p>
                 </button>
-              ))}
+                ));
+              })()}
+              {observations.length > 30 && (
+                <ToolObservationPager
+                  page={pageForTool("tool_observations", observations.length, 30)}
+                  totalPages={Math.max(1, Math.ceil(observations.length / 30))}
+                  total={observations.length}
+                  pageSize={30}
+                  onPrev={() => setPageForTool("tool_observations", pageForTool("tool_observations", observations.length, 30) - 1, observations.length, 30)}
+                  onNext={() => setPageForTool("tool_observations", pageForTool("tool_observations", observations.length, 30) + 1, observations.length, 30)}
+                />
+              )}
             </div>
           </section>
         )}
@@ -4334,6 +4376,34 @@ function ToolResultsPanel({ detail, onOpenFinding }: { detail: Detail; onOpenFin
       </div>
       {activeObservation && <ToolObservationModal observation={activeObservation} onClose={() => setActiveObservation(null)} />}
     </>
+  );
+}
+
+function ToolObservationPager({
+  page,
+  totalPages,
+  total,
+  pageSize,
+  onPrev,
+  onNext
+}: {
+  page: number;
+  totalPages: number;
+  total: number;
+  pageSize: number;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(total, page * pageSize);
+  return (
+    <div className="tool-observation-footer">
+      <span>第 {page}/{totalPages} 页，展示 {start}-{end} 条，共 {total} 条候选命中</span>
+      <div>
+        <button type="button" onClick={onPrev} disabled={page <= 1}>上一页</button>
+        <button type="button" onClick={onNext} disabled={page >= totalPages}>下一页</button>
+      </div>
+    </div>
   );
 }
 

@@ -43,7 +43,7 @@ from orchestration.nodes.run_targeted_debate import run_targeted_debate, make_ru
 from orchestration.nodes.summarize_pr import make_summarize_pr_node
 from orchestration.nodes.verify_findings import rejected_reason_counts, verify_candidate_findings, make_verify_findings_node
 from orchestration.state import EXECUTED_GRAPH_NODE_KEYS as GRAPH_NODE_KEYS
-from review_queue.job_consumer import MAX_ATTEMPTS, RECLAIM_AFTER_SECONDS, start_heartbeat
+from review_queue.job_consumer import ACTIVE_STATUSES, MAX_ATTEMPTS, RECLAIM_AFTER_SECONDS, start_heartbeat
 from token_usage_reporter import report_token_usage
 from prompts.builder import build_prompt, redact_untrusted
 from rules.rule_loader import load_bound_rules
@@ -4239,15 +4239,27 @@ def choose_job(conn: sqlite3.Connection) -> sqlite3.Row | None:
             """,
             (f"-{RECLAIM_AFTER_SECONDS} seconds",),
         )
+        active_placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
         job = conn.execute(
-            """
-            SELECT * FROM review_jobs
-            WHERE status = 'queued'
-              AND attempt < ?
-            ORDER BY priority DESC, created_at ASC
+            f"""
+            SELECT queued.*
+            FROM review_jobs queued
+            JOIN merge_requests queued_mr ON queued_mr.id = queued.merge_request_id
+            JOIN repositories queued_repo ON queued_repo.id = queued_mr.repository_id
+            WHERE queued.status = 'queued'
+              AND queued.attempt < ?
+              AND NOT EXISTS (
+                SELECT 1
+                FROM review_jobs active
+                JOIN merge_requests active_mr ON active_mr.id = active.merge_request_id
+                JOIN repositories active_repo ON active_repo.id = active_mr.repository_id
+                WHERE active_repo.project_id = queued_repo.project_id
+                  AND active.status IN ({active_placeholders})
+              )
+            ORDER BY queued.priority DESC, queued.created_at ASC
             LIMIT 1
             """,
-            (MAX_ATTEMPTS,),
+            (MAX_ATTEMPTS, *ACTIVE_STATUSES),
         ).fetchone()
         if not job:
             conn.commit()

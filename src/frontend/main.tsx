@@ -1766,14 +1766,34 @@ function ProjectCard({
           <section className="project-maintenance-modal" onClick={(event) => event.stopPropagation()}>
             <header>
               <div>
-                <span>项目维护</span>
+                <span><Settings size={14} />项目维护</span>
                 <strong id={`project-maintenance-${project.id}`}>{project.name}</strong>
-                <p>维护项目基础信息和关联代码仓。进入工作台后会自动同步这些仓库的待检视 MR。</p>
+                <p>维护项目基础信息和关联代码仓，进入工作台后系统会按这些仓库同步待检视 MR。</p>
+              </div>
+              <div className="project-maintenance-summary">
+                <article>
+                  <span>角色</span>
+                  <strong>{project.role || "observer"}</strong>
+                </article>
+                <article>
+                  <span>代码仓</span>
+                  <strong>{repos.length}</strong>
+                </article>
+                <article>
+                  <span>默认来源</span>
+                  <strong>CodeHub</strong>
+                </article>
               </div>
             </header>
             <div className="project-maintenance">
-              <section className="project-maintenance-section">
-                <h3>基础信息</h3>
+              <section className="project-maintenance-section project-profile-panel">
+                <div className="project-section-title">
+                  <span><Database size={16} /></span>
+                  <div>
+                    <h3>项目档案</h3>
+                    <p>这些信息用于团队识别项目边界。</p>
+                  </div>
+                </div>
                 <label>
                   <span>项目名称</span>
                   <input value={name} onChange={(event) => setName(event.target.value)} disabled={!canEdit} />
@@ -1782,25 +1802,51 @@ function ProjectCard({
                   <span>项目描述</span>
                   <textarea value={description} onChange={(event) => setDescription(event.target.value)} disabled={!canEdit} />
                 </label>
-                <button type="button" onClick={saveProject} disabled={!canEdit || busy}>保存项目</button>
-              </section>
-              <section className="project-maintenance-section">
-                <h3>关联代码仓</h3>
-                <div className="project-repo-editor">
-                  <select value={provider} onChange={(event) => setProvider(event.target.value)} disabled={!canEdit}>
-                    <option value="codehub">CodeHub</option>
-                    <option value="github">GitHub</option>
-                  </select>
-                  <input value={repoId} onChange={(event) => setRepoId(event.target.value)} placeholder="Git 仓库链接，例如 https://git.example.com/team/repo.git" disabled={!canEdit} />
-                  <input value={repoName} onChange={(event) => setRepoName(event.target.value)} placeholder="仓库显示名" disabled={!canEdit} />
-                  <button type="button" onClick={bindProjectRepo} disabled={!canEdit || busy}>绑定仓库</button>
+                <div className="project-maintenance-actions">
+                  <button type="button" onClick={saveProject} disabled={!canEdit || busy}>保存项目信息</button>
                 </div>
-                <div className="project-repo-list">
+              </section>
+              <section className="project-maintenance-section project-repository-panel">
+                <div className="project-section-title">
+                  <span><GitBranch size={16} /></span>
+                  <div>
+                    <h3>代码仓接入</h3>
+                    <p>以 Git 链接为准拉取 MR 和提交检视意见。</p>
+                  </div>
+                </div>
+                <div className="project-repo-editor" aria-label="绑定代码仓">
+                  <label>
+                    <span>平台</span>
+                    <select value={provider} onChange={(event) => setProvider(event.target.value)} disabled={!canEdit}>
+                      <option value="codehub">CodeHub</option>
+                      <option value="github">GitHub</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Git 仓库链接</span>
+                    <input value={repoId} onChange={(event) => setRepoId(event.target.value)} placeholder="https://git.example.com/team/repo.git" disabled={!canEdit} />
+                  </label>
+                  <label>
+                    <span>显示名称</span>
+                    <input value={repoName} onChange={(event) => setRepoName(event.target.value)} placeholder="默认从链接识别" disabled={!canEdit} />
+                  </label>
+                  <button type="button" onClick={bindProjectRepo} disabled={!canEdit || busy}>
+                    <Link2 size={15} />
+                    绑定仓库
+                  </button>
+                </div>
+                <div className="project-repo-list" aria-label="已绑定代码仓">
+                  <div className="project-repo-list-head">
+                    <span>平台</span>
+                    <span>仓库</span>
+                    <span>Git 链接</span>
+                    <span>操作</span>
+                  </div>
                   {repos.map((repo) => (
-                    <p key={repo.id}>
+                    <div className="project-repo-row" key={repo.id}>
                       <span className="repo-provider">{providerLabel(repo.provider)}</span>
-                      <strong>{repo.name}</strong>
-                      <em>{repo.external_repo_id}</em>
+                      <strong title={repo.name}>{repo.name}</strong>
+                      <em title={repo.external_repo_id}>{repo.external_repo_id}</em>
                       <button
                         className="repo-delete-button"
                         type="button"
@@ -1811,7 +1857,7 @@ function ProjectCard({
                       >
                         <Trash2 size={15} />
                       </button>
-                    </p>
+                    </div>
                   ))}
                   {!repos.length && <div className="config-table-empty">暂无绑定仓库</div>}
                 </div>

@@ -8,7 +8,8 @@ const SETTINGS_KEYS = [
   "tool_policy",
   "queue_policy",
   "publish_policy",
-  "data_policy"
+  "data_policy",
+  "token_usage"
 ] as const;
 
 export type ProjectSettingsKey = typeof SETTINGS_KEYS[number];
@@ -78,7 +79,12 @@ export class ProjectConfigService {
       if (key === "llm_policy") continue;
       const value = settings[key];
       if (value && Object.keys(value).length > 0) {
-        (effective as Record<string, unknown>)[key] = value;
+        const configKey = key === "token_usage" ? "token_usage" : key;
+        const current = (effective as Record<string, unknown>)[configKey];
+        (effective as Record<string, unknown>)[configKey] =
+          current && typeof current === "object" && !Array.isArray(current)
+            ? { ...(current as Record<string, unknown>), ...value }
+            : value;
       }
     }
     return {

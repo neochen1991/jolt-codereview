@@ -6,6 +6,7 @@ export interface EnqueueReviewJobInput {
   headSha: string;
   priority: number;
   effortLevel?: string;
+  requestedBy?: string | null;
 }
 
 export class ReviewQueueService {
@@ -17,7 +18,8 @@ export class ReviewQueueService {
       mergeRequestId: input.mergeRequestId,
       headSha: input.headSha,
       priority: input.priority,
-      effortLevel: input.effortLevel ?? "standard"
+      effortLevel: input.effortLevel ?? "standard",
+      requestedBy: input.requestedBy ?? null
     });
     return {
       job: this.reviewJobRepository.findByMergeRequestAndHead(input.mergeRequestId, input.headSha),
@@ -31,7 +33,8 @@ export class ReviewQueueService {
       mergeRequestId: input.mergeRequestId,
       headSha: input.headSha,
       priority: input.priority,
-      effortLevel: input.effortLevel ?? "standard"
+      effortLevel: input.effortLevel ?? "standard",
+      requestedBy: input.requestedBy ?? null
     });
     return this.reviewJobRepository.findByMergeRequestAndHead(input.mergeRequestId, input.headSha);
   }
@@ -52,8 +55,8 @@ export class ReviewQueueService {
     return this.reviewJobRepository.stopByMergeRequest(mergeRequestId);
   }
 
-  retry(jobId: string, effortLevel: string) {
-    this.reviewJobRepository.retry(jobId, effortLevel);
+  retry(jobId: string, effortLevel: string, requestedBy?: string | null) {
+    this.reviewJobRepository.retry(jobId, effortLevel, requestedBy ?? null);
     return this.reviewJobRepository.findById(jobId);
   }
 

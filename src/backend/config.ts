@@ -33,6 +33,18 @@ const DEFAULT_CONFIG: AppConfig = {
     worker_file: "jolt-worker.log",
     review_run_dir: "review-runs"
   },
+  token_usage: {
+    enabled: false,
+    endpoint: "",
+    method: "POST",
+    timeout_seconds: 10,
+    auth_header: "Authorization",
+    auth_token_env: null,
+    auth_token: null,
+    employee_no_env: "JOLT_REPORTER_EMPLOYEE_NO",
+    default_employee_no: "system",
+    service_name: "jolt-codereview"
+  },
   runtime: {
     python_bin: null
   }
@@ -47,6 +59,7 @@ function mergeConfig(base: AppConfig, override: AppConfig): AppConfig {
     codehub: { ...base.codehub, ...override.codehub },
     server: { ...base.server, ...override.server },
     logging: { ...base.logging, ...override.logging },
+    token_usage: { ...base.token_usage, ...override.token_usage },
     runtime: { ...base.runtime, ...override.runtime }
   };
 }

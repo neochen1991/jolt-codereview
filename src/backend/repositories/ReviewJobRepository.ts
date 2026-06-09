@@ -13,11 +13,12 @@ export class ReviewJobRepository {
     headSha: string;
     priority: number;
     effortLevel?: string;
+    requestedBy?: string | null;
   }) {
     return this.db.prepare(`
-      INSERT OR IGNORE INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level)
-      VALUES (?, ?, ?, 'queued', ?, ?)
-    `).run(input.id, input.mergeRequestId, input.headSha, input.priority, input.effortLevel ?? "standard");
+      INSERT OR IGNORE INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level, requested_by)
+      VALUES (?, ?, ?, 'queued', ?, ?, ?)
+    `).run(input.id, input.mergeRequestId, input.headSha, input.priority, input.effortLevel ?? "standard", input.requestedBy ?? null);
   }
 
   enqueueOrReset(input: {
@@ -26,19 +27,21 @@ export class ReviewJobRepository {
     headSha: string;
     priority: number;
     effortLevel: string;
+    requestedBy?: string | null;
   }) {
     this.db.prepare(`
-      INSERT INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level)
-      VALUES (?, ?, ?, 'queued', ?, ?)
+      INSERT INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level, requested_by)
+      VALUES (?, ?, ?, 'queued', ?, ?, ?)
       ON CONFLICT(merge_request_id, head_sha) DO UPDATE SET
         status = 'queued',
         requested_effort_level = excluded.requested_effort_level,
+        requested_by = COALESCE(excluded.requested_by, review_jobs.requested_by),
         attempt = 0,
         locked_at = NULL,
         locked_by = NULL,
         heartbeat_at = NULL,
         updated_at = CURRENT_TIMESTAMP
-    `).run(input.id, input.mergeRequestId, input.headSha, input.priority, input.effortLevel);
+    `).run(input.id, input.mergeRequestId, input.headSha, input.priority, input.effortLevel, input.requestedBy ?? null);
   }
 
   supersedeQueued(mergeRequestId: string) {
@@ -90,18 +93,19 @@ export class ReviewJobRepository {
     `).get(jobId);
   }
 
-  retry(jobId: string, effortLevel: string) {
+  retry(jobId: string, effortLevel: string, requestedBy?: string | null) {
     this.db.prepare(`
       UPDATE review_jobs
       SET status = 'queued',
           requested_effort_level = ?,
+          requested_by = COALESCE(?, requested_by),
           attempt = 0,
           locked_at = NULL,
           locked_by = NULL,
           heartbeat_at = NULL,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(effortLevel, jobId);
+    `).run(effortLevel, requestedBy ?? null, jobId);
   }
 
   deadLetter(jobId: string, reason: string, finalAttempt: number, deadLetterId: string) {

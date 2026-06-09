@@ -86,7 +86,13 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
         db.prepare("UPDATE review_findings SET lifecycle_state = 'dismissed', selected = 0 WHERE id = ?").run(finding.id);
         responseBody = `@jolt dismiss\n\n已将 ${finding.id} 标记为 dismissed。`;
       } else if (command.command === "recheck") {
-        reviewQueueService.enqueueOrReset({ mergeRequestId: mr.id, headSha: mr.latest_head_sha, priority: 1000, effortLevel: String(input.effort ?? "standard") });
+        reviewQueueService.enqueueOrReset({
+          mergeRequestId: mr.id,
+          headSha: mr.latest_head_sha,
+          priority: 1000,
+          effortLevel: String(input.effort ?? "standard"),
+          requestedBy: actorId
+        });
         runWorkerOnce();
         responseBody = `@jolt recheck\n\n已重新入队检视 MR !${mr.number}，head_sha=${mr.latest_head_sha}。`;
       } else if (command.command === "why-not") {

@@ -44,6 +44,7 @@ from orchestration.nodes.summarize_pr import make_summarize_pr_node
 from orchestration.nodes.verify_findings import rejected_reason_counts, verify_candidate_findings, make_verify_findings_node
 from orchestration.state import EXECUTED_GRAPH_NODE_KEYS as GRAPH_NODE_KEYS
 from review_queue.job_consumer import MAX_ATTEMPTS, RECLAIM_AFTER_SECONDS, start_heartbeat
+from token_usage_reporter import report_token_usage
 from prompts.builder import build_prompt, redact_untrusted
 from rules.rule_loader import load_bound_rules
 from static.heuristics import static_findings
@@ -92,6 +93,7 @@ def ensure_worker_schema(conn: sqlite3.Connection) -> None:
     add_column_if_missing("review_findings", "source_observations_json", "TEXT NOT NULL DEFAULT '[]'")
     add_column_if_missing("review_findings", "quality_trace_json", "TEXT NOT NULL DEFAULT '{}'")
     add_column_if_missing("review_jobs", "pr_summary", "TEXT NOT NULL DEFAULT '{}'")
+    add_column_if_missing("review_jobs", "requested_by", "TEXT REFERENCES users(id)")
     add_column_if_missing("review_runs", "coverage_json", "TEXT NOT NULL DEFAULT '{}'")
     conn.executescript(
         """
@@ -140,6 +142,31 @@ def ensure_worker_schema(conn: sqlite3.Connection) -> None:
           ON candidate_findings(review_run_id, stage, status);
         CREATE INDEX IF NOT EXISTS idx_candidate_findings_rule
           ON candidate_findings(rule_id, status);
+        CREATE TABLE IF NOT EXISTS token_usage_reports (
+          id TEXT PRIMARY KEY,
+          review_run_id TEXT NOT NULL REFERENCES review_runs(id),
+          review_job_id TEXT NOT NULL REFERENCES review_jobs(id),
+          merge_request_id TEXT NOT NULL REFERENCES merge_requests(id),
+          project_id TEXT NOT NULL REFERENCES projects(id),
+          repository_id TEXT NOT NULL REFERENCES repositories(id),
+          employee_no TEXT NOT NULL,
+          reported_at TEXT NOT NULL,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          total_tokens INTEGER NOT NULL DEFAULT 0,
+          llm_calls INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL,
+          endpoint TEXT NOT NULL DEFAULT '',
+          response_status INTEGER,
+          response_body TEXT NOT NULL DEFAULT '',
+          error_message TEXT NOT NULL DEFAULT '',
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(review_run_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_token_usage_reports_project_created
+          ON token_usage_reports(project_id, created_at);
         CREATE TABLE IF NOT EXISTS rule_precision_history (
           id TEXT PRIMARY KEY,
           project_id TEXT NOT NULL REFERENCES projects(id),
@@ -4477,6 +4504,23 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
             recorder,
         )
         recorder.flush()
+        try:
+            token_report = report_token_usage(conn, project_config, run_id)
+        except Exception as report_exc:
+            token_report = {"status": "failed", "error_message": str(report_exc)}
+            write_worker_log(
+                config,
+                "token_usage_report_unhandled_error",
+                {"review_run_id": run_id, "error_message": str(report_exc)},
+                "error",
+            )
+            write_review_run_log(
+                config,
+                run_id,
+                "token_usage_report_unhandled_error",
+                {"error_message": str(report_exc)},
+                "error",
+            )
         run_status = conn.execute("SELECT status FROM review_runs WHERE id = ?", (run_id,)).fetchone()
         finding_count = conn.execute("SELECT COUNT(*) AS count FROM review_findings WHERE review_run_id = ?", (run_id,)).fetchone()
         write_worker_log(
@@ -4488,6 +4532,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
                 "merge_request_id": job["merge_request_id"],
                 "status": run_status["status"] if run_status else "completed",
                 "finding_count": int(finding_count["count"] or 0) if finding_count else 0,
+                "token_usage_report": token_report,
             },
         )
         write_review_run_log(
@@ -4499,6 +4544,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
                 "merge_request_id": job["merge_request_id"],
                 "status": run_status["status"] if run_status else "completed",
                 "finding_count": int(finding_count["count"] or 0) if finding_count else 0,
+                "token_usage_report": token_report,
             },
         )
         return True
@@ -4532,6 +4578,10 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
         )
         conn.execute("UPDATE merge_requests SET review_status = ? WHERE id = ?", (mr_status, mr["id"]))
         conn.commit()
+        try:
+            token_report = report_token_usage(conn, project_config, run_id)
+        except Exception as report_exc:
+            token_report = {"status": "failed", "error_message": str(report_exc)}
         write_worker_log(
             config,
             "review_run_failed",
@@ -4542,6 +4592,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
                 "status": job_status,
                 "next_attempt": next_attempt,
                 "error_message": str(exc),
+                "token_usage_report": token_report,
             },
             "error",
         )
@@ -4555,6 +4606,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
                 "status": job_status,
                 "next_attempt": next_attempt,
                 "error_message": str(exc),
+                "token_usage_report": token_report,
             },
             "error",
         )

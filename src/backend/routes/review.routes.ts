@@ -461,7 +461,8 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         mergeRequestId: params.mrId,
         headSha: mr.latest_head_sha,
         priority: mr.risk_score,
-        effortLevel: String(input?.effort_level ?? "standard")
+        effortLevel: String(input?.effort_level ?? "standard"),
+        requestedBy: actorId
       });
       mergeRequestRepository.updateReviewStatus(params.mrId, "queued");
       auditLog({ userId: actorId, projectId: repo.project_id, action: "mr_review.enqueue", resourceType: "merge_request", resourceId: params.mrId, summary: `enqueue ${input?.effort_level ?? "standard"} review` });
@@ -501,7 +502,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       if (!job) return notFound();
       const denied = ensureProjectRole(job.project_id, actorId, "reviewer");
       if (denied) return denied;
-      const updated = reviewQueueService.retry(params.jobId, String(input?.effort_level ?? job.requested_effort_level ?? "standard"));
+      const updated = reviewQueueService.retry(params.jobId, String(input?.effort_level ?? job.requested_effort_level ?? "standard"), actorId);
       mergeRequestRepository.updateReviewStatus(job.merge_request_id, "queued");
       auditLog({ userId: actorId, projectId: job.project_id, action: "mr_review.retry", resourceType: "review_job", resourceId: params.jobId, summary: `retry as ${input?.effort_level ?? job.requested_effort_level ?? "standard"}` });
       runWorkerOnce();

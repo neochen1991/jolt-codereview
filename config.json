@@ -25,6 +25,18 @@
     "worker_file": "jolt-worker.log",
     "review_run_dir": "review-runs"
   },
+  "token_usage": {
+    "enabled": false,
+    "endpoint": "",
+    "method": "POST",
+    "timeout_seconds": 10,
+    "auth_header": "Authorization",
+    "auth_token_env": null,
+    "auth_token": null,
+    "employee_no_env": "JOLT_REPORTER_EMPLOYEE_NO",
+    "default_employee_no": "system",
+    "service_name": "jolt-codereview"
+  },
   "runtime": {
     "python_bin": null
   }

@@ -33,6 +33,18 @@ export interface AppConfig {
     worker_file?: string;
     review_run_dir?: string;
   };
+  token_usage?: {
+    enabled?: boolean;
+    endpoint?: string;
+    method?: string;
+    timeout_seconds?: number;
+    auth_header?: string;
+    auth_token_env?: string | null;
+    auth_token?: string | null;
+    employee_no_env?: string | null;
+    default_employee_no?: string | null;
+    service_name?: string;
+  };
   runtime?: {
     python_bin?: string | null;
   };

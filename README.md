@@ -332,6 +332,28 @@ cp config.example.json config.json
 
 生产或团队共享环境建议改用 `default_api_key_env` 或 secret store，避免在团队仓库中长期保存明文 key。
 
+### Token 用量上报占位
+
+每个 MR 检视任务结束后，Worker 会汇总本次 `review_run` 的 LLM 调用记录，并写入 `token_usage_reports` 表。内网 token 服务 API 当前预留为占位配置，默认关闭，不会发起外部请求：
+
+```json
+{
+  "token_usage": {
+    "enabled": false,
+    "endpoint": "",
+    "method": "POST",
+    "timeout_seconds": 10,
+    "auth_header": "Authorization",
+    "auth_token_env": "JOLT_TOKEN_USAGE_API_TOKEN",
+    "employee_no_env": "JOLT_REPORTER_EMPLOYEE_NO",
+    "default_employee_no": "system",
+    "service_name": "jolt-codereview"
+  }
+}
+```
+
+启用后，任务完成时会向 `endpoint` 上报：项目、代码仓、MR、review_run、上报人工号、北京时间 `reported_at`、输入 token、输出 token、总 token、LLM 调用次数和按模型拆分的用量。上报失败只记录日志和 `token_usage_reports.status=failed`，不会把检视任务改成失败。
+
 ## 启动
 
 Windows 推荐：

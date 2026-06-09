@@ -188,7 +188,7 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       });
       let repository = null;
       if (repo && gitUrl) {
-        const provider = String(repo.provider || "github").trim() || "github";
+        const provider = String(repo.provider || "codehub").trim() || "codehub";
         const nameFromUrl = gitUrl.replace(/\\/g, "/").split("/").pop()?.replace(/\.git$/, "") || "repository";
         repository = repositoryRepository.upsert({
           id: id("repo"),

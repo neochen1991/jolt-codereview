@@ -99,6 +99,7 @@ export function migrate(db: Db) {
       locked_at TEXT,
       locked_by TEXT,
       heartbeat_at TEXT,
+      requested_by TEXT REFERENCES users(id),
       pr_summary TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -259,6 +260,33 @@ export function migrate(db: Db) {
       status TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS token_usage_reports (
+      id TEXT PRIMARY KEY,
+      review_run_id TEXT NOT NULL REFERENCES review_runs(id),
+      review_job_id TEXT NOT NULL REFERENCES review_jobs(id),
+      merge_request_id TEXT NOT NULL REFERENCES merge_requests(id),
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      repository_id TEXT NOT NULL REFERENCES repositories(id),
+      employee_no TEXT NOT NULL,
+      reported_at TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      llm_calls INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL,
+      endpoint TEXT NOT NULL DEFAULT '',
+      response_status INTEGER,
+      response_body TEXT NOT NULL DEFAULT '',
+      error_message TEXT NOT NULL DEFAULT '',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(review_run_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_token_usage_reports_project_created
+      ON token_usage_reports(project_id, created_at);
 
     CREATE TABLE IF NOT EXISTS tool_call_records (
       id TEXT PRIMARY KEY,
@@ -607,6 +635,7 @@ export function migrate(db: Db) {
   addColumnIfMissing(db, "review_findings", "quality_trace_json", "TEXT NOT NULL DEFAULT '{}'");
   addColumnIfMissing(db, "agent_configs", "requires_deepagents", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "review_jobs", "pr_summary", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(db, "review_jobs", "requested_by", "TEXT REFERENCES users(id)");
   addColumnIfMissing(db, "review_runs", "coverage_json", "TEXT NOT NULL DEFAULT '{}'");
   addColumnIfMissing(db, "full_review_jobs", "attempt", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "full_review_jobs", "locked_at", "TEXT");

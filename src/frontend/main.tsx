@@ -913,7 +913,7 @@ function App() {
       await api(`/api/projects/${activeProjectId}/repositories`, {
         method: "POST",
         body: JSON.stringify({
-          provider: "github",
+          provider: "codehub",
           git_url: gitUrl,
           name: repoNameFromGitUrl(gitUrl),
           default_branch: "main"
@@ -1528,7 +1528,7 @@ function ProjectSelectionPage({
   const [creating, setCreating] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createDescription, setCreateDescription] = useState("");
-  const [createProvider, setCreateProvider] = useState("github");
+  const [createProvider, setCreateProvider] = useState("codehub");
   const [createRepoUrl, setCreateRepoUrl] = useState("");
   const [createRepoName, setCreateRepoName] = useState("");
   const [createError, setCreateError] = useState("");
@@ -1629,8 +1629,8 @@ function ProjectSelectionPage({
                 <h3>绑定代码仓（可选）</h3>
                 <div className="project-repo-editor create">
                   <select value={createProvider} onChange={(event) => setCreateProvider(event.target.value)}>
-                    <option value="github">GitHub</option>
                     <option value="codehub">CodeHub</option>
+                    <option value="github">GitHub</option>
                   </select>
                   <input value={createRepoUrl} onChange={(event) => setCreateRepoUrl(event.target.value)} placeholder="Git 仓库链接，例如 https://git.example.com/team/repo.git" />
                   <input value={createRepoName} onChange={(event) => setCreateRepoName(event.target.value)} placeholder="仓库显示名，默认从链接识别" />
@@ -1662,7 +1662,7 @@ function ProjectCard({
   const [repos, setRepos] = useState<Repo[]>([]);
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description || "");
-  const [provider, setProvider] = useState("github");
+  const [provider, setProvider] = useState("codehub");
   const [repoId, setRepoId] = useState("");
   const [repoName, setRepoName] = useState("");
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
@@ -1788,8 +1788,8 @@ function ProjectCard({
                 <h3>关联代码仓</h3>
                 <div className="project-repo-editor">
                   <select value={provider} onChange={(event) => setProvider(event.target.value)} disabled={!canEdit}>
-                    <option value="github">GitHub</option>
                     <option value="codehub">CodeHub</option>
+                    <option value="github">GitHub</option>
                   </select>
                   <input value={repoId} onChange={(event) => setRepoId(event.target.value)} placeholder="Git 仓库链接，例如 https://git.example.com/team/repo.git" disabled={!canEdit} />
                   <input value={repoName} onChange={(event) => setRepoName(event.target.value)} placeholder="仓库显示名" disabled={!canEdit} />

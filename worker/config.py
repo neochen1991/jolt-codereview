@@ -38,6 +38,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "worker_file": "jolt-worker.log",
         "review_run_dir": "review-runs",
     },
+    "token_usage": {
+        "enabled": False,
+        "endpoint": "",
+        "method": "POST",
+        "timeout_seconds": 10,
+        "auth_header": "Authorization",
+        "auth_token_env": None,
+        "auth_token": None,
+        "employee_no_env": "JOLT_REPORTER_EMPLOYEE_NO",
+        "default_employee_no": "system",
+        "service_name": "jolt-codereview",
+    },
 }
 
 SETTINGS_TO_CONFIG = {
@@ -48,6 +60,7 @@ SETTINGS_TO_CONFIG = {
     "queue_policy": "queue_policy",
     "publish_policy": "publish_policy",
     "data_policy": "data_policy",
+    "token_usage": "token_usage",
 }
 
 

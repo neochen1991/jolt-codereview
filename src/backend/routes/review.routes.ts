@@ -382,6 +382,31 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         : { messages: [], tool_calls: [], llm_calls: [], mcp_calls: [], artifacts: [] };
       return { mr, jobs, runs, findings, tool_observations: toolObservations, trace, session_logs: sessionLogs, compare: compareRunsForMr(params.mrId) };
     }),
+    route("DELETE", "/api/mr-review/merge-requests/:mrId", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const mr = mergeRequestRepository.findById(params.mrId);
+      if (!mr) return notFound();
+      const repo = repositoryRepository.findProjectByRepositoryId(mr.repository_id);
+      if (!repo) return notFound();
+      const denied = ensureProjectRole(repo.project_id, actorId, "reviewer");
+      if (denied) return denied;
+      const result = mergeRequestRepository.deleteById(params.mrId);
+      if (!result.ok) return notFound();
+      auditLog({
+        userId: actorId,
+        projectId: repo.project_id,
+        action: "mr_review.delete",
+        resourceType: "merge_request",
+        resourceId: params.mrId,
+        summary: `deleted local MR cache with ${result.deleted_jobs} jobs, ${result.deleted_runs} runs, ${result.deleted_findings} findings`,
+        metadata: {
+          repository_id: mr.repository_id,
+          external_mr_id: mr.external_mr_id,
+          deleted_related_rows: result.deleted_related_rows
+        }
+      });
+      return { ...result, ok: true, mr_id: params.mrId };
+    }),
     route("GET", "/api/mr-review/merge-requests/:mrId/logs", ({ params, req, url }) => {
       const mr = mergeRequestRepository.findDetailById(params.mrId) as any;
       if (!mr) return notFound();

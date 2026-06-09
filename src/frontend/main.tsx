@@ -272,6 +272,15 @@ type SuccessNotice = {
   detail?: string;
 };
 
+type PublishResultNotice = {
+  status: "success" | "failed";
+  title: string;
+  message: string;
+  publishedCount: number;
+  requestedCount: number;
+  detail?: string;
+};
+
 type MarkdownExportResponse = {
   filename: string;
   content_type: string;
@@ -416,7 +425,7 @@ function formatDurationMs(value: unknown) {
 const ACTIVE_REVIEW_STATUSES = ["fetching", "pre_scanning", "reviewing", "judging", "running"];
 const REVIEW_STEPS = [
   { key: "queued", label: "入队", description: "等待手动或后台 worker 执行" },
-  { key: "fetching", label: "拉取 Diff", description: "从 GitHub 拉取 PR 文件和 diff" },
+  { key: "fetching", label: "拉取 Diff", description: "从 CodeHub 拉取 MR 文件和 diff" },
   { key: "pre_scanning", label: "静态预扫描", description: "Semgrep、PMD、Checkstyle 等工具分析" },
   { key: "reviewing", label: "专家检视", description: "专家 Agent 调用规范、Skill、工具和模型" },
   { key: "judging", label: "归并判断", description: "冲突检测、证据校准、问题归并" },
@@ -513,6 +522,12 @@ function shortPath(value: string) {
   if (!value || value === "--") return "--";
   const parts = value.replace(/\\/g, "/").split("/").filter(Boolean);
   return parts.length > 3 ? parts.slice(-3).join("/") : value;
+}
+
+function providerLabel(provider: string) {
+  if (provider === "github") return "CodeHub 兼容";
+  if (provider === "codehub") return "CodeHub";
+  return provider || "--";
 }
 
 function textCodeLines(value: string, startLine = 1): ParsedDiffLine[] {
@@ -616,7 +631,8 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [repoInput, setRepoInput] = useState("");
-  const [message, setMessage] = useState("GitHub 已同步 · 2 分钟前");
+  const [message, setMessage] = useState("CodeHub 已同步 · 2 分钟前");
+  const [publishNotice, setPublishNotice] = useState<PublishResultNotice | null>(null);
   const [activeView, setActiveView] = useState<ViewKey>("mr");
   const [ready, setReady] = useState(false);
   const [user, setUser] = useState<User | null>(null);
@@ -681,14 +697,14 @@ function App() {
 
   async function sync() {
     setSyncing(true);
-    setMessage("正在同步 GitHub PR...");
+    setMessage("正在同步 CodeHub MR...");
     try {
       const result = await api<{ merge_requests: number; jobs_created: number; errors: string[] }>(
         `/api/mr-review/projects/${activeProjectId}/sync`,
         { method: "POST", body: "{}" }
       );
       await loadAll(activeMrId);
-      setMessage(`GitHub 已同步 · ${result.merge_requests} 个 PR · 新增 ${result.jobs_created} 个任务`);
+      setMessage(`CodeHub 已同步 · ${result.merge_requests} 个 MR · 新增 ${result.jobs_created} 个任务`);
       if (result.errors.length) setMessage(`同步完成，但有错误：${result.errors.join("; ")}`);
     } catch (error) {
       setMessage((error as Error).message);
@@ -700,7 +716,7 @@ function App() {
   async function bindRepo() {
     const gitUrl = repoInput.trim();
     if (!gitUrl.includes("/") || !gitUrl.includes(".git")) {
-      setMessage("请输入 Git 仓库链接，例如 https://github.com/microsoft/vscode.git");
+      setMessage("请输入 Git 仓库链接，例如 https://codehub.example.com/team/repo.git");
       return;
     }
     setBusy(true);
@@ -804,6 +820,28 @@ function App() {
     }
   }
 
+  async function deleteMr(mr: MergeRequest) {
+    if (!window.confirm(`删除本地 MR !${mr.number}？删除后可通过重新同步再次拉取。`)) return;
+    setBusy(true);
+    try {
+      const result = await api<{ deleted_jobs: number; deleted_runs: number; deleted_findings: number }>(
+        `/api/mr-review/merge-requests/${mr.id}`,
+        { method: "DELETE" }
+      );
+      if (activeMrIdRef.current === mr.id) {
+        activeMrIdRef.current = null;
+        setActiveMrId(null);
+        setDetail(null);
+      }
+      await loadAll(activeMrIdRef.current);
+      setMessage(`已删除 MR !${mr.number}，清理 ${result.deleted_jobs} 个任务、${result.deleted_runs} 次运行、${result.deleted_findings} 条 finding；重新同步可再次拉取`);
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function toggleFinding(finding: Finding) {
     await api(`/api/mr-review/review-findings/${finding.id}`, {
       method: "PATCH",
@@ -868,6 +906,7 @@ function App() {
   async function publish(dryRun = false) {
     if (!detail) return;
     const findingIds = detail.findings.filter((finding) => finding.selected).map((finding) => finding.id);
+    const requestedCount = findingIds.length;
     if (!findingIds.length) {
       setMessage("没有选中的 finding");
       return;
@@ -879,9 +918,34 @@ function App() {
         body: JSON.stringify({ finding_ids: findingIds, dry_run: dryRun })
       });
       await loadAll(detail.mr.id);
-      setMessage(result.dry_run ? `已生成 ${result.published_count} 条 dry-run 发布记录` : `已发布 ${result.published_count} 条意见`);
+      const publishedCount = Number(result.published_count || 0);
+      const actionLabel = result.dry_run ? "生成 dry-run 发布记录" : "提交检视意见";
+      const title = result.dry_run
+        ? "发布预览已生成"
+        : publishedCount === requestedCount
+          ? "检视意见提交成功"
+          : "检视意见部分提交成功";
+      const successMessage = `成功${actionLabel} ${publishedCount} / ${requestedCount} 条。`;
+      setMessage(result.dry_run ? `已生成 ${publishedCount} 条 dry-run 发布记录` : `已发布 ${publishedCount} 条意见`);
+      setPublishNotice({
+        status: "success",
+        title,
+        message: successMessage,
+        publishedCount,
+        requestedCount,
+        detail: result.dry_run ? "当前为 dry-run，仅生成发布记录，不会提交到代码平台。" : "已完成代码平台提交请求。"
+      });
     } catch (error) {
-      setMessage((error as Error).message);
+      const errorMessage = (error as Error).message;
+      setMessage(errorMessage);
+      setPublishNotice({
+        status: "failed",
+        title: "检视意见提交失败",
+        message: `成功提交 0 / ${requestedCount} 条。`,
+        publishedCount: 0,
+        requestedCount,
+        detail: errorMessage
+      });
     } finally {
       setBusy(false);
     }
@@ -1077,6 +1141,7 @@ function App() {
                 pauseReview={pauseReview}
                 stopReview={stopReview}
                 rerunReview={rerunReview}
+                deleteMr={deleteMr}
               />
               <DetailPanel
                 detail={detail}
@@ -1113,7 +1178,31 @@ function App() {
             }}
           />
         )}
+        {publishNotice && <PublishResultModal notice={publishNotice} onClose={() => setPublishNotice(null)} />}
       </main>
+    </div>
+  );
+}
+
+function PublishResultModal({ notice, onClose }: { notice: PublishResultNotice; onClose: () => void }) {
+  const success = notice.status === "success";
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={notice.title} onClick={onClose}>
+      <section className={`publish-result-modal ${notice.status}`} onClick={(event) => event.stopPropagation()}>
+        <div className="publish-result-icon">
+          {success ? <Check /> : <Circle />}
+        </div>
+        <div className="publish-result-content">
+          <strong>{notice.title}</strong>
+          <p>{notice.message}</p>
+          <div className="publish-result-counts" aria-label="发布结果统计">
+            <span><b>{notice.publishedCount}</b> 成功</span>
+            <span><b>{notice.requestedCount}</b> 选中</span>
+          </div>
+          {notice.detail && <span className="publish-result-detail">{notice.detail}</span>}
+          <button type="button" onClick={onClose}>知道了</button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -1338,7 +1427,7 @@ function ProjectCard({
       </div>
       <div className="project-card-metrics">
         <span>仓库 {repos.length}</span>
-        <span>GitHub {repos.filter((repo) => repo.provider === "github").length}</span>
+        <span>CodeHub 兼容 {repos.filter((repo) => repo.provider === "github").length}</span>
         <span>CodeHub {repos.filter((repo) => repo.provider === "codehub").length}</span>
       </div>
       <div className="project-card-actions">
@@ -1377,7 +1466,7 @@ function ProjectCard({
                 <h3>关联代码仓</h3>
                 <div className="project-repo-editor">
                   <select value={provider} onChange={(event) => setProvider(event.target.value)} disabled={!canEdit}>
-                    <option value="github">GitHub</option>
+                    <option value="github">CodeHub 兼容</option>
                     <option value="codehub">CodeHub</option>
                   </select>
                   <input value={repoId} onChange={(event) => setRepoId(event.target.value)} placeholder="Git 仓库链接，例如 https://git.example.com/team/repo.git" disabled={!canEdit} />
@@ -1387,7 +1476,7 @@ function ProjectCard({
                 <div className="project-repo-list">
                   {repos.map((repo) => (
                     <p key={repo.id}>
-                      <span className="repo-provider">{repo.provider}</span>
+                      <span className="repo-provider">{providerLabel(repo.provider)}</span>
                       <strong>{repo.name}</strong>
                       <em>{repo.external_repo_id}</em>
                       <button
@@ -1475,6 +1564,7 @@ function ConfigWorkspace({
   const [skillAssets, setSkillAssets] = useState<Record<string, unknown>[]>([]);
   const [skillBindings, setSkillBindings] = useState<Record<string, unknown>[]>([]);
   const [toolBindings, setToolBindings] = useState<Record<string, unknown>[]>([]);
+  const [agentTab, setAgentTab] = useState<"create" | "list">("create");
   const [ruleContent, setRuleContent] = useState("只报告有证据、有行号、可修复的高置信问题。");
   const [ruleDocName, setRuleDocName] = useState("项目代码规范.md");
   const [ruleDocAgentKey, setRuleDocAgentKey] = useState("security_agent");
@@ -1720,6 +1810,7 @@ function ConfigWorkspace({
     const agentKey = String(created.agent_key || customAgentKey);
     setRuleDocAgentKey(agentKey);
     setSkillAgentKey(agentKey);
+    setAgentTab("list");
     setMessage("自定义专家 Agent 已创建，可继续绑定规范文档和 Skill");
     await loadConfigView();
   }
@@ -1977,6 +2068,17 @@ function ConfigWorkspace({
       .map((skill) => String(skill.name || skill.skill_key));
   }
 
+  function agentSkillAssetNames(agentKey: string) {
+    const boundSkillKeys = new Set(
+      skillBindings
+        .filter((binding) => String(binding.agent_key) === agentKey && Boolean(binding.enabled))
+        .map((binding) => String(binding.skill_key))
+    );
+    return skillAssets
+      .filter((asset) => boundSkillKeys.has(String(asset.skill_key)))
+      .map((asset) => `${String(asset.skill_key)}/${String(asset.asset_path)}`);
+  }
+
   function agentQualityRow(agentKey: string) {
     return agentQuality.find((item) => String(item.agent_id) === agentKey) ?? {};
   }
@@ -1995,10 +2097,10 @@ function ConfigWorkspace({
 
   return (
     <section className="config-workspace">
-      <ConfigHeader title={viewTitle(view)} subtitle="项目级配置会影响该项目下所有 GitHub / CodeHub 仓库的 MR 检视。" />
+      <ConfigHeader title={viewTitle(view)} subtitle="项目级配置会影响该项目下所有 CodeHub 仓库的 MR 检视。" />
       {view === "repos" && (
         <div className="config-grid">
-          {repos.map((repo) => <ConfigCard key={repo.id} title={repo.name} rows={[repo.provider, repo.external_repo_id, repo.status]} />)}
+          {repos.map((repo) => <ConfigCard key={repo.id} title={repo.name} rows={[providerLabel(repo.provider), repo.external_repo_id, repo.status]} />)}
         </div>
       )}
       {view === "rules" && (
@@ -2012,125 +2114,133 @@ function ConfigWorkspace({
       )}
       {view === "agents" && (
         <>
-          <div className="rule-upload-panel">
-            <div>
-              <strong>创建自定义专家 Agent</strong>
-              <span>零代码定义专家画像、检视 Prompt、适用语言/路径/触发词；创建后可绑定规范文档和标准 Skill bundle。</span>
-            </div>
-            <div className="rule-upload-form">
-              <input value={customAgentKey} onChange={(event) => setCustomAgentKey(event.target.value)} placeholder="agent-key，例如 payment_agent" disabled={!canEdit} />
-              <input value={customAgentName} onChange={(event) => setCustomAgentName(event.target.value)} placeholder="Agent 名称" disabled={!canEdit} />
-              <button type="button" onClick={createCustomAgent} disabled={!canEdit}>创建 Agent</button>
-            </div>
-            <div className="agent-editor-grid">
-              <label>
-                <span>Agent 画像</span>
-                <textarea value={customAgentRole} onChange={(event) => setCustomAgentRole(event.target.value)} disabled={!canEdit} />
-              </label>
-              <label>
-                <span>检视职责</span>
-                <textarea value={customAgentScope} onChange={(event) => setCustomAgentScope(event.target.value)} disabled={!canEdit} />
-              </label>
-              <label>
-                <span>排除范围</span>
-                <textarea value={customAgentExcluded} onChange={(event) => setCustomAgentExcluded(event.target.value)} disabled={!canEdit} />
-              </label>
-              <label>
-                <span>Agent Prompt</span>
-                <textarea value={customAgentPrompt} onChange={(event) => setCustomAgentPrompt(event.target.value)} disabled={!canEdit} />
-              </label>
-              <label>
-                <span>语言</span>
-                <input value={customAgentLanguages} onChange={(event) => setCustomAgentLanguages(event.target.value)} disabled={!canEdit} />
-              </label>
-              <label>
-                <span>路径匹配</span>
-                <input value={customAgentPaths} onChange={(event) => setCustomAgentPaths(event.target.value)} disabled={!canEdit} />
-              </label>
-              <label>
-                <span>触发词</span>
-                <input value={customAgentTriggers} onChange={(event) => setCustomAgentTriggers(event.target.value)} disabled={!canEdit} />
-              </label>
-            </div>
+          <div className="agent-workspace-tabs" role="tablist" aria-label="专家 Agent 配置页签">
+            <button type="button" className={agentTab === "create" ? "active" : ""} onClick={() => setAgentTab("create")}>创建 Agent</button>
+            <button type="button" className={agentTab === "list" ? "active" : ""} onClick={() => setAgentTab("list")}>专家 Agent 列表</button>
           </div>
-          <div className="rule-upload-panel">
-            <div>
-              <strong>上传结构化 Markdown 规范</strong>
-              <span>建议使用 rule_id、适用范围、检查项、反例、修复建议等结构化段落，Agent 会逐条按规范检视。</span>
+          {agentTab === "create" && (
+            <div className="agent-tab-panel">
+              <div className="rule-upload-panel">
+                <div>
+                  <strong>创建自定义专家 Agent</strong>
+                  <span>零代码定义专家画像、检视 Prompt、适用语言/路径/触发词；创建后可绑定规范文档和标准 Skill bundle。</span>
+                </div>
+                <div className="rule-upload-form">
+                  <input value={customAgentKey} onChange={(event) => setCustomAgentKey(event.target.value)} placeholder="agent-key，例如 payment_agent" disabled={!canEdit} />
+                  <input value={customAgentName} onChange={(event) => setCustomAgentName(event.target.value)} placeholder="Agent 名称" disabled={!canEdit} />
+                  <button type="button" onClick={createCustomAgent} disabled={!canEdit}>创建 Agent</button>
+                </div>
+                <div className="agent-editor-grid">
+                  <label>
+                    <span>Agent 画像</span>
+                    <textarea value={customAgentRole} onChange={(event) => setCustomAgentRole(event.target.value)} disabled={!canEdit} />
+                  </label>
+                  <label>
+                    <span>检视职责</span>
+                    <textarea value={customAgentScope} onChange={(event) => setCustomAgentScope(event.target.value)} disabled={!canEdit} />
+                  </label>
+                  <label>
+                    <span>排除范围</span>
+                    <textarea value={customAgentExcluded} onChange={(event) => setCustomAgentExcluded(event.target.value)} disabled={!canEdit} />
+                  </label>
+                  <label>
+                    <span>Agent Prompt</span>
+                    <textarea value={customAgentPrompt} onChange={(event) => setCustomAgentPrompt(event.target.value)} disabled={!canEdit} />
+                  </label>
+                  <label>
+                    <span>语言</span>
+                    <input value={customAgentLanguages} onChange={(event) => setCustomAgentLanguages(event.target.value)} disabled={!canEdit} />
+                  </label>
+                  <label>
+                    <span>路径匹配</span>
+                    <input value={customAgentPaths} onChange={(event) => setCustomAgentPaths(event.target.value)} disabled={!canEdit} />
+                  </label>
+                  <label>
+                    <span>触发词</span>
+                    <input value={customAgentTriggers} onChange={(event) => setCustomAgentTriggers(event.target.value)} disabled={!canEdit} />
+                  </label>
+                </div>
+              </div>
+              <div className="rule-upload-panel">
+                <div>
+                  <strong>上传结构化 Markdown 规范</strong>
+                  <span>建议使用 rule_id、适用范围、检查项、反例、修复建议等结构化段落，Agent 会逐条按规范检视。</span>
+                </div>
+                <div className="rule-upload-form">
+                  <input value={ruleDocName} onChange={(event) => setRuleDocName(event.target.value)} disabled={!canEdit} />
+                  <select value={ruleDocAgentKey} onChange={(event) => setRuleDocAgentKey(event.target.value)} disabled={!canEdit}>
+                    {rows.map((row, index) => {
+                      const agentKey = String(row.agent_key || row.agent_id || `agent_${index}`);
+                      return <option key={agentKey} value={agentKey}>{String(row.display_name || row.agent_key || row.agent_id || agentKey)}</option>;
+                    })}
+                  </select>
+                  <button type="button" onClick={uploadRuleDocument} disabled={!canEdit}>上传并绑定</button>
+                </div>
+                <textarea value={ruleContent} onChange={(event) => setRuleContent(event.target.value)} disabled={!canEdit} />
+              </div>
+              <div className="rule-upload-panel">
+                <div>
+                  <strong>创建零代码自定义 Skill</strong>
+                  <span>用于补充团队业务知识、检视步骤、输出约束和特殊风险模型；绑定后下一次 MR 检视自动加载。</span>
+                </div>
+                <div className="rule-upload-form">
+                  <input value={skillName} onChange={(event) => setSkillName(event.target.value)} placeholder="Skill 名称" disabled={!canEdit} />
+                  <input value={skillKey} onChange={(event) => setSkillKey(event.target.value)} placeholder="skill-key，例如 payment-business-review" disabled={!canEdit} />
+                  <select value={skillAgentKey} onChange={(event) => setSkillAgentKey(event.target.value)} disabled={!canEdit}>
+                    {rows.map((row, index) => {
+                      const agentKey = String(row.agent_key || row.agent_id || `agent_${index}`);
+                      return <option key={agentKey} value={agentKey}>{String(row.display_name || row.agent_key || row.agent_id || agentKey)}</option>;
+                    })}
+                  </select>
+                  <button type="button" onClick={createCustomSkill} disabled={!canEdit}>创建并绑定</button>
+                </div>
+                <textarea value={skillContent} onChange={(event) => setSkillContent(event.target.value)} disabled={!canEdit} />
+              </div>
+              <div className="rule-upload-panel">
+                <div>
+                  <strong>添加 Skill Bundle 资源</strong>
+                  <span>支持标准路径：SKILL.md、references/*.md、scripts/*.py、assets/*。脚本默认只注册为资源，执行需后续开启沙箱策略。</span>
+                </div>
+                <div className="rule-upload-form">
+                  <input value={skillAssetSkillKey} onChange={(event) => setSkillAssetSkillKey(event.target.value)} placeholder="skill-key" disabled={!canEdit} />
+                  <input value={skillAssetPath} onChange={(event) => setSkillAssetPath(event.target.value)} placeholder="references/rules.md 或 scripts/check.py" disabled={!canEdit} />
+                  <button type="button" onClick={uploadSkillAsset} disabled={!canEdit}>保存资源</button>
+                </div>
+                <textarea value={skillAssetContent} onChange={(event) => setSkillAssetContent(event.target.value)} disabled={!canEdit} />
+              </div>
             </div>
-            <div className="rule-upload-form">
-              <input value={ruleDocName} onChange={(event) => setRuleDocName(event.target.value)} disabled={!canEdit} />
-              <select value={ruleDocAgentKey} onChange={(event) => setRuleDocAgentKey(event.target.value)} disabled={!canEdit}>
-                {rows.map((row, index) => {
-                  const agentKey = String(row.agent_key || row.agent_id || `agent_${index}`);
-                  return <option key={agentKey} value={agentKey}>{String(row.display_name || row.agent_key || row.agent_id || agentKey)}</option>;
-                })}
-              </select>
-              <button type="button" onClick={uploadRuleDocument} disabled={!canEdit}>上传并绑定</button>
+          )}
+          {agentTab === "list" && (
+            <div className="agent-tab-panel">
+              <div className="agent-inventory-summary">
+                <span>专家 Agent <strong>{rows.length}</strong></span>
+                <span>规范文档 <strong>{ruleDocs.length}</strong></span>
+                <span>自定义 Skill <strong>{customSkills.length}</strong></span>
+                <span>Skill 资源 <strong>{skillAssets.length}</strong></span>
+              </div>
+              <div className="agent-config-list">
+                {rows.map((row) => (
+                  <AgentProfileCard
+                    key={String(row.id || row.agent_key || row.agent_id)}
+                    row={row}
+                    projectId={projectId}
+                    ruleCount={agentRuleCount(String(row.agent_key || row.agent_id))}
+                    toolCount={agentToolCount(String(row.agent_key || row.agent_id))}
+                    ruleNames={agentRuleNames(String(row.agent_key || row.agent_id))}
+                    toolNames={agentToolNames(String(row.agent_key || row.agent_id))}
+                    skillNames={agentSkillNames(String(row.agent_key || row.agent_id))}
+                    skillAssetNames={agentSkillAssetNames(String(row.agent_key || row.agent_id))}
+                    quality={agentQualityRow(String(row.agent_key || row.agent_id))}
+                    reload={loadConfigView}
+                    setMessage={setMessage}
+                    toggleAgent={toggleAgent}
+                    canEdit={canEdit}
+                  />
+                ))}
+                {!rows.length && <div className="config-table-empty">暂无专家 Agent，请先在创建页签中新增。</div>}
+              </div>
             </div>
-            <textarea value={ruleContent} onChange={(event) => setRuleContent(event.target.value)} disabled={!canEdit} />
-          </div>
-          <div className="rule-doc-strip">
-            {ruleDocs.map((rule) => <span key={String(rule.id)}>{String(rule.name || rule.id)}</span>)}
-            {!ruleDocs.length && <span>暂无规范文档</span>}
-          </div>
-          <div className="rule-upload-panel">
-            <div>
-              <strong>创建零代码自定义 Skill</strong>
-              <span>用于补充团队业务知识、检视步骤、输出约束和特殊风险模型；绑定后下一次 MR 检视自动加载。</span>
-            </div>
-            <div className="rule-upload-form">
-              <input value={skillName} onChange={(event) => setSkillName(event.target.value)} placeholder="Skill 名称" disabled={!canEdit} />
-              <input value={skillKey} onChange={(event) => setSkillKey(event.target.value)} placeholder="skill-key，例如 payment-business-review" disabled={!canEdit} />
-              <select value={skillAgentKey} onChange={(event) => setSkillAgentKey(event.target.value)} disabled={!canEdit}>
-                {rows.map((row, index) => {
-                  const agentKey = String(row.agent_key || row.agent_id || `agent_${index}`);
-                  return <option key={agentKey} value={agentKey}>{String(row.display_name || row.agent_key || row.agent_id || agentKey)}</option>;
-                })}
-              </select>
-              <button type="button" onClick={createCustomSkill} disabled={!canEdit}>创建并绑定</button>
-            </div>
-            <textarea value={skillContent} onChange={(event) => setSkillContent(event.target.value)} disabled={!canEdit} />
-          </div>
-          <div className="rule-doc-strip">
-            {customSkills.map((skill) => <span key={String(skill.id)}>{String(skill.name || skill.skill_key)}</span>)}
-            {!customSkills.length && <span>暂无自定义 Skill</span>}
-          </div>
-          <div className="rule-upload-panel">
-            <div>
-              <strong>添加 Skill Bundle 资源</strong>
-              <span>支持标准路径：SKILL.md、references/*.md、scripts/*.py、assets/*。脚本默认只注册为资源，执行需后续开启沙箱策略。</span>
-            </div>
-            <div className="rule-upload-form">
-              <input value={skillAssetSkillKey} onChange={(event) => setSkillAssetSkillKey(event.target.value)} placeholder="skill-key" disabled={!canEdit} />
-              <input value={skillAssetPath} onChange={(event) => setSkillAssetPath(event.target.value)} placeholder="references/rules.md 或 scripts/check.py" disabled={!canEdit} />
-              <button type="button" onClick={uploadSkillAsset} disabled={!canEdit}>保存资源</button>
-            </div>
-            <textarea value={skillAssetContent} onChange={(event) => setSkillAssetContent(event.target.value)} disabled={!canEdit} />
-          </div>
-          <div className="rule-doc-strip">
-            {skillAssets.map((asset) => <span key={String(asset.id)}>{String(asset.skill_key)}/{String(asset.asset_path)}</span>)}
-            {!skillAssets.length && <span>暂无 Skill 资源</span>}
-          </div>
-          <div className="agent-config-list">
-            {rows.map((row) => (
-              <AgentProfileCard
-                key={String(row.id || row.agent_key || row.agent_id)}
-                row={row}
-                projectId={projectId}
-                ruleCount={agentRuleCount(String(row.agent_key || row.agent_id))}
-                toolCount={agentToolCount(String(row.agent_key || row.agent_id))}
-                ruleNames={agentRuleNames(String(row.agent_key || row.agent_id))}
-                toolNames={agentToolNames(String(row.agent_key || row.agent_id))}
-                skillNames={agentSkillNames(String(row.agent_key || row.agent_id))}
-                quality={agentQualityRow(String(row.agent_key || row.agent_id))}
-                reload={loadConfigView}
-                setMessage={setMessage}
-                toggleAgent={toggleAgent}
-                canEdit={canEdit}
-              />
-            ))}
-          </div>
+          )}
         </>
       )}
       {view === "tools" && (
@@ -2358,7 +2468,7 @@ function ConfigWorkspace({
             <article className="setting-form-card">
               <div className="setting-form-head">
                 <strong>发布策略</strong>
-                <span>控制提交检视意见到 GitHub/CodeHub 的人工确认和严重级别范围。</span>
+                <span>控制提交检视意见到 CodeHub 的人工确认和严重级别范围。</span>
               </div>
               <div className="setting-form-grid">
                 <SettingField label="允许级别">
@@ -2621,6 +2731,7 @@ function AgentProfileCard({
   ruleNames,
   toolNames,
   skillNames,
+  skillAssetNames,
   quality,
   reload,
   setMessage,
@@ -2634,6 +2745,7 @@ function AgentProfileCard({
   ruleNames: string[];
   toolNames: string[];
   skillNames: string[];
+  skillAssetNames: string[];
   quality: Record<string, unknown>;
   reload: () => Promise<void>;
   setMessage: (value: string) => void;
@@ -2716,6 +2828,10 @@ function AgentProfileCard({
             <strong>绑定 Skill</strong>
             {(skillNames.length ? skillNames : ["未绑定自定义 Skill"]).map((name, index) => <span key={`${agentKey}-skill-${index}-${name}`}>{name}</span>)}
           </div>
+          <div>
+            <strong>Skill 资源</strong>
+            {(skillAssetNames.length ? skillAssetNames : ["未绑定 Skill 资源"]).map((name, index) => <span key={`${agentKey}-asset-${index}-${name}`}>{name}</span>)}
+          </div>
         </div>
         <div className="agent-metrics-line">
           <span>规则 {ruleCount}</span>
@@ -2755,7 +2871,8 @@ function MrQueue({
   startReview,
   pauseReview,
   stopReview,
-  rerunReview
+  rerunReview,
+  deleteMr
 }: {
   items: MergeRequest[];
   activeMrId: string | null;
@@ -2779,6 +2896,7 @@ function MrQueue({
   pauseReview: (mrId: string) => void;
   stopReview: (mrId: string) => void;
   rerunReview: (mrId: string) => void;
+  deleteMr: (mr: MergeRequest) => void;
 }) {
   const tabs = [
     ["all", "全部", stats.all],
@@ -2929,6 +3047,19 @@ function MrQueue({
                   }}
                 >
                   Diff
+                </button>
+                <button
+                  className="mr-action-button icon danger"
+                  type="button"
+                  title="删除本地 MR"
+                  aria-label={`删除 MR !${mr.number}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    deleteMr(mr);
+                  }}
+                  disabled={busy || ACTIVE_REVIEW_STATUSES.includes(mr.review_status)}
+                >
+                  <Trash2 size={15} />
                 </button>
               </span>
             </div>

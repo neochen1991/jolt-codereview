@@ -115,4 +115,87 @@ export class MergeRequestRepository {
   updateReviewStatus(id: string, status: string) {
     this.db.prepare("UPDATE merge_requests SET review_status = ? WHERE id = ?").run(status, id);
   }
+
+  deleteById(id: string) {
+    const mr = this.findById(id);
+    if (!mr) {
+      return {
+        ok: false,
+        deleted_merge_requests: 0,
+        deleted_jobs: 0,
+        deleted_runs: 0,
+        deleted_findings: 0
+      };
+    }
+
+    const jobIds = this.db.prepare("SELECT id FROM review_jobs WHERE merge_request_id = ?").all(id).map((row: any) => String(row.id));
+    const runIds = this.db.prepare(`
+      SELECT rr.id
+      FROM review_runs rr
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      WHERE rj.merge_request_id = ?
+    `).all(id).map((row: any) => String(row.id));
+    const findingIds = this.db.prepare(`
+      SELECT rf.id
+      FROM review_findings rf
+      JOIN review_runs rr ON rr.id = rf.review_run_id
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      WHERE rj.merge_request_id = ?
+    `).all(id).map((row: any) => String(row.id));
+    const spanIds = this.db.prepare(`
+      SELECT s.id
+      FROM agent_trace_spans s
+      JOIN review_runs rr ON rr.id = s.review_run_id
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      WHERE rj.merge_request_id = ?
+    `).all(id).map((row: any) => String(row.id));
+
+    let changes = 0;
+    const run = (sql: string, value: string) => {
+      changes += Number(this.db.prepare(sql).run(value).changes);
+    };
+    const runEach = (sql: string, values: string[]) => {
+      for (const value of values) run(sql, value);
+    };
+
+    this.db.exec("BEGIN");
+    try {
+      runEach("DELETE FROM vcs_publish_records WHERE finding_id = ?", findingIds);
+      runEach("DELETE FROM user_feedback WHERE finding_id = ?", findingIds);
+      runEach("DELETE FROM evaluation_gold_set WHERE finding_id = ?", findingIds);
+      run("DELETE FROM mr_finding_history WHERE merge_request_id = ?", id);
+      runEach("DELETE FROM review_findings WHERE id = ?", findingIds);
+
+      runEach("DELETE FROM agent_trace_events WHERE span_id = ?", spanIds);
+      runEach("DELETE FROM agent_messages WHERE span_id = ?", spanIds);
+      runEach("DELETE FROM llm_call_records WHERE span_id = ?", spanIds);
+      runEach("DELETE FROM tool_call_records WHERE span_id = ?", spanIds);
+      runEach("DELETE FROM mcp_call_records WHERE span_id = ?", spanIds);
+      runEach("DELETE FROM agent_trace_spans WHERE id = ?", spanIds);
+
+      runEach("DELETE FROM tool_observations WHERE review_run_id = ?", runIds);
+      runEach("DELETE FROM review_artifacts WHERE review_run_id = ?", runIds);
+      runEach("DELETE FROM code_index_snapshots WHERE review_run_id = ?", runIds);
+      runEach("DELETE FROM review_runs WHERE id = ?", runIds);
+
+      runEach("DELETE FROM review_jobs_dead_letter WHERE review_job_id = ?", jobIds);
+      runEach("DELETE FROM review_jobs WHERE id = ?", jobIds);
+      run("DELETE FROM external_review_reports WHERE merge_request_id = ?", id);
+      const deletedMr = Number(this.db.prepare("DELETE FROM merge_requests WHERE id = ?").run(id).changes);
+      changes += deletedMr;
+
+      this.db.exec("COMMIT");
+      return {
+        ok: deletedMr > 0,
+        deleted_merge_requests: deletedMr,
+        deleted_jobs: jobIds.length,
+        deleted_runs: runIds.length,
+        deleted_findings: findingIds.length,
+        deleted_related_rows: changes
+      };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
 }

@@ -695,6 +695,41 @@ function basename(path: string) {
   return parts[parts.length - 1] || path || "--";
 }
 
+function normalizeRepositoryPath(value: string) {
+  let normalized = String(value || "")
+    .replace(/\\/g, "/")
+    .replace(/[?#].*$/, "")
+    .replace(/^file:\/+/, "")
+    .trim();
+  normalized = normalized.replace(/^\.\//, "").replace(/^\/+/, "");
+  const anchors = ["/src/main/", "/src/test/", "/src/", "/pom.xml", "/build.gradle", "/settings.gradle", "/package.json"];
+  for (const anchor of anchors) {
+    const index = normalized.lastIndexOf(anchor);
+    if (index >= 0) return normalized.slice(index + 1);
+  }
+  return normalized;
+}
+
+function matchRepositoryPath(value: string, candidates: string[]) {
+  const normalized = normalizeRepositoryPath(value);
+  if (!normalized) return "";
+  const normalizedCandidates = candidates.map((candidate) => ({
+    raw: candidate,
+    normalized: normalizeRepositoryPath(candidate)
+  }));
+  const exact = normalizedCandidates.find((candidate) => candidate.normalized === normalized);
+  if (exact) return exact.raw;
+  const suffix = normalizedCandidates.find((candidate) => (
+    candidate.normalized.endsWith(`/${normalized}`) || normalized.endsWith(`/${candidate.normalized}`)
+  ));
+  return suffix?.raw || normalized;
+}
+
+function readPathMap(map: Record<string, string>, filePath: string) {
+  const key = matchRepositoryPath(filePath, Object.keys(map));
+  return key ? map[key] || "" : "";
+}
+
 function App() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [mrs, setMrs] = useState<MergeRequest[]>([]);
@@ -3694,16 +3729,24 @@ function FindingDetailModal({
       if (!mr.id || !sourcePaths.length) return;
       setSourceLoading(true);
       const nextPatchByPath: Record<string, string> = {};
+      let changedFilePaths: string[] = [];
       try {
-        const files = await api<{ items: MrChangedFile[] }>(`/api/vcs/${projectId}/merge-requests/${mr.id}/files`);
-        for (const file of files.items || []) {
-          if (file.filename) nextPatchByPath[file.filename] = file.patch || "";
+        const files = await api<unknown>(`/api/vcs/${projectId}/merge-requests/${mr.id}/files`);
+        for (const file of normalizeMrChangedFiles(files)) {
+          const fileName = normalizeRepositoryPath(file.filename || "");
+          if (fileName) {
+            changedFilePaths.push(fileName);
+            nextPatchByPath[fileName] = file.patch || "";
+          }
         }
       } catch {
         // Source file loading below still gives useful context when changed-file metadata is unavailable.
       } finally {
         const nextSourceByPath: Record<string, string> = {};
-        await Promise.all(sourcePaths.map(async (filePath) => {
+        const resolvedSourcePaths = Array.from(new Set(sourcePaths.map((filePath) => (
+          matchRepositoryPath(filePath, changedFilePaths) || normalizeRepositoryPath(filePath)
+        )).filter(Boolean)));
+        await Promise.all(resolvedSourcePaths.map(async (filePath) => {
           try {
             const result = await api<{ content: string }>(
               `/api/vcs/${projectId}/merge-requests/${mr.id}/file?path=${encodeURIComponent(filePath)}&sha=${encodeURIComponent(mr.latest_head_sha || "")}`
@@ -3716,8 +3759,8 @@ function FindingDetailModal({
         if (!cancelled) {
           setPatchByPath(nextPatchByPath);
           setSourceByPath(nextSourceByPath);
-          setSourceCode(nextSourceByPath[finding.file_path] || "");
-          setSourcePatch(nextPatchByPath[finding.file_path] || "");
+          setSourceCode(readPathMap(nextSourceByPath, finding.file_path));
+          setSourcePatch(readPathMap(nextPatchByPath, finding.file_path));
         }
         if (!cancelled) setSourceLoading(false);
       }
@@ -3763,12 +3806,15 @@ function FindingDetailModal({
   const source = findingSource(finding);
   const ruleDetailsById = Object.fromEntries(ruleDetails.map((rule) => [rule.rule_id, rule]));
   const sourceLinesForTarget = (filePath: string, startLine: number, endLine: number, fallback: string) => {
-    const patch = patchByPath[filePath] || "";
-    const source = sourceByPath[filePath] || "";
-    const patchLines = patch ? diffCodeWindow(patch, startLine, endLine) : [];
+    const resolvedFilePath = matchRepositoryPath(filePath, [...Object.keys(patchByPath), ...Object.keys(sourceByPath)]);
+    const patch = readPathMap(patchByPath, resolvedFilePath || filePath);
+    const source = readPathMap(sourceByPath, resolvedFilePath || filePath);
+    const safeStart = startLine > 0 ? startLine : 1;
+    const safeEnd = endLine > 0 ? endLine : safeStart;
+    const patchLines = patch ? diffCodeWindow(patch, safeStart, safeEnd) : [];
     if (patchLines.length) return patchLines;
-    if (source) return sourceCodeWindow(source, startLine, endLine);
-    return textCodeLines(fallback || `${filePath}:${startLine}`, startLine);
+    if (source) return sourceCodeWindow(source, safeStart, safeEnd);
+    return textCodeLines(fallback || `${filePath}:${safeStart}`, safeStart);
   };
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
@@ -3999,16 +4045,53 @@ function GithubCodeBlock({
 }
 
 function observationFilePath(item: Record<string, unknown>) {
-  return String(item.file_path || item.path || item.filename || "").trim();
+  const location = item.location && typeof item.location === "object" ? item.location as Record<string, unknown> : {};
+  return normalizeRepositoryPath(String(
+    item.file_path ||
+    item.path ||
+    item.filename ||
+    item.file ||
+    location.file_path ||
+    location.path ||
+    location.uri ||
+    ""
+  ));
 }
 
 function observationLineStart(item: Record<string, unknown>) {
-  const value = Number(item.line_start || item.start_line || item.line || 1);
-  return Number.isFinite(value) && value > 0 ? value : 1;
+  const location = item.location && typeof item.location === "object" ? item.location as Record<string, unknown> : {};
+  const region = item.region && typeof item.region === "object" ? item.region as Record<string, unknown> : {};
+  const value = Number(
+    item.line_start ||
+    item.start_line ||
+    item.startLine ||
+    item.line_number ||
+    item.lineNumber ||
+    item.line ||
+    location.line_start ||
+    location.start_line ||
+    location.startLine ||
+    location.line ||
+    region.startLine ||
+    0
+  );
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function observationLineEnd(item: Record<string, unknown>) {
-  const value = Number(item.line_end || item.end_line || observationLineStart(item));
+  const location = item.location && typeof item.location === "object" ? item.location as Record<string, unknown> : {};
+  const region = item.region && typeof item.region === "object" ? item.region as Record<string, unknown> : {};
+  const value = Number(
+    item.line_end ||
+    item.end_line ||
+    item.endLine ||
+    location.line_end ||
+    location.end_line ||
+    location.endLine ||
+    region.endLine ||
+    observationLineStart(item) ||
+    0
+  );
   return Number.isFinite(value) && value > 0 ? value : observationLineStart(item);
 }
 
@@ -4095,11 +4178,12 @@ function ToolResultsPanel({ detail, onOpenFinding }: { detail: Detail; onOpenFin
 }
 
 function findFindingForObservation(findings: Finding[], observation: Record<string, unknown>) {
-  const obsPath = String(observation.file_path || "");
+  const obsPath = observationFilePath(observation);
   const obsRule = String(observation.rule_id || "");
-  const obsLine = Number(observation.line_start || 0);
+  const obsLine = observationLineStart(observation);
   return findings.find((finding) => {
-    const sameFile = !obsPath || finding.file_path === obsPath || finding.file_path.endsWith(obsPath) || obsPath.endsWith(finding.file_path);
+    const findingPath = normalizeRepositoryPath(finding.file_path || "");
+    const sameFile = !obsPath || findingPath === obsPath || findingPath.endsWith(`/${obsPath}`) || obsPath.endsWith(`/${findingPath}`);
     const sameLine = !obsLine || !finding.line_start || Math.abs(Number(finding.line_start) - obsLine) <= 5;
     if (!sameFile || !sameLine) return false;
     const text = `${finding.covered_rules_json || ""} ${finding.tool_provenance_json || ""} ${finding.source_observations_json || ""}`;
@@ -4336,9 +4420,9 @@ function formatTraceLocation(location: Record<string, unknown> | undefined) {
 
 function formatObservationLocation(item: Record<string, unknown>) {
   return formatTraceLocation({
-    file_path: item.file_path,
-    line_start: item.line_start,
-    line_end: item.line_end,
+    file_path: observationFilePath(item),
+    line_start: observationLineStart(item),
+    line_end: observationLineEnd(item),
   }) || "--";
 }
 

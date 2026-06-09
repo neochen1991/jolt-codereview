@@ -27,7 +27,6 @@ import {
   SlidersHorizontal,
   Trash2,
   Wrench,
-  X,
   UserRound,
   Users,
   Zap
@@ -112,6 +111,8 @@ type Finding = {
   publish_state: string;
   lifecycle_state: string;
 };
+
+type MrActionState = "start" | "pause" | "stop" | "rerun";
 
 type RuleDetail = {
   rule_id: string;
@@ -412,11 +413,11 @@ function staticRunnerPayload(toolForm: ToolSettingsForm) {
 
 function statusLabel(status: string) {
   const map: Record<string, string> = {
-    queued: "待检视",
-    fetching: "已拉取",
-    pre_scanning: "预扫描",
+    queued: "等待检视",
+    fetching: "读取变更",
+    pre_scanning: "工具检查",
     reviewing: "检视中",
-    judging: "归并中",
+    judging: "整理结果",
     running: "检视中",
     waiting_confirmation: "待确认",
     submitted: "已提交",
@@ -437,12 +438,12 @@ function formatDurationMs(value: unknown) {
 
 const ACTIVE_REVIEW_STATUSES = ["fetching", "pre_scanning", "reviewing", "judging", "running"];
 const REVIEW_STEPS = [
-  { key: "queued", label: "入队", description: "等待手动或后台 worker 执行" },
-  { key: "fetching", label: "拉取 Diff", description: "从 CodeHub 拉取 MR 文件和 diff" },
-  { key: "pre_scanning", label: "静态预扫描", description: "Semgrep、PMD、Checkstyle 等工具分析" },
-  { key: "reviewing", label: "专家检视", description: "专家 Agent 调用规范、Skill、工具和模型" },
-  { key: "judging", label: "归并判断", description: "冲突检测、证据校准、问题归并" },
-  { key: "done", label: "完成", description: "输出问题或标记无问题" }
+  { key: "queued", label: "等待开始", description: "任务已提交，正在等待后台处理" },
+  { key: "fetching", label: "读取变更", description: "读取 MR 的变更文件和代码内容" },
+  { key: "pre_scanning", label: "工具检查", description: "用代码检查工具先找一批确定性问题" },
+  { key: "reviewing", label: "AI 专家分析", description: "不同专家按规范分析代码问题" },
+  { key: "judging", label: "整理结果", description: "合并重复项，保留证据充分的问题" },
+  { key: "done", label: "等待确认", description: "问题已生成，等待你确认后提交到 CodeHub" }
 ];
 
 function effectiveReviewStatus(detail: Detail) {
@@ -463,6 +464,41 @@ function reviewStepIndex(status: string) {
 function severityText(severity: string) {
   const map: Record<string, string> = { critical: "严重", high: "高危", medium: "中危", low: "低危" };
   return map[severity] || severity;
+}
+
+function severityRank(severity: string) {
+  const map: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+  return map[severity] ?? 9;
+}
+
+function sortFindingsBySeverity(findings: Finding[]) {
+  return [...findings].sort((left, right) => {
+    const severityDiff = severityRank(left.severity) - severityRank(right.severity);
+    if (severityDiff !== 0) return severityDiff;
+    const confidenceDiff = Number(right.confidence || 0) - Number(left.confidence || 0);
+    if (confidenceDiff !== 0) return confidenceDiff;
+    return (left.file_path || "").localeCompare(right.file_path || "") || Number(left.line_start || 0) - Number(right.line_start || 0);
+  });
+}
+
+function findingSource(finding: Finding) {
+  const observations = parseJsonObjectArray(finding.source_observations_json);
+  const provenance = parseJsonObjectArray(finding.tool_provenance_json);
+  const toolName = [...observations, ...provenance]
+    .map((item) => String(item.tool_name || item.tool || item.source || "").trim())
+    .find((value) => value && value !== "tool_observation");
+  if (observations.length || provenance.some((item) => item.tool_name || item.source === "tool_observation")) {
+    return {
+      type: "tool" as const,
+      label: "工具检出",
+      detail: toolName || agentLabel(finding.agent_id)
+    };
+  }
+  return {
+    type: "ai" as const,
+    label: "AI 语义检出",
+    detail: agentLabel(finding.agent_id)
+  };
 }
 
 function riskLevel(score: number) {
@@ -675,6 +711,7 @@ function App() {
   const [query, setQuery] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pendingMrActions, setPendingMrActions] = useState<Record<string, MrActionState>>({});
   const [repoInput, setRepoInput] = useState("");
   const [message, setMessage] = useState("CodeHub 已同步 · 2 分钟前");
   const [publishNotice, setPublishNotice] = useState<PublishResultNotice | null>(null);
@@ -796,6 +833,31 @@ function App() {
     }
   }
 
+  function optimisticMrStatus(mrId: string, status: string) {
+    const updatedAt = new Date().toISOString();
+    setMrs((previous) => previous.map((mr) => (
+      mr.id === mrId ? { ...mr, review_status: status, updated_at: updatedAt } : mr
+    )));
+    setDetail((previous) => (
+      previous?.mr.id === mrId
+        ? { ...previous, mr: { ...previous.mr, review_status: status, updated_at: updatedAt } }
+        : previous
+    ));
+  }
+
+  function beginMrAction(mrId: string, action: MrActionState, status: string) {
+    setPendingMrActions((previous) => ({ ...previous, [mrId]: action }));
+    optimisticMrStatus(mrId, status);
+  }
+
+  function endMrAction(mrId: string) {
+    setPendingMrActions((previous) => {
+      const next = { ...previous };
+      delete next[mrId];
+      return next;
+    });
+  }
+
   async function openMr(id: string, showPreview = false) {
     activeMrIdRef.current = id;
     setActiveMrId(id);
@@ -819,6 +881,7 @@ function App() {
 
   async function rerunReview(mrId = detail?.mr.id) {
     if (!mrId) return;
+    beginMrAction(mrId, "rerun", "reviewing");
     setBusy(true);
     try {
       await api(`/api/mr-review/merge-requests/${mrId}/review-jobs`, {
@@ -826,15 +889,17 @@ function App() {
         body: JSON.stringify({ effort_level: "standard", reason: "manual_retry" })
       });
       await loadAll(mrId);
-      setMessage("已重新入队，worker 会自动执行检视");
+      setMessage("已提交重新检视请求，系统正在处理");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
+      endMrAction(mrId);
       setBusy(false);
     }
   }
 
   async function startReview(mrId: string) {
+    beginMrAction(mrId, "start", "reviewing");
     setBusy(true);
     try {
       await api(`/api/mr-review/merge-requests/${mrId}/review-jobs`, {
@@ -842,15 +907,17 @@ function App() {
         body: JSON.stringify({ effort_level: "standard", reason: "manual_start" })
       });
       await loadAll(mrId);
-      setMessage("已手动开始检视，后台 worker 正在执行");
+      setMessage("已提交开始请求，系统正在处理");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
+      endMrAction(mrId);
       setBusy(false);
     }
   }
 
   async function pauseReview(mrId: string) {
+    beginMrAction(mrId, "pause", "paused");
     setBusy(true);
     try {
       await api(`/api/mr-review/merge-requests/${mrId}/pause`, { method: "POST", body: "{}" });
@@ -859,11 +926,13 @@ function App() {
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
+      endMrAction(mrId);
       setBusy(false);
     }
   }
 
   async function stopReview(mrId: string) {
+    beginMrAction(mrId, "stop", "cancelled");
     setBusy(true);
     try {
       await api(`/api/mr-review/merge-requests/${mrId}/stop`, { method: "POST", body: "{}" });
@@ -872,6 +941,7 @@ function App() {
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
+      endMrAction(mrId);
       setBusy(false);
     }
   }
@@ -1193,6 +1263,7 @@ function App() {
                 sync={sync}
                 syncing={syncing}
                 busy={busy}
+                pendingMrActions={pendingMrActions}
                 startReview={startReview}
                 pauseReview={pauseReview}
                 stopReview={stopReview}
@@ -1594,8 +1665,8 @@ function ConfigWorkspace({
     enable_stream: true
   });
   const [llmStoredApiKey, setLlmStoredApiKey] = useState("");
-  const [reviewForm, setReviewForm] = useState<ReviewSettingsForm>({ effort: "standard", max_findings_per_mr: "12", min_confidence: "0.75", enable_full_repo_context: true });
-  const [agentForm, setAgentForm] = useState<AgentSettingsForm>({ max_parallel_agents: "3", enable_llm_routing: true, require_rule_coverage: true, default_max_tool_calls: "8" });
+  const [reviewForm, setReviewForm] = useState<ReviewSettingsForm>({ effort: "standard", max_findings_per_mr: "40", min_confidence: "0.75", enable_full_repo_context: true });
+  const [agentForm, setAgentForm] = useState<AgentSettingsForm>({ max_parallel_agents: "3", enable_llm_routing: true, require_rule_coverage: true, default_max_tool_calls: "12" });
   const [toolForm, setToolForm] = useState<ToolSettingsForm>({
     static_tool_enabled: DEFAULT_STATIC_TOOL_ENABLED,
     analysis_worktree_path: "",
@@ -1747,7 +1818,7 @@ function ConfigWorkspace({
       setLlmStoredApiKey(String(llm.default_api_key ?? ""));
       setReviewForm({
         effort: String(reviewPolicy.effort ?? "standard"),
-        max_findings_per_mr: String(reviewPolicy.max_findings_per_mr ?? reviewPolicy.max_findings ?? "12"),
+        max_findings_per_mr: String(reviewPolicy.max_findings_per_mr ?? reviewPolicy.max_findings ?? "40"),
         min_confidence: String(reviewPolicy.min_confidence ?? "0.75"),
         enable_full_repo_context: boolValue(reviewPolicy.enable_full_repo_context, true)
       });
@@ -1755,7 +1826,7 @@ function ConfigWorkspace({
         max_parallel_agents: String(agentPolicy.max_parallel_agents ?? "3"),
         enable_llm_routing: boolValue(agentPolicy.enable_llm_routing, true),
         require_rule_coverage: boolValue(agentPolicy.require_rule_coverage, true),
-        default_max_tool_calls: String(agentPolicy.default_max_tool_calls ?? "8")
+        default_max_tool_calls: String(agentPolicy.default_max_tool_calls ?? "12")
       });
       setToolForm({
         static_tool_enabled: staticToolEnabled,
@@ -1858,9 +1929,9 @@ function ConfigWorkspace({
         triggers: customAgentTriggers,
         requires_deepagents: true,
         min_confidence: 0.75,
-        max_findings: 8,
-        max_llm_calls: 4,
-        max_tool_calls: 8
+        max_findings: 12,
+        max_llm_calls: 6,
+        max_tool_calls: 12
       })
     });
     const agentKey = String(created.agent_key || customAgentKey);
@@ -2813,9 +2884,9 @@ function AgentProfileCard({
   const [responsibilityScope, setResponsibilityScope] = useState(String(row.responsibility_scope || ""));
   const [excludedScope, setExcludedScope] = useState(String(row.excluded_scope || ""));
   const [minConfidence, setMinConfidence] = useState(String(row.min_confidence ?? "0.75"));
-  const [maxFindings, setMaxFindings] = useState(String(row.max_findings ?? "5"));
-  const [maxLlmCalls, setMaxLlmCalls] = useState(String(row.max_llm_calls ?? "4"));
-  const [maxToolCalls, setMaxToolCalls] = useState(String(row.max_tool_calls ?? "8"));
+  const [maxFindings, setMaxFindings] = useState(String(row.max_findings ?? "12"));
+  const [maxLlmCalls, setMaxLlmCalls] = useState(String(row.max_llm_calls ?? "6"));
+  const [maxToolCalls, setMaxToolCalls] = useState(String(row.max_tool_calls ?? "12"));
 
   async function saveProfile() {
     await api(`/api/projects/${projectId}/expert-profiles/${agentKey}`, {
@@ -2924,6 +2995,7 @@ function MrQueue({
   sync,
   syncing,
   busy,
+  pendingMrActions,
   startReview,
   pauseReview,
   stopReview,
@@ -2948,6 +3020,7 @@ function MrQueue({
   sync: () => void;
   syncing: boolean;
   busy: boolean;
+  pendingMrActions: Record<string, MrActionState>;
   startReview: (mrId: string) => void;
   pauseReview: (mrId: string) => void;
   stopReview: (mrId: string) => void;
@@ -3033,93 +3106,98 @@ function MrQueue({
           <span>操作</span>
         </div>
         <div className="mr-body">
-          {items.map((mr) => (
-            <div
-              className={`mr-row ${activeMrId === mr.id ? "active" : ""}`}
-              key={mr.id}
-              onClick={() => openMr(mr.id)}
-            >
-              <span className="mr-title">
-                <strong>!{mr.number}</strong>
-                {mr.title}
-              </span>
-              <span>{mr.repository_name}</span>
-              <span>{mr.author}</span>
-              <RiskBadge score={mr.risk_score} />
-              <StatusBadge status={mr.review_status} />
-              <span>{mr.finding_count || (mr.review_status === "queued" ? "--" : 0)}</span>
-              <span>{shortTime(mr.updated_at)}</span>
-              <span className="mr-actions">
-                <button
-                  className="mr-action-button"
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    rerunReview(mr.id);
-                  }}
-                  disabled={busy || ACTIVE_REVIEW_STATUSES.includes(mr.review_status)}
-                >
-                  开始
-                </button>
-                <button
-                  className="mr-action-button"
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    pauseReview(mr.id);
-                  }}
-                  disabled={busy || !["queued", ...ACTIVE_REVIEW_STATUSES].includes(mr.review_status)}
-                >
-                  暂停
-                </button>
-                <button
-                  className="mr-action-button danger"
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    stopReview(mr.id);
-                  }}
-                  disabled={busy || ["waiting_confirmation", "submitted", "no_issue", "cancelled"].includes(mr.review_status)}
-                >
-                  停止
-                </button>
-                <button
-                  className="mr-action-button subtle"
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    startReview(mr.id);
-                  }}
-                  disabled={busy || ACTIVE_REVIEW_STATUSES.includes(mr.review_status)}
-                >
-                  重检
-                </button>
-                <button
-                  className="mr-action-button subtle"
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    previewMr(mr.id);
-                  }}
-                >
-                  Diff
-                </button>
-                <button
-                  className="mr-action-button icon danger"
-                  type="button"
-                  title="删除本地 MR"
-                  aria-label={`删除 MR !${mr.number}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    deleteMr(mr);
-                  }}
-                  disabled={busy || ACTIVE_REVIEW_STATUSES.includes(mr.review_status)}
-                >
-                  <Trash2 size={15} />
-                </button>
-              </span>
-            </div>
-          ))}
+          {items.map((mr) => {
+            const action = pendingMrActions[mr.id];
+            const displayStatus = action === "pause" ? "paused" : action === "stop" ? "cancelled" : action ? "reviewing" : mr.review_status;
+            const rowBusy = Boolean(action);
+            return (
+              <div
+                className={`mr-row ${activeMrId === mr.id ? "active" : ""} ${rowBusy ? "pending-action" : ""}`}
+                key={mr.id}
+                onClick={() => openMr(mr.id)}
+              >
+                <span className="mr-title">
+                  <strong>!{mr.number}</strong>
+                  {mr.title}
+                </span>
+                <span>{mr.repository_name}</span>
+                <span>{mr.author}</span>
+                <RiskBadge score={mr.risk_score} />
+                <StatusBadge status={displayStatus} />
+                <span>{mr.finding_count || (displayStatus === "queued" ? "--" : 0)}</span>
+                <span>{shortTime(mr.updated_at)}</span>
+                <span className="mr-actions">
+                  <button
+                    className="mr-action-button"
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      startReview(mr.id);
+                    }}
+                    disabled={busy || rowBusy || ACTIVE_REVIEW_STATUSES.includes(displayStatus)}
+                  >
+                    {action === "start" ? "启动中" : "开始"}
+                  </button>
+                  <button
+                    className="mr-action-button"
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      pauseReview(mr.id);
+                    }}
+                    disabled={busy || rowBusy || !["queued", ...ACTIVE_REVIEW_STATUSES].includes(displayStatus)}
+                  >
+                    {action === "pause" ? "暂停中" : "暂停"}
+                  </button>
+                  <button
+                    className="mr-action-button danger"
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      stopReview(mr.id);
+                    }}
+                    disabled={busy || rowBusy || ["waiting_confirmation", "submitted", "no_issue", "cancelled"].includes(displayStatus)}
+                  >
+                    {action === "stop" ? "停止中" : "停止"}
+                  </button>
+                  <button
+                    className="mr-action-button subtle"
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      rerunReview(mr.id);
+                    }}
+                    disabled={busy || rowBusy || ACTIVE_REVIEW_STATUSES.includes(displayStatus)}
+                  >
+                    {action === "rerun" ? "提交中" : "重检"}
+                  </button>
+                  <button
+                    className="mr-action-button subtle"
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      previewMr(mr.id);
+                    }}
+                  >
+                    Diff
+                  </button>
+                  <button
+                    className="mr-action-button icon danger"
+                    type="button"
+                    title="删除本地 MR"
+                    aria-label={`删除 MR !${mr.number}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      deleteMr(mr);
+                    }}
+                    disabled={busy || rowBusy || ACTIVE_REVIEW_STATUSES.includes(displayStatus)}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </span>
+              </div>
+            );
+          })}
           {!items.length && <div className="table-empty">暂无 MR，请绑定 Git 仓库链接后同步。</div>}
         </div>
       </div>
@@ -3212,6 +3290,7 @@ function DetailPanel({
   const agentCount = new Set(detail.findings.map((finding) => finding.agent_id)).size || (hasRun ? 3 : 0);
   const duration = estimateDuration(detail);
   const currentStatus = effectiveReviewStatus(detail);
+  const sortedFindings = sortFindingsBySeverity(detail.findings);
 
   return (
     <section className="detail-panel">
@@ -3242,7 +3321,7 @@ function DetailPanel({
 
         <div className="detail-tabs">
           {[
-            ["findings", "AI 检视问题"],
+            ["findings", "检视问题"],
             ["process", "检视过程"],
             ["tools", `工具结果 (${detail.tool_observations?.length || 0})`]
           ].map(([key, label]) => (
@@ -3254,7 +3333,7 @@ function DetailPanel({
 
         {tab === "findings" && (
           <div className="findings-list">
-            {detail.findings.map((finding) => (
+            {sortedFindings.map((finding) => (
               <FindingRow
                 key={finding.id}
                 finding={finding}
@@ -3268,7 +3347,7 @@ function DetailPanel({
               <div className="empty-finding pending">
                 <Loader2 className="spin" size={22} />
                 <strong>检视任务尚未完成</strong>
-                <span>该 MR 已进入队列，worker 会按顺序拉取 diff、预扫描并执行专家 Agent 检视。</span>
+                <span>该 MR 已提交检视，系统会先读取代码变更，再进行工具检查和 AI 专家分析。</span>
               </div>
             )}
           </div>
@@ -3539,6 +3618,7 @@ function FindingRow({
   onFalsePositive: () => void;
   onOpen: () => void;
 }) {
+  const source = findingSource(finding);
   return (
     <article className="finding-row" onClick={onOpen} role="button" tabIndex={0} onKeyDown={(event) => {
       if (event.key === "Enter" || event.key === " ") {
@@ -3551,6 +3631,7 @@ function FindingRow({
         <SeverityBadge severity={finding.severity} />
       </label>
       <span className="agent-pill">{agentLabel(finding.agent_id)}</span>
+      <span className={`finding-source-tag ${source.type}`} title={source.detail}>{source.label}</span>
       <span className="confidence">{finding.confidence.toFixed(2)}</span>
       <div className="finding-main">
         <div className="finding-location-line">
@@ -3679,6 +3760,7 @@ function FindingDetailModal({
     : textCodeLines(finding.evidence || location, finding.line_start || 1);
   const suggestionLines = textCodeLines(suggestedCode || "// 当前 finding 未提供明确代码片段，请重新检视生成建议修改代码。", finding.line_start || 1);
   const evidenceCount = sourceObservations.length || toolProvenance.length;
+  const source = findingSource(finding);
   const ruleDetailsById = Object.fromEntries(ruleDetails.map((rule) => [rule.rule_id, rule]));
   const sourceLinesForTarget = (filePath: string, startLine: number, endLine: number, fallback: string) => {
     const patch = patchByPath[filePath] || "";
@@ -3695,6 +3777,7 @@ function FindingDetailModal({
           <div className="finding-modal-title">
             <div className="finding-modal-kicker">
               <SeverityBadge severity={finding.severity} />
+              <span className={`finding-source-tag ${source.type}`}>{source.label}</span>
               <span>{agentLabel(finding.agent_id)}</span>
               <span>置信度 {finding.confidence.toFixed(2)}</span>
               {finding.publish_state && <span>{finding.publish_state}</span>}
@@ -3706,116 +3789,130 @@ function FindingDetailModal({
               {primaryRules.length > 3 && <em>+{primaryRules.length - 3}</em>}
             </p>
           </div>
-          <button className="finding-modal-close" type="button" onClick={onClose} aria-label="关闭问题详情" title="关闭">
-            <X size={18} />
-          </button>
         </header>
 
-        <div className="finding-summary-grid">
-          <section>
-            <h3>问题影响</h3>
+        <div className="finding-core-stack">
+          <section className="finding-core-card">
+            <h3>问题描述</h3>
             <p>{finding.problem_description || "暂无问题描述。"}</p>
           </section>
-          <section>
+          <section className="finding-core-card fix">
             <h3>修复建议</h3>
             <p>{finding.recommendation || "暂无修复建议。"}</p>
           </section>
         </div>
 
-        <div className="finding-detail-section finding-code-compare">
-          <h3>代码上下文</h3>
-          <div>
-            <GithubCodeBlock
-              filePath={finding.file_path}
-              label={sourceLoading ? "正在加载源代码" : "源问题代码"}
-              location={location}
-              lines={problemLines}
-              highlightStart={finding.line_start || undefined}
-              highlightEnd={finding.line_end || finding.line_start || undefined}
-            />
-            <GithubCodeBlock
-              filePath={finding.file_path}
-              label="建议代码"
-              location={location}
-              lines={suggestionLines}
-              mode="suggestion"
-            />
-          </div>
+        <div className="finding-detail-section finding-code-stack">
+          <h3>问题代码</h3>
+          <GithubCodeBlock
+            filePath={finding.file_path}
+            label={sourceLoading ? "正在加载源代码" : "源问题代码"}
+            location={location}
+            lines={problemLines}
+            highlightStart={finding.line_start || undefined}
+            highlightEnd={finding.line_end || finding.line_start || undefined}
+          />
         </div>
 
-        <div className="finding-detail-section finding-rule-section">
-          <h3>违反规范</h3>
-          <div className="rule-detail-list">
-            {primaryRules.map((rule) => (
-              <RuleDetailCard
-                key={rule}
-                ruleId={rule}
-                detail={ruleDetailsById[rule]}
-                loading={ruleDetailsLoading}
-              />
-            ))}
-          </div>
-          {skippedRules.length > 0 && <small>已检查未命中：{skippedRules.join(", ")}</small>}
+        <div className="finding-detail-section finding-code-stack">
+          <h3>建议修复代码</h3>
+          <GithubCodeBlock
+            filePath={finding.file_path}
+            label="建议代码"
+            location={location}
+            lines={suggestionLines}
+            mode="suggestion"
+          />
         </div>
 
-        <div className="finding-detail-section finding-trace-section">
-          <h3>证据摘要</h3>
-          <dl className="trace-list">
-            <div>
-              <dt>专家</dt>
-              <dd>{agentLabel(String(qualityTrace.agent_id || finding.agent_id))}</dd>
-            </div>
-            <div>
-              <dt>定位</dt>
-              <dd>{formatTraceLocation(traceLocation) || location}</dd>
-            </div>
-            <div>
-              <dt>工具证据</dt>
-              <dd>{evidenceCount} 条</dd>
-            </div>
-            <div>
-              <dt>去重指纹</dt>
-              <dd>{String(qualityTrace.dedupe_hash || finding.id)}</dd>
-            </div>
-          </dl>
-        </div>
-
-        <div className="finding-detail-section">
-          <h3>工具证据</h3>
-          {sourceObservations.length ? (
-            <div className="tool-evidence-list">
-              {sourceObservations.map((item, index) => (
-                <article key={`${String(item.tool_name || "tool")}-${index}`}>
-                  <div>
-                    <strong>{String(item.tool_name || "unknown_tool")}</strong>
-                    {item.rule_id !== undefined && item.rule_id !== null && <span>{String(item.rule_id)}</span>}
-                    {item.confidence !== undefined && item.confidence !== null && <em>{Number(item.confidence).toFixed(2)}</em>}
-                  </div>
-                  <p>{String(item.message || "工具命中候选问题")}</p>
-                  <small>{formatObservationLocation(item)}</small>
-                  {observationFilePath(item) && (
-                    <GithubCodeBlock
-                      filePath={observationFilePath(item)}
-                      label="工具命中源码"
-                      location={formatObservationLocation(item)}
-                      lines={sourceLinesForTarget(
-                        observationFilePath(item),
-                        observationLineStart(item),
-                        observationLineEnd(item),
-                        String(item.evidence || item.message || "工具命中候选问题")
-                      )}
-                      highlightStart={observationLineStart(item)}
-                      highlightEnd={observationLineEnd(item)}
-                    />
-                  )}
-                </article>
+        <details className="finding-collapsible-card">
+          <summary>
+            <span>违反规范</span>
+            <em>{primaryRules.length} 条</em>
+          </summary>
+          <div className="finding-detail-section finding-rule-section">
+            <div className="rule-detail-list">
+              {primaryRules.map((rule) => (
+                <RuleDetailCard
+                  key={rule}
+                  ruleId={rule}
+                  detail={ruleDetailsById[rule]}
+                  loading={ruleDetailsLoading}
+                />
               ))}
             </div>
-          ) : (
-            <small>该问题由专家直接提出，当前未匹配到静态工具证据。</small>
-          )}
-          {toolProvenance.length > sourceObservations.length && <small>同时记录了 {toolProvenance.length} 条 provenance 元数据。</small>}
-        </div>
+            {skippedRules.length > 0 && <small>已检查未命中：{skippedRules.join(", ")}</small>}
+          </div>
+        </details>
+
+        <details className="finding-collapsible-card">
+          <summary>
+            <span>质量追溯</span>
+            <em>{evidenceCount} 条证据</em>
+          </summary>
+          <div className="finding-detail-section finding-trace-section">
+            <dl className="trace-list">
+              <div>
+                <dt>专家</dt>
+                <dd>{agentLabel(String(qualityTrace.agent_id || finding.agent_id))}</dd>
+              </div>
+              <div>
+                <dt>定位</dt>
+                <dd>{formatTraceLocation(traceLocation) || location}</dd>
+              </div>
+              <div>
+                <dt>来源</dt>
+                <dd>{source.label}</dd>
+              </div>
+              <div>
+                <dt>去重指纹</dt>
+                <dd>{String(qualityTrace.dedupe_hash || finding.id)}</dd>
+              </div>
+            </dl>
+          </div>
+        </details>
+
+        <details className="finding-collapsible-card">
+          <summary>
+            <span>工具证据</span>
+            <em>{sourceObservations.length || 0} 条</em>
+          </summary>
+          <div className="finding-detail-section">
+            {sourceObservations.length ? (
+              <div className="tool-evidence-list">
+                {sourceObservations.map((item, index) => (
+                  <article key={`${String(item.tool_name || "tool")}-${index}`}>
+                    <div>
+                      <strong>{String(item.tool_name || "unknown_tool")}</strong>
+                      {item.rule_id !== undefined && item.rule_id !== null && <span>{String(item.rule_id)}</span>}
+                      {item.confidence !== undefined && item.confidence !== null && <em>{Number(item.confidence).toFixed(2)}</em>}
+                    </div>
+                    <p>{String(item.message || "工具命中候选问题")}</p>
+                    <small>{formatObservationLocation(item)}</small>
+                    {observationFilePath(item) && (
+                      <GithubCodeBlock
+                        filePath={observationFilePath(item)}
+                        label="工具命中源码"
+                        location={formatObservationLocation(item)}
+                        lines={sourceLinesForTarget(
+                          observationFilePath(item),
+                          observationLineStart(item),
+                          observationLineEnd(item),
+                          String(item.evidence || item.message || "工具命中候选问题")
+                        )}
+                        highlightStart={observationLineStart(item)}
+                        highlightEnd={observationLineEnd(item)}
+                      />
+                    )}
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <small>该问题由专家直接提出，当前未匹配到静态工具证据。</small>
+            )}
+            {toolProvenance.length > sourceObservations.length && <small>同时记录了 {toolProvenance.length} 条 provenance 元数据。</small>}
+          </div>
+        </details>
       </section>
     </div>
   );

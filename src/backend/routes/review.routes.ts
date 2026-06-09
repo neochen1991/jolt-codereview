@@ -287,9 +287,29 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     route("GET", "/api/mr-review/projects/:projectId/merge-requests", ({ params, url }) => {
       const status = url.searchParams.get("status");
       const activeJobStatuses = new Set(["fetching", "pre_scanning", "reviewing", "judging", "running"]);
+      const activeProjectJob = get<Record<string, any>>(`
+        SELECT rj.id AS job_id, rj.status, mr.id AS merge_request_id, mr.number, mr.title
+        FROM review_jobs rj
+        JOIN merge_requests mr ON mr.id = rj.merge_request_id
+        JOIN repositories r ON r.id = mr.repository_id
+        WHERE r.project_id = ?
+          AND rj.status IN ('fetching', 'pre_scanning', 'reviewing', 'judging', 'running')
+          AND COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at) >= datetime('now', '-60 seconds')
+        ORDER BY rj.locked_at DESC, rj.updated_at DESC
+        LIMIT 1
+      `, [params.projectId]);
       const rows = mergeRequestRepository.listByProject(params.projectId, null).map((row: any) => {
         const effectiveStatus = activeJobStatuses.has(String(row.latest_job_status)) ? String(row.latest_job_status) : String(row.review_status);
-        return { ...row, review_status: effectiveStatus };
+        const blockedByProject = effectiveStatus === "queued" && activeProjectJob && activeProjectJob.merge_request_id !== row.id;
+        return {
+          ...row,
+          review_status: effectiveStatus,
+          queue_blocked_by_project: Boolean(blockedByProject),
+          queue_blocked_reason: blockedByProject
+            ? `项目内 !${activeProjectJob.number} 正在检视，当前 MR 将排队等待`
+            : "",
+          active_project_review: blockedByProject ? activeProjectJob : null
+        };
       });
       const filtered = status ? rows.filter((row: any) => row.review_status === status) : rows;
       return { items: filtered };

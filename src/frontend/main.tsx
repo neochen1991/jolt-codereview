@@ -88,6 +88,15 @@ type MergeRequest = {
   updated_at: string;
   finding_count: number;
   latest_run_status?: string;
+  queue_blocked_by_project?: boolean;
+  queue_blocked_reason?: string;
+  active_project_review?: {
+    job_id?: string;
+    status?: string;
+    merge_request_id?: string;
+    number?: number;
+    title?: string;
+  } | null;
 };
 
 type Finding = {
@@ -415,6 +424,7 @@ function staticRunnerPayload(toolForm: ToolSettingsForm) {
 function statusLabel(status: string) {
   const map: Record<string, string> = {
     queued: "等待检视",
+    project_queued: "排队中",
     fetching: "读取变更",
     pre_scanning: "工具检查",
     reviewing: "检视中",
@@ -3349,23 +3359,29 @@ function MrQueue({
         <div className="mr-body">
           {items.map((mr) => {
             const action = pendingMrActions[mr.id];
-            const displayStatus = action === "pause" ? "paused" : action === "stop" ? "cancelled" : action ? "reviewing" : mr.review_status;
+            const workflowStatus = action === "pause" ? "paused" : action === "stop" ? "cancelled" : action ? "reviewing" : mr.review_status;
+            const queueBlocked = !action && mr.queue_blocked_by_project && mr.review_status === "queued";
+            const displayStatus = queueBlocked ? "project_queued" : workflowStatus;
+            const queueBlockedReason = mr.queue_blocked_reason || "项目内已有 MR 正在检视，当前 MR 将排队等待";
             const rowBusy = Boolean(action);
             return (
               <div
-                className={`mr-row ${activeMrId === mr.id ? "active" : ""} ${rowBusy ? "pending-action" : ""}`}
+                className={`mr-row ${activeMrId === mr.id ? "active" : ""} ${rowBusy ? "pending-action" : ""} ${queueBlocked ? "project-queued" : ""}`}
                 key={mr.id}
                 onClick={() => openMr(mr.id)}
               >
                 <span className="mr-title">
-                  <strong>!{mr.number}</strong>
-                  {mr.title}
+                  <span>
+                    <strong>!{mr.number}</strong>
+                    {mr.title}
+                  </span>
+                  {queueBlocked && <small>{queueBlockedReason}</small>}
                 </span>
                 <span>{mr.repository_name}</span>
                 <span>{mr.author}</span>
                 <RiskBadge score={mr.risk_score} />
-                <StatusBadge status={displayStatus} />
-                <span>{mr.finding_count || (displayStatus === "queued" ? "--" : 0)}</span>
+                <StatusBadge status={displayStatus} title={queueBlocked ? queueBlockedReason : undefined} />
+                <span>{mr.finding_count || (workflowStatus === "queued" ? "--" : 0)}</span>
                 <span>{shortTime(mr.updated_at)}</span>
                 <span className="mr-actions">
                   <button
@@ -3375,7 +3391,8 @@ function MrQueue({
                       event.stopPropagation();
                       startReview(mr.id);
                     }}
-                    disabled={busy || rowBusy || ACTIVE_REVIEW_STATUSES.includes(displayStatus)}
+                    disabled={busy || rowBusy || queueBlocked || ACTIVE_REVIEW_STATUSES.includes(workflowStatus)}
+                    title={queueBlocked ? queueBlockedReason : undefined}
                   >
                     {action === "start" ? "启动中" : "开始"}
                   </button>
@@ -3386,7 +3403,7 @@ function MrQueue({
                       event.stopPropagation();
                       pauseReview(mr.id);
                     }}
-                    disabled={busy || rowBusy || !["queued", ...ACTIVE_REVIEW_STATUSES].includes(displayStatus)}
+                    disabled={busy || rowBusy || !["queued", ...ACTIVE_REVIEW_STATUSES].includes(workflowStatus)}
                   >
                     {action === "pause" ? "暂停中" : "暂停"}
                   </button>
@@ -3397,7 +3414,7 @@ function MrQueue({
                       event.stopPropagation();
                       stopReview(mr.id);
                     }}
-                    disabled={busy || rowBusy || ["waiting_confirmation", "submitted", "no_issue", "cancelled"].includes(displayStatus)}
+                    disabled={busy || rowBusy || ["waiting_confirmation", "submitted", "no_issue", "cancelled"].includes(workflowStatus)}
                   >
                     {action === "stop" ? "停止中" : "停止"}
                   </button>
@@ -3408,7 +3425,7 @@ function MrQueue({
                       event.stopPropagation();
                       rerunReview(mr.id);
                     }}
-                    disabled={busy || rowBusy || ACTIVE_REVIEW_STATUSES.includes(displayStatus)}
+                    disabled={busy || rowBusy || ACTIVE_REVIEW_STATUSES.includes(workflowStatus)}
                   >
                     {action === "rerun" ? "提交中" : "重检"}
                   </button>
@@ -3431,7 +3448,7 @@ function MrQueue({
                       event.stopPropagation();
                       deleteMr(mr);
                     }}
-                    disabled={busy || rowBusy || ACTIVE_REVIEW_STATUSES.includes(displayStatus)}
+                    disabled={busy || rowBusy || ACTIVE_REVIEW_STATUSES.includes(workflowStatus)}
                   >
                     <Trash2 size={15} />
                   </button>
@@ -3484,8 +3501,8 @@ function RiskBadge({ score }: { score: number }) {
   return <span className={`risk-badge ${level}`}>{text}</span>;
 }
 
-function StatusBadge({ status }: { status: string }) {
-  return <span className={`status-badge ${status}`}>{statusLabel(status)}</span>;
+function StatusBadge({ status, title }: { status: string; title?: string }) {
+  return <span className={`status-badge ${status}`} title={title || statusLabel(status)}>{statusLabel(status)}</span>;
 }
 
 function DetailPanel({

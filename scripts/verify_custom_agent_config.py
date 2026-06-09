@@ -29,7 +29,7 @@ def main() -> None:
           rule_sets_json TEXT NOT NULL DEFAULT '[]',
           requires_deepagents INTEGER NOT NULL DEFAULT 0,
           min_confidence REAL NOT NULL DEFAULT 0.75,
-          max_findings_per_mr INTEGER NOT NULL DEFAULT 5
+          max_findings_per_mr INTEGER NOT NULL DEFAULT 12
         );
         CREATE TABLE expert_profiles (
           id TEXT PRIMARY KEY,
@@ -41,9 +41,9 @@ def main() -> None:
           excluded_scope TEXT NOT NULL DEFAULT '',
           enabled INTEGER NOT NULL DEFAULT 1,
           min_confidence REAL NOT NULL DEFAULT 0.75,
-          max_findings INTEGER NOT NULL DEFAULT 8,
-          max_llm_calls INTEGER NOT NULL DEFAULT 4,
-          max_tool_calls INTEGER NOT NULL DEFAULT 8,
+          max_findings INTEGER NOT NULL DEFAULT 12,
+          max_llm_calls INTEGER NOT NULL DEFAULT 6,
+          max_tool_calls INTEGER NOT NULL DEFAULT 12,
           output_schema_version TEXT NOT NULL DEFAULT 'finding_v1'
         );
         """
@@ -60,7 +60,7 @@ def main() -> None:
           id, project_id, agent_key, display_name, role_profile, responsibility_scope,
           excluded_scope, enabled, min_confidence, max_findings, max_llm_calls, max_tool_calls
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0.75, 8, 4, 8)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0.75, 12, 6, 12)
         """,
         (
             "expert_settlement",

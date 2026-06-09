@@ -3411,7 +3411,7 @@ def load_agent_configs(conn: sqlite3.Connection, project_id: str) -> list[dict[s
                     "rule_sets": json.loads(config_row["rule_sets_json"] or "[]"),
                     "requires_deepagents": bool(config_row["requires_deepagents"]) if "requires_deepagents" in config_row.keys() else False,
                     "min_confidence": max(float(config_row["min_confidence"]), profile.min_confidence),
-                    "max_findings_per_mr": max(1, min(int(config_row["max_findings_per_mr"]), 10)),
+                    "max_findings_per_mr": max(1, min(int(config_row["max_findings_per_mr"]), 24)),
                     "max_tool_calls": profile.max_tool_calls,
                 }
             )
@@ -3421,7 +3421,7 @@ def load_agent_configs(conn: sqlite3.Connection, project_id: str) -> list[dict[s
         agent["skill_assets"] = load_bound_custom_skill_assets(conn, project_id, custom_skills)
         if custom_skills or agent["skill_assets"]:
             agent["requires_deepagents"] = True
-            agent["max_tool_calls"] = max(int(agent.get("max_tool_calls") or 0), 6)
+            agent["max_tool_calls"] = max(int(agent.get("max_tool_calls") or 0), 14)
         agent["bound_rules"] = load_bound_rules(conn, project_id, profile.agent_key)
         result.append(agent)
     if result:
@@ -3451,7 +3451,8 @@ def load_agent_configs(conn: sqlite3.Connection, project_id: str) -> list[dict[s
             "applies_to": {"exclusive_scope": "security", "persona": "安全专家", "review_scope": "安全问题"},
             "tools": [],
             "min_confidence": 0.72,
-            "max_findings_per_mr": 5,
+            "max_findings_per_mr": 12,
+            "max_tool_calls": 12,
             "skills": ["security-review"],
         },
         {
@@ -3460,7 +3461,8 @@ def load_agent_configs(conn: sqlite3.Connection, project_id: str) -> list[dict[s
             "applies_to": {"exclusive_scope": "general_coding", "persona": "通用编码专家", "review_scope": "通用实现问题"},
             "tools": [],
             "min_confidence": 0.74,
-            "max_findings_per_mr": 5,
+            "max_findings_per_mr": 12,
+            "max_tool_calls": 12,
             "skills": ["coding-review"],
         },
         {
@@ -3469,7 +3471,8 @@ def load_agent_configs(conn: sqlite3.Connection, project_id: str) -> list[dict[s
             "applies_to": {"exclusive_scope": "test_coverage", "persona": "测试专家", "review_scope": "测试覆盖问题"},
             "tools": [],
             "min_confidence": 0.7,
-            "max_findings_per_mr": 5,
+            "max_findings_per_mr": 12,
+            "max_tool_calls": 12,
             "skills": ["test-review"],
         },
     ]
@@ -3538,8 +3541,8 @@ def merge_custom_agents(agent_configs: list[dict[str, Any]], project_config: dic
             "skills": raw.get("skills") if isinstance(raw.get("skills"), list) else [],
             "rule_sets": raw.get("rule_sets") if isinstance(raw.get("rule_sets"), list) else [],
             "min_confidence": float(raw.get("min_confidence") or 0.75),
-            "max_findings_per_mr": int(raw.get("max_findings_per_mr") or 5),
-            "max_tool_calls": int(raw.get("max_tool_calls") or 4),
+            "max_findings_per_mr": int(raw.get("max_findings_per_mr") or 12),
+            "max_tool_calls": int(raw.get("max_tool_calls") or 12),
             "bound_rules": raw.get("bound_rules") if isinstance(raw.get("bound_rules"), list) else [],
         }
     return list(by_id.values())
@@ -4312,7 +4315,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
         (
             run_id,
             str(sandbox_dir),
-            json.dumps({"max_llm_calls_per_agent": 1, "max_findings": 30}),
+            json.dumps({"max_llm_calls_per_agent": 2, "max_findings": 40}),
             json.dumps({"static": "open_source_tools_first", "llm": config.get("llm", {}).get("default_model")}),
             job["id"],
         ),
@@ -4442,7 +4445,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
             run_id=run_id,
             new_id=new_id,
             load_tool_observations=load_tool_observations,
-            max_findings=30,
+            max_findings=40,
             selection_confidence=0.75,
         )
         summarize_pr_node = make_summarize_pr_node(

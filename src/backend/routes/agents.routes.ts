@@ -98,9 +98,9 @@ export function createAgentRoutes(ctx: BackendRouteContext): Route[] {
         ruleSets: listFromInput(input.rule_sets),
         requiresDeepagents: input.requires_deepagents === undefined ? true : Boolean(input.requires_deepagents),
         minConfidence: Number(input.min_confidence ?? 0.75),
-        maxFindings: Number(input.max_findings ?? 8),
-        maxLlmCalls: Number(input.max_llm_calls ?? 4),
-        maxToolCalls: Number(input.max_tool_calls ?? 8)
+        maxFindings: Number(input.max_findings ?? 12),
+        maxLlmCalls: Number(input.max_llm_calls ?? 6),
+        maxToolCalls: Number(input.max_tool_calls ?? 12)
       });
       auditLog({ userId: actorId, projectId: params.projectId, action: "expert_profiles.create", resourceType: "expert_profile", resourceId: agentKey, summary: `created custom agent ${agentKey}` });
       return created;

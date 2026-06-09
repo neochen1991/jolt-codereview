@@ -231,7 +231,7 @@ def _extract_json_objects(content: str) -> list[dict[str, Any]]:
     return objects
 
 
-def parse_llm_findings(agent_id: str, content: str, files: list[Any], max_findings: int = 24) -> list[dict[str, Any]]:
+def parse_llm_findings(agent_id: str, content: str, files: list[Any], max_findings: int = 32) -> list[dict[str, Any]]:
     try:
         start = content.find("[")
         end = content.rfind("]")
@@ -287,9 +287,9 @@ def parse_llm_findings(agent_id: str, content: str, files: list[Any], max_findin
             }
         )
     try:
-        limit = max(1, min(int(max_findings), 40))
+        limit = max(1, min(int(max_findings), 48))
     except (TypeError, ValueError):
-        limit = 24
+        limit = 32
     return findings[:limit]
 
 
@@ -617,9 +617,9 @@ def call_llm(
                 if budget_tracker.truncated_reason:
                     recorder.event(span_id, "budget_truncated", f"LLM 调用后预算触发熔断：{budget_tracker.truncated_reason}", budget_tracker.snapshot())
             try:
-                max_findings = int(agent.get("max_findings_per_mr") or agent.get("max_findings") or 24)
+                max_findings = int(agent.get("max_findings_per_mr") or agent.get("max_findings") or 32)
             except (TypeError, ValueError):
-                max_findings = 24
+                max_findings = 32
             return parse_llm_findings(agent_id, content, files, max_findings=max_findings)
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = exc

@@ -154,9 +154,9 @@ def make_run_experts_node(
             has_skill_bundle = bool(agent.get("custom_skills") or agent.get("skill_assets"))
             if effort == "deep" or agent.get("requires_deepagents") or has_skill_bundle:
                 try:
-                    max_tool_calls = int(agent.get("max_tool_calls") or 8)
+                    max_tool_calls = int(agent.get("max_tool_calls") or 12)
                     if has_skill_bundle:
-                        max_tool_calls = max(max_tool_calls, 10)
+                        max_tool_calls = max(max_tool_calls, 14)
                     deep_result = run_bounded_deepagent(
                         agent=agent_context,
                         files=llm_files,

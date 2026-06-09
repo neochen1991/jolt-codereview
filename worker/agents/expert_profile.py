@@ -12,9 +12,9 @@ class ExpertProfile:
     excluded_scope: str
     enabled: bool = True
     min_confidence: float = 0.75
-    max_findings: int = 8
-    max_llm_calls: int = 4
-    max_tool_calls: int = 8
+    max_findings: int = 12
+    max_llm_calls: int = 6
+    max_tool_calls: int = 12
     output_schema_version: str = "finding_v1"
 
     def to_agent_config(self) -> dict:

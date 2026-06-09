@@ -17,10 +17,10 @@ def budget_for_effort(effort: str) -> dict[str, Any]:
     }
     calls_by_effort = {
         "trivial": 0,
-        "fast": 8,
-        "light": 8,
-        "standard": 24,
-        "deep": 32,
+        "fast": 12,
+        "light": 12,
+        "standard": 32,
+        "deep": 48,
     }
     wall_seconds_by_effort = {
         "trivial": 30,
@@ -36,8 +36,8 @@ def budget_for_effort(effort: str) -> dict[str, Any]:
         "max_wall_seconds": wall_seconds_by_effort.get(effort, 180),
         "max_cost_usd": cost_by_effort.get(effort, 0.20),
         "max_llm_calls": calls_by_effort.get(effort, 8),
-        "max_llm_calls_per_agent": 0 if effort == "trivial" else 1,
-        "max_findings": 30,
+        "max_llm_calls_per_agent": 0 if effort == "trivial" else 2,
+        "max_findings": 40,
         "on_exceed": "degrade",
     }
 

@@ -142,12 +142,12 @@ def run_bounded_deepagent(
     skill_summary: str,
     tool_observations: list[dict[str, Any]],
     llm_config: dict[str, Any],
-    max_tool_calls: int = 8,
+    max_tool_calls: int = 12,
     llm_trace: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     agent_id = str(agent.get("agent_id") or "unknown_agent")
     applies_to = agent.get("applies_to") or {}
-    bounded_max = max(1, min(max_tool_calls, 16))
+    bounded_max = max(1, min(max_tool_calls, 24))
     provider = str(llm_config.get("default_provider") or "dashscope-openai-compatible")
     model_name = str(llm_config.get("default_model") or "MiniMax-M2.7")
     base_url = str(llm_config.get("default_base_url") or "").rstrip("/")

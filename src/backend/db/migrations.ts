@@ -320,7 +320,7 @@ export function migrate(db: Db) {
       rule_sets_json TEXT NOT NULL DEFAULT '[]',
       requires_deepagents INTEGER NOT NULL DEFAULT 0,
       min_confidence REAL NOT NULL DEFAULT 0.75,
-      max_findings_per_mr INTEGER NOT NULL DEFAULT 5,
+      max_findings_per_mr INTEGER NOT NULL DEFAULT 12,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(project_id, agent_id)
     );
@@ -335,9 +335,9 @@ export function migrate(db: Db) {
       excluded_scope TEXT NOT NULL DEFAULT '',
       enabled INTEGER NOT NULL DEFAULT 1,
       min_confidence REAL NOT NULL DEFAULT 0.75,
-      max_findings INTEGER NOT NULL DEFAULT 8,
-      max_llm_calls INTEGER NOT NULL DEFAULT 4,
-      max_tool_calls INTEGER NOT NULL DEFAULT 8,
+      max_findings INTEGER NOT NULL DEFAULT 12,
+      max_llm_calls INTEGER NOT NULL DEFAULT 6,
+      max_tool_calls INTEGER NOT NULL DEFAULT 12,
       output_schema_version TEXT NOT NULL DEFAULT 'finding_v1',
       UNIQUE(project_id, agent_key)
     );

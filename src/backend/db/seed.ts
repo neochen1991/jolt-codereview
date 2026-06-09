@@ -99,9 +99,17 @@ export function seed(db: Db) {
     VALUES (
       'policy_project_default',
       'project_default',
-      '{"default_effort":"standard","allowed_efforts":["trivial","fast","standard","deep"],"max_findings_per_mr":20,"default_provider":"github","enable_mcp":false}'
+      '{"default_effort":"standard","allowed_efforts":["trivial","fast","standard","deep"],"max_findings_per_mr":40,"default_provider":"github","enable_mcp":false}'
     )
   `).run();
+  const currentReviewPolicy = db.prepare("SELECT policy_json FROM review_policy WHERE project_id = 'project_default'").get() as { policy_json?: string } | undefined;
+  if (currentReviewPolicy?.policy_json) {
+    const policy = JSON.parse(currentReviewPolicy.policy_json) as Record<string, unknown>;
+    if (Number(policy.max_findings_per_mr ?? 0) < 40) {
+      db.prepare("UPDATE review_policy SET policy_json = ?, updated_at = CURRENT_TIMESTAMP WHERE project_id = 'project_default'")
+        .run(JSON.stringify({ ...policy, max_findings_per_mr: 40 }));
+    }
+  }
 
   db.prepare(`
     INSERT OR IGNORE INTO rule_sets (id, project_id, name, version, scope_json, content, status)
@@ -515,13 +523,16 @@ export function seed(db: Db) {
         id, project_id, agent_key, display_name, role_profile, responsibility_scope, excluded_scope,
         enabled, min_confidence, max_findings, max_llm_calls, max_tool_calls, output_schema_version
       )
-      VALUES (?, 'project_default', ?, ?, ?, ?, ?, 1, 0.75, 8, 4, 8, 'finding_v1')
+      VALUES (?, 'project_default', ?, ?, ?, ?, ?, 1, 0.75, 12, 6, 12, 'finding_v1')
       ON CONFLICT(project_id, agent_key) DO UPDATE SET
         display_name = excluded.display_name,
         role_profile = excluded.role_profile,
         responsibility_scope = excluded.responsibility_scope,
         excluded_scope = excluded.excluded_scope,
-        enabled = excluded.enabled
+        enabled = excluded.enabled,
+        max_findings = MAX(expert_profiles.max_findings, excluded.max_findings),
+        max_llm_calls = MAX(expert_profiles.max_llm_calls, excluded.max_llm_calls),
+        max_tool_calls = MAX(expert_profiles.max_tool_calls, excluded.max_tool_calls)
     `).run(
       `expert_${profile.agent_key}_default`,
       profile.agent_key,
@@ -573,7 +584,7 @@ export function seed(db: Db) {
       tools: [],
       skills: ["performance-review"],
       min_confidence: 0.73,
-      max_findings: 8
+      max_findings: 12
     },
     {
       id: "agent_security_default",
@@ -590,7 +601,7 @@ export function seed(db: Db) {
       tools: ["github.list_pull_files"],
       skills: ["security-review"],
       min_confidence: 0.72,
-      max_findings: 8
+      max_findings: 12
     },
     {
       id: "agent_coding_default",
@@ -607,7 +618,7 @@ export function seed(db: Db) {
       tools: [],
       skills: ["coding-review"],
       min_confidence: 0.74,
-      max_findings: 8
+      max_findings: 12
     },
     {
       id: "agent_ddd_default",
@@ -663,7 +674,7 @@ export function seed(db: Db) {
       tools: [],
       skills: ["ddd-design-review"],
       min_confidence: 0.76,
-      max_findings: 8
+      max_findings: 12
     },
     {
       id: "agent_frontend_default",
@@ -680,7 +691,7 @@ export function seed(db: Db) {
       tools: [],
       skills: ["frontend-review"],
       min_confidence: 0.73,
-      max_findings: 8
+      max_findings: 12
     },
     {
       id: "agent_test_default",
@@ -697,7 +708,7 @@ export function seed(db: Db) {
       tools: [],
       skills: ["test-review"],
       min_confidence: 0.7,
-      max_findings: 8
+      max_findings: 12
     },
     {
       id: "agent_redis_default",
@@ -714,7 +725,7 @@ export function seed(db: Db) {
       tools: [],
       skills: ["redis-review"],
       min_confidence: 0.74,
-      max_findings: 8
+      max_findings: 12
     },
     {
       id: "agent_dependency_default",
@@ -731,7 +742,7 @@ export function seed(db: Db) {
       tools: [],
       skills: ["dependency-review"],
       min_confidence: 0.74,
-      max_findings: 8
+      max_findings: 12
     },
     {
       id: "agent_database_default",
@@ -748,7 +759,7 @@ export function seed(db: Db) {
       tools: [],
       skills: ["database-review"],
       min_confidence: 0.76,
-      max_findings: 8
+      max_findings: 12
     },
     {
       id: "agent_backend_default",
@@ -765,7 +776,7 @@ export function seed(db: Db) {
       tools: [],
       skills: ["backend-review"],
       min_confidence: 0.74,
-      max_findings: 8
+      max_findings: 12
     },
     {
       id: "agent_low_level_defect_default",
@@ -784,7 +795,7 @@ export function seed(db: Db) {
       tools: [],
       skills: ["java-low-level-defect-review"],
       min_confidence: 0.75,
-      max_findings: 8
+      max_findings: 12
     }
   ];
 

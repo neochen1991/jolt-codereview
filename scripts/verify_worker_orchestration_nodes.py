@@ -113,7 +113,7 @@ assert "enable_stream" in deepagents_text
 assert "collect_openai_sse_response(response, started)" in deepagents_text
 assert "def read_file(path: str)" in deepagents_text
 assert "def read_diff_patch(path: str)" in deepagents_text
-assert "min(max_tool_calls, 16)" in deepagents_text
+assert "min(max_tool_calls, 24)" in deepagents_text
 assert "trace_callback" in deepagents_text
 assert "timeout_seconds=timeout_seconds" in targeted_debate_text
 assert "stream=stream_enabled" in targeted_debate_text
@@ -1438,7 +1438,7 @@ assert "run_experts" in TARGET_GRAPH_NODE_KEYS
 standard_budget = budget_for_effort("standard")
 assert standard_budget["max_cost_usd"] == 1.0, standard_budget
 assert standard_budget["max_wall_seconds"] == 900, standard_budget
-assert standard_budget["max_llm_calls"] == 24, standard_budget
+assert standard_budget["max_llm_calls"] == 32, standard_budget
 assert standard_budget["max_llm_calls"] >= 1, standard_budget
 cost_tracker = BudgetTracker.from_budget(standard_budget)
 for _ in range(100):

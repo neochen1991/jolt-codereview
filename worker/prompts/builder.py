@@ -99,10 +99,10 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
     agent_id = str(agent.get("agent_id") or "unknown_agent")
     applies_to = agent.get("applies_to") or {}
     try:
-        max_agent_findings = int(agent.get("max_findings_per_mr") or agent.get("max_findings") or 8)
+        max_agent_findings = int(agent.get("max_findings_per_mr") or agent.get("max_findings") or 12)
     except (TypeError, ValueError):
-        max_agent_findings = 8
-    max_agent_findings = max(8, min(max_agent_findings, 24))
+        max_agent_findings = 12
+    max_agent_findings = max(8, min(max_agent_findings, 32))
     selected_files = _select_agent_files(agent, files)
     compact = []
     redactions: set[str] = set()

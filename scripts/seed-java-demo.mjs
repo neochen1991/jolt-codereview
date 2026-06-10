@@ -177,7 +177,6 @@ function seedJavaReview() {
   writeFileSync(path.join(localRepoDir, "src", "main", "resources", "db", "migration", "V20260607__payment_schema.sql"), migrationPatch().split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++")).map((line) => line.slice(1)).join("\n"), "utf8");
 
   const db = new DatabaseSync(dbPath());
-  db.exec("PRAGMA foreign_keys = ON");
   const repoId = "repo_github_java_fixture";
   const mrId = `mr_${repoId}_9101`;
   const headSha = `java_fixture_${Date.now()}`;

@@ -28,7 +28,6 @@ function openMr(repoName, number, headSha) {
 }
 
 const db = new DatabaseSync(":memory:");
-db.exec("PRAGMA foreign_keys = ON");
 migrate(db);
 
 db.prepare("INSERT INTO projects (id, name) VALUES ('project_multi_repo', 'Multi Repo Project')").run();

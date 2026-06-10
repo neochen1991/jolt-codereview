@@ -515,7 +515,6 @@ function seedPaymentSpringbootEval() {
   ];
 
   const db = new DatabaseSync(dbPath());
-  db.exec("PRAGMA foreign_keys = ON");
   const headSha = `payment_eval_${Date.now()}`;
   const jobId = id("job");
   const providerConfig = {

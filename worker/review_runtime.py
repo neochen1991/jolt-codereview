@@ -71,7 +71,6 @@ def connect(config: dict[str, Any]) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 5000")
     ensure_worker_schema(conn)
     return conn
@@ -93,13 +92,13 @@ def ensure_worker_schema(conn: sqlite3.Connection) -> None:
     add_column_if_missing("review_findings", "source_observations_json", "TEXT NOT NULL DEFAULT '[]'")
     add_column_if_missing("review_findings", "quality_trace_json", "TEXT NOT NULL DEFAULT '{}'")
     add_column_if_missing("review_jobs", "pr_summary", "TEXT NOT NULL DEFAULT '{}'")
-    add_column_if_missing("review_jobs", "requested_by", "TEXT REFERENCES users(id)")
+    add_column_if_missing("review_jobs", "requested_by", "TEXT")
     add_column_if_missing("review_runs", "coverage_json", "TEXT NOT NULL DEFAULT '{}'")
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS mr_finding_history (
           id TEXT PRIMARY KEY,
-          merge_request_id TEXT NOT NULL REFERENCES merge_requests(id),
+          merge_request_id TEXT NOT NULL,
           dedupe_hash TEXT NOT NULL,
           finding_id TEXT,
           first_seen_head_sha TEXT NOT NULL,
@@ -114,7 +113,7 @@ def ensure_worker_schema(conn: sqlite3.Connection) -> None:
           ON mr_finding_history(merge_request_id, status);
         CREATE TABLE IF NOT EXISTS candidate_findings (
           id TEXT PRIMARY KEY,
-          review_run_id TEXT NOT NULL REFERENCES review_runs(id),
+          review_run_id TEXT NOT NULL,
           dedupe_hash TEXT NOT NULL,
           stage TEXT NOT NULL,
           status TEXT NOT NULL,
@@ -133,7 +132,7 @@ def ensure_worker_schema(conn: sqlite3.Connection) -> None:
           rejected_reasons_json TEXT NOT NULL DEFAULT '[]',
           source_observations_json TEXT NOT NULL DEFAULT '[]',
           raw_json TEXT NOT NULL DEFAULT '{}',
-          final_finding_id TEXT REFERENCES review_findings(id),
+          final_finding_id TEXT,
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           UNIQUE(review_run_id, dedupe_hash, stage)
@@ -144,11 +143,11 @@ def ensure_worker_schema(conn: sqlite3.Connection) -> None:
           ON candidate_findings(rule_id, status);
         CREATE TABLE IF NOT EXISTS token_usage_reports (
           id TEXT PRIMARY KEY,
-          review_run_id TEXT NOT NULL REFERENCES review_runs(id),
-          review_job_id TEXT NOT NULL REFERENCES review_jobs(id),
-          merge_request_id TEXT NOT NULL REFERENCES merge_requests(id),
-          project_id TEXT NOT NULL REFERENCES projects(id),
-          repository_id TEXT NOT NULL REFERENCES repositories(id),
+          review_run_id TEXT NOT NULL,
+          review_job_id TEXT NOT NULL,
+          merge_request_id TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          repository_id TEXT NOT NULL,
           employee_no TEXT NOT NULL,
           reported_at TEXT NOT NULL,
           input_tokens INTEGER NOT NULL DEFAULT 0,
@@ -169,7 +168,7 @@ def ensure_worker_schema(conn: sqlite3.Connection) -> None:
           ON token_usage_reports(project_id, created_at);
         CREATE TABLE IF NOT EXISTS rule_precision_history (
           id TEXT PRIMARY KEY,
-          project_id TEXT NOT NULL REFERENCES projects(id),
+          project_id TEXT NOT NULL,
           agent_id TEXT NOT NULL,
           rule_id TEXT NOT NULL,
           accepted_count INTEGER NOT NULL DEFAULT 0,

@@ -217,7 +217,6 @@ function writeScenarioFiles(fixtureDir, scenario) {
 const fixtureDir = path.join(root, "data", "fixtures", "java-5mr");
 mkdirSync(fixtureDir, { recursive: true });
 const db = new DatabaseSync(dbPath());
-db.exec("PRAGMA foreign_keys = ON");
 const seeded = [];
 
 for (const scenario of scenarios.slice(0, Number.isFinite(scenarioCount) ? scenarioCount : scenarios.length)) {

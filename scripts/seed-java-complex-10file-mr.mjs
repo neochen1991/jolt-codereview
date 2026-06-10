@@ -357,7 +357,6 @@ function seed() {
   };
 
   const db = new DatabaseSync(dbPath());
-  db.exec("PRAGMA foreign_keys = ON");
   db.prepare(`
     INSERT INTO repositories (id, project_id, provider, external_repo_id, name, default_branch, status, provider_config_json)
     VALUES (?, ?, 'github', 'jolt-fixture/java-complex-payment-service', 'java-complex-payment-service', 'main', 'active', ?)

@@ -56,7 +56,6 @@ function ensureSuggestionFinding() {
 
 function seedSuggestionPublishFixture() {
   const db = new DatabaseSync(dbPath());
-  db.exec("PRAGMA foreign_keys = ON");
   const repoId = "repo_github_suggestion_fixture";
   const mrId = `mr_${repoId}_9201`;
   const jobId = id("job");

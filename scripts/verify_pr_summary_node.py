@@ -32,7 +32,7 @@ def create_conn() -> sqlite3.Connection:
         );
         CREATE TABLE agent_trace_events (
           id TEXT PRIMARY KEY,
-          span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+          span_id TEXT NOT NULL,
           event_type TEXT NOT NULL,
           summary TEXT NOT NULL,
           payload_json TEXT NOT NULL DEFAULT '{}',
@@ -40,7 +40,7 @@ def create_conn() -> sqlite3.Connection:
         );
         CREATE TABLE llm_call_records (
           id TEXT PRIMARY KEY,
-          span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+          span_id TEXT NOT NULL,
           provider TEXT NOT NULL,
           model TEXT NOT NULL,
           request_id TEXT,

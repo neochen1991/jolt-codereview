@@ -55,7 +55,6 @@ if (/未完成|待补|部分完成/.test(audit)) {
 }
 
 const db = new DatabaseSync(dbPath());
-db.exec("PRAGMA foreign_keys = ON");
 
 for (const table of [
   "users",

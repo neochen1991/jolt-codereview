@@ -19,7 +19,6 @@ from tools.candidate_store import upsert_candidate_finding
 def main() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("CREATE TABLE review_runs (id TEXT PRIMARY KEY)")
     conn.execute("CREATE TABLE review_findings (id TEXT PRIMARY KEY)")
     conn.execute("INSERT INTO review_runs (id) VALUES ('run_candidate_verify')")

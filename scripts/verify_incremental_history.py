@@ -20,14 +20,14 @@ def create_conn() -> sqlite3.Connection:
         CREATE TABLE merge_requests (id TEXT PRIMARY KEY, review_status TEXT NOT NULL);
         CREATE TABLE review_jobs (
           id TEXT PRIMARY KEY,
-          merge_request_id TEXT NOT NULL REFERENCES merge_requests(id),
+          merge_request_id TEXT NOT NULL,
           head_sha TEXT NOT NULL,
           status TEXT NOT NULL,
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE review_runs (
           id TEXT PRIMARY KEY,
-          review_job_id TEXT NOT NULL REFERENCES review_jobs(id),
+          review_job_id TEXT NOT NULL,
           budget_used_json TEXT NOT NULL DEFAULT '{}',
           coverage_json TEXT NOT NULL DEFAULT '{}',
           status TEXT NOT NULL,
@@ -36,13 +36,13 @@ def create_conn() -> sqlite3.Connection:
         );
         CREATE TABLE review_findings (
           id TEXT PRIMARY KEY,
-          review_run_id TEXT NOT NULL REFERENCES review_runs(id),
+          review_run_id TEXT NOT NULL,
           dedupe_hash TEXT NOT NULL,
           lifecycle_state TEXT NOT NULL DEFAULT 'pending'
         );
         CREATE TABLE mr_finding_history (
           id TEXT PRIMARY KEY,
-          merge_request_id TEXT NOT NULL REFERENCES merge_requests(id),
+          merge_request_id TEXT NOT NULL,
           dedupe_hash TEXT NOT NULL,
           finding_id TEXT,
           first_seen_head_sha TEXT NOT NULL,
@@ -65,7 +65,7 @@ def create_conn() -> sqlite3.Connection:
         );
         CREATE TABLE agent_trace_events (
           id TEXT PRIMARY KEY,
-          span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+          span_id TEXT NOT NULL,
           event_type TEXT NOT NULL,
           summary TEXT NOT NULL,
           payload_json TEXT NOT NULL DEFAULT '{}',
@@ -73,7 +73,7 @@ def create_conn() -> sqlite3.Connection:
         );
         CREATE TABLE llm_call_records (
           id TEXT PRIMARY KEY,
-          span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+          span_id TEXT NOT NULL,
           provider TEXT NOT NULL,
           model TEXT NOT NULL,
           request_id TEXT,
@@ -86,7 +86,7 @@ def create_conn() -> sqlite3.Connection:
         );
         CREATE TABLE tool_call_records (
           id TEXT PRIMARY KEY,
-          span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+          span_id TEXT NOT NULL,
           tool_name TEXT NOT NULL,
           duration_ms INTEGER NOT NULL DEFAULT 0,
           status TEXT NOT NULL,

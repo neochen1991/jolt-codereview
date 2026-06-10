@@ -21,14 +21,14 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS project_members (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
-      user_id TEXT NOT NULL REFERENCES users(id),
+      project_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
       role TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS project_settings (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       settings_key TEXT NOT NULL,
       settings_json TEXT NOT NULL DEFAULT '{}',
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -37,7 +37,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS auth_sessions (
       id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id),
+      user_id TEXT NOT NULL,
       token_hash TEXT NOT NULL UNIQUE,
       status TEXT NOT NULL,
       expires_at TEXT,
@@ -46,7 +46,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS audit_logs (
       id TEXT PRIMARY KEY,
-      user_id TEXT REFERENCES users(id),
+      user_id TEXT,
       project_id TEXT,
       action TEXT NOT NULL,
       resource_type TEXT NOT NULL,
@@ -58,7 +58,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS repositories (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       provider TEXT NOT NULL,
       external_repo_id TEXT NOT NULL,
       name TEXT NOT NULL,
@@ -72,7 +72,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS merge_requests (
       id TEXT PRIMARY KEY,
-      repository_id TEXT NOT NULL REFERENCES repositories(id),
+      repository_id TEXT NOT NULL,
       external_mr_id TEXT NOT NULL,
       number INTEGER NOT NULL,
       title TEXT NOT NULL,
@@ -90,7 +90,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS review_jobs (
       id TEXT PRIMARY KEY,
-      merge_request_id TEXT NOT NULL REFERENCES merge_requests(id),
+      merge_request_id TEXT NOT NULL,
       head_sha TEXT NOT NULL,
       status TEXT NOT NULL,
       priority INTEGER NOT NULL DEFAULT 0,
@@ -99,7 +99,7 @@ export function migrate(db: Db) {
       locked_at TEXT,
       locked_by TEXT,
       heartbeat_at TEXT,
-      requested_by TEXT REFERENCES users(id),
+      requested_by TEXT,
       pr_summary TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -108,7 +108,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS review_runs (
       id TEXT PRIMARY KEY,
-      review_job_id TEXT NOT NULL REFERENCES review_jobs(id),
+      review_job_id TEXT NOT NULL,
       effort_level TEXT NOT NULL,
       risk_score INTEGER NOT NULL DEFAULT 0,
       rule_version_source TEXT NOT NULL DEFAULT 'target_branch',
@@ -126,7 +126,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS review_findings (
       id TEXT PRIMARY KEY,
-      review_run_id TEXT NOT NULL REFERENCES review_runs(id),
+      review_run_id TEXT NOT NULL,
       severity TEXT NOT NULL,
       confidence REAL NOT NULL,
       agent_id TEXT NOT NULL,
@@ -153,7 +153,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS candidate_findings (
       id TEXT PRIMARY KEY,
-      review_run_id TEXT NOT NULL REFERENCES review_runs(id),
+      review_run_id TEXT NOT NULL,
       dedupe_hash TEXT NOT NULL,
       stage TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -172,7 +172,7 @@ export function migrate(db: Db) {
       rejected_reasons_json TEXT NOT NULL DEFAULT '[]',
       source_observations_json TEXT NOT NULL DEFAULT '[]',
       raw_json TEXT NOT NULL DEFAULT '{}',
-      final_finding_id TEXT REFERENCES review_findings(id),
+      final_finding_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(review_run_id, dedupe_hash, stage)
@@ -186,7 +186,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS mr_finding_history (
       id TEXT PRIMARY KEY,
-      merge_request_id TEXT NOT NULL REFERENCES merge_requests(id),
+      merge_request_id TEXT NOT NULL,
       dedupe_hash TEXT NOT NULL,
       finding_id TEXT,
       first_seen_head_sha TEXT NOT NULL,
@@ -203,7 +203,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS rule_precision_history (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       agent_id TEXT NOT NULL,
       rule_id TEXT NOT NULL,
       accepted_count INTEGER NOT NULL DEFAULT 0,
@@ -218,7 +218,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS agent_trace_spans (
       id TEXT PRIMARY KEY,
-      review_run_id TEXT NOT NULL REFERENCES review_runs(id),
+      review_run_id TEXT NOT NULL,
       parent_span_id TEXT,
       span_key TEXT NOT NULL,
       agent_id TEXT,
@@ -229,7 +229,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS agent_trace_events (
       id TEXT PRIMARY KEY,
-      span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+      span_id TEXT NOT NULL,
       event_type TEXT NOT NULL,
       summary TEXT NOT NULL,
       payload_json TEXT NOT NULL DEFAULT '{}',
@@ -238,7 +238,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS agent_messages (
       id TEXT PRIMARY KEY,
-      span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+      span_id TEXT NOT NULL,
       from_agent TEXT NOT NULL,
       to_agent TEXT NOT NULL,
       role TEXT NOT NULL,
@@ -249,7 +249,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS llm_call_records (
       id TEXT PRIMARY KEY,
-      span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+      span_id TEXT NOT NULL,
       provider TEXT NOT NULL,
       model TEXT NOT NULL,
       request_id TEXT,
@@ -263,11 +263,11 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS token_usage_reports (
       id TEXT PRIMARY KEY,
-      review_run_id TEXT NOT NULL REFERENCES review_runs(id),
-      review_job_id TEXT NOT NULL REFERENCES review_jobs(id),
-      merge_request_id TEXT NOT NULL REFERENCES merge_requests(id),
-      project_id TEXT NOT NULL REFERENCES projects(id),
-      repository_id TEXT NOT NULL REFERENCES repositories(id),
+      review_run_id TEXT NOT NULL,
+      review_job_id TEXT NOT NULL,
+      merge_request_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      repository_id TEXT NOT NULL,
       employee_no TEXT NOT NULL,
       reported_at TEXT NOT NULL,
       input_tokens INTEGER NOT NULL DEFAULT 0,
@@ -290,7 +290,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS tool_call_records (
       id TEXT PRIMARY KEY,
-      span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+      span_id TEXT NOT NULL,
       tool_name TEXT NOT NULL,
       tool_version TEXT,
       args_summary TEXT NOT NULL DEFAULT '',
@@ -304,7 +304,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS mcp_call_records (
       id TEXT PRIMARY KEY,
-      span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+      span_id TEXT NOT NULL,
       server_name TEXT NOT NULL,
       tool_name TEXT NOT NULL,
       request_summary TEXT NOT NULL DEFAULT '',
@@ -316,7 +316,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS review_artifacts (
       id TEXT PRIMARY KEY,
-      review_run_id TEXT NOT NULL REFERENCES review_runs(id),
+      review_run_id TEXT NOT NULL,
       artifact_type TEXT NOT NULL,
       name TEXT NOT NULL,
       storage_uri TEXT NOT NULL,
@@ -328,8 +328,8 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS code_index_snapshots (
       id TEXT PRIMARY KEY,
-      review_run_id TEXT NOT NULL REFERENCES review_runs(id),
-      repository_id TEXT NOT NULL REFERENCES repositories(id),
+      review_run_id TEXT NOT NULL,
+      repository_id TEXT NOT NULL,
       commit_sha TEXT NOT NULL,
       index_kind TEXT NOT NULL,
       storage_uri TEXT NOT NULL,
@@ -338,7 +338,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS agent_configs (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       agent_id TEXT NOT NULL,
       display_name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -355,7 +355,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS expert_profiles (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       agent_key TEXT NOT NULL,
       display_name TEXT NOT NULL,
       role_profile TEXT NOT NULL,
@@ -372,7 +372,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS rule_sets (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       name TEXT NOT NULL,
       version TEXT NOT NULL,
       scope_json TEXT NOT NULL DEFAULT '{}',
@@ -384,7 +384,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS rule_documents (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       name TEXT NOT NULL,
       doc_type TEXT NOT NULL DEFAULT 'markdown',
       content TEXT NOT NULL,
@@ -395,16 +395,16 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS expert_rule_bindings (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       agent_key TEXT NOT NULL,
-      rule_document_id TEXT NOT NULL REFERENCES rule_documents(id),
+      rule_document_id TEXT NOT NULL,
       priority INTEGER NOT NULL DEFAULT 100,
       UNIQUE(project_id, agent_key, rule_document_id)
     );
 
     CREATE TABLE IF NOT EXISTS custom_skills (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       skill_key TEXT NOT NULL,
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
@@ -418,7 +418,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS custom_skill_assets (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       skill_key TEXT NOT NULL,
       asset_path TEXT NOT NULL,
       asset_type TEXT NOT NULL DEFAULT 'reference',
@@ -431,7 +431,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS expert_skill_bindings (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       agent_key TEXT NOT NULL,
       skill_key TEXT NOT NULL,
       priority INTEGER NOT NULL DEFAULT 100,
@@ -441,7 +441,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS expert_tool_bindings (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       agent_key TEXT NOT NULL,
       tool_name TEXT NOT NULL,
       permission_level TEXT NOT NULL DEFAULT 'read_only',
@@ -452,7 +452,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS tool_observations (
       id TEXT PRIMARY KEY,
-      review_run_id TEXT NOT NULL REFERENCES review_runs(id),
+      review_run_id TEXT NOT NULL,
       tool_name TEXT NOT NULL,
       rule_id TEXT,
       severity TEXT,
@@ -469,7 +469,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS external_review_reports (
       id TEXT PRIMARY KEY,
-      merge_request_id TEXT NOT NULL REFERENCES merge_requests(id),
+      merge_request_id TEXT NOT NULL,
       report_type TEXT NOT NULL,
       commit_sha TEXT NOT NULL,
       report_format TEXT NOT NULL,
@@ -483,7 +483,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS review_baseline_suppressions (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       tool_name TEXT NOT NULL,
       rule_id TEXT,
       normalized_rule_category TEXT,
@@ -499,7 +499,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS review_policy (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       policy_json TEXT NOT NULL DEFAULT '{}',
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(project_id)
@@ -507,8 +507,8 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS user_feedback (
       id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id),
-      finding_id TEXT REFERENCES review_findings(id),
+      user_id TEXT NOT NULL,
+      finding_id TEXT,
       dedupe_hash TEXT NOT NULL,
       feedback_type TEXT NOT NULL,
       scope TEXT NOT NULL,
@@ -518,7 +518,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS review_jobs_dead_letter (
       id TEXT PRIMARY KEY,
-      review_job_id TEXT NOT NULL REFERENCES review_jobs(id),
+      review_job_id TEXT NOT NULL,
       failure_reason TEXT NOT NULL,
       final_attempt INTEGER NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -526,12 +526,12 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS vcs_publish_records (
       id TEXT PRIMARY KEY,
-      finding_id TEXT NOT NULL REFERENCES review_findings(id),
+      finding_id TEXT NOT NULL,
       provider TEXT NOT NULL,
       external_comment_id TEXT,
       external_thread_id TEXT,
       publish_status TEXT NOT NULL,
-      published_by TEXT NOT NULL REFERENCES users(id),
+      published_by TEXT NOT NULL,
       body TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -548,8 +548,8 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS evaluation_gold_set (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
-      finding_id TEXT REFERENCES review_findings(id),
+      project_id TEXT NOT NULL,
+      finding_id TEXT,
       agent_id TEXT NOT NULL,
       severity TEXT NOT NULL,
       expected_title TEXT NOT NULL,
@@ -562,19 +562,19 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS evaluation_reports (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
+      project_id TEXT NOT NULL,
       report_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS full_review_jobs (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id),
-      repository_id TEXT REFERENCES repositories(id),
+      project_id TEXT NOT NULL,
+      repository_id TEXT,
       commit_sha TEXT NOT NULL DEFAULT '',
       scope_json TEXT NOT NULL DEFAULT '{}',
       status TEXT NOT NULL,
-      requested_by TEXT REFERENCES users(id),
+      requested_by TEXT,
       attempt INTEGER NOT NULL DEFAULT 0,
       locked_at TEXT,
       locked_by TEXT,
@@ -590,10 +590,10 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS full_review_snapshots (
       id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL REFERENCES full_review_jobs(id),
-      repository_id TEXT NOT NULL REFERENCES repositories(id),
+      job_id TEXT NOT NULL,
+      repository_id TEXT NOT NULL,
       commit_sha TEXT NOT NULL,
-      index_snapshot_id TEXT REFERENCES code_index_snapshots(id),
+      index_snapshot_id TEXT,
       summary_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -603,7 +603,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS full_review_findings (
       id TEXT PRIMARY KEY,
-      snapshot_id TEXT NOT NULL REFERENCES full_review_snapshots(id),
+      snapshot_id TEXT NOT NULL,
       severity TEXT NOT NULL,
       confidence REAL NOT NULL,
       agent_id TEXT NOT NULL,
@@ -635,13 +635,14 @@ export function migrate(db: Db) {
   addColumnIfMissing(db, "review_findings", "quality_trace_json", "TEXT NOT NULL DEFAULT '{}'");
   addColumnIfMissing(db, "agent_configs", "requires_deepagents", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "review_jobs", "pr_summary", "TEXT NOT NULL DEFAULT '{}'");
-  addColumnIfMissing(db, "review_jobs", "requested_by", "TEXT REFERENCES users(id)");
+  addColumnIfMissing(db, "review_jobs", "requested_by", "TEXT");
   addColumnIfMissing(db, "review_runs", "coverage_json", "TEXT NOT NULL DEFAULT '{}'");
   addColumnIfMissing(db, "full_review_jobs", "attempt", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "full_review_jobs", "locked_at", "TEXT");
   addColumnIfMissing(db, "full_review_jobs", "locked_by", "TEXT");
   addColumnIfMissing(db, "full_review_jobs", "heartbeat_at", "TEXT");
   addColumnIfMissing(db, "full_review_jobs", "failure_reason", "TEXT");
+  stripForeignKeysFromExistingTables(db);
 }
 
 function addColumnIfMissing(db: Db, table: string, column: string, definition: string) {
@@ -649,4 +650,67 @@ function addColumnIfMissing(db: Db, table: string, column: string, definition: s
   if (!columns.some((item) => item.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+}
+
+function stripForeignKeysFromExistingTables(db: Db) {
+  const tables = db.prepare(`
+    SELECT name, sql
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name NOT LIKE 'sqlite_%'
+      AND sql LIKE '%REFERENCES%'
+  `).all() as Array<{ name: string; sql: string }>;
+  for (const table of tables) {
+    const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${quoteIdentifier(table.name)})`).all();
+    if (!foreignKeys.length) continue;
+    rebuildTableWithoutForeignKeys(db, table.name, table.sql);
+  }
+}
+
+function rebuildTableWithoutForeignKeys(db: Db, tableName: string, createSql: string) {
+  const tempName = `__jolt_no_fk_${tableName}`;
+  const indexes = db.prepare(`
+    SELECT name, sql
+    FROM sqlite_master
+    WHERE type = 'index'
+      AND tbl_name = ?
+      AND sql IS NOT NULL
+  `).all(tableName) as Array<{ name: string; sql: string }>;
+  const columns = db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>;
+  const columnList = columns.map((column) => quoteIdentifier(column.name)).join(", ");
+  const normalizedCreateSql = stripForeignKeyReferences(createSql);
+  const tempCreateSql = normalizedCreateSql.replace(
+    new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${escapeRegExp(tableName)}`, "i"),
+    `CREATE TABLE ${quoteIdentifier(tableName)}`
+  );
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`ALTER TABLE ${quoteIdentifier(tableName)} RENAME TO ${quoteIdentifier(tempName)}`);
+    db.exec(tempCreateSql);
+    if (columnList) {
+      db.exec(`INSERT INTO ${quoteIdentifier(tableName)} (${columnList}) SELECT ${columnList} FROM ${quoteIdentifier(tempName)}`);
+    }
+    db.exec(`DROP TABLE ${quoteIdentifier(tempName)}`);
+    for (const index of indexes) {
+      db.exec(index.sql);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function stripForeignKeyReferences(sql: string) {
+  return sql
+    .replace(/\s+REFERENCES\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)/gi, "")
+    .replace(/,\s*FOREIGN\s+KEY\s*\([^)]*\)\s*REFERENCES\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)(?:\s+ON\s+(?:DELETE|UPDATE)\s+\w+)?/gi, "");
+}
+
+function quoteIdentifier(value: string) {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

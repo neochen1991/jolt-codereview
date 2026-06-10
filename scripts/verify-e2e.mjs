@@ -62,7 +62,6 @@ function createFixtureReview() {
   );
 
   const db = new DatabaseSync(dbPath());
-  db.exec("PRAGMA foreign_keys = ON");
   const repoId = "repo_github_fixture";
   const mrId = `mr_${repoId}_9001`;
   const headSha = `fixture_${Date.now()}`;

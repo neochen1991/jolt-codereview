@@ -1491,7 +1491,6 @@ assert "queryPayment" in code_index["callees"], code_index
 assert "code_index_snapshots" in (ROOT / "worker" / "orchestration" / "nodes" / "prescan.py").read_text("utf-8")
 
 recorder_conn = sqlite3.connect(":memory:")
-recorder_conn.execute("PRAGMA foreign_keys = ON")
 recorder_conn.executescript(
     """
     CREATE TABLE agent_trace_spans (
@@ -1506,7 +1505,7 @@ recorder_conn.executescript(
     );
     CREATE TABLE agent_trace_events (
       id TEXT PRIMARY KEY,
-      span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+      span_id TEXT NOT NULL,
       event_type TEXT NOT NULL,
       summary TEXT NOT NULL,
       payload_json TEXT NOT NULL DEFAULT '{}',
@@ -1514,7 +1513,7 @@ recorder_conn.executescript(
     );
     CREATE TABLE agent_messages (
       id TEXT PRIMARY KEY,
-      span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+      span_id TEXT NOT NULL,
       from_agent TEXT NOT NULL,
       to_agent TEXT NOT NULL,
       role TEXT NOT NULL,
@@ -1524,7 +1523,7 @@ recorder_conn.executescript(
     );
     CREATE TABLE llm_call_records (
       id TEXT PRIMARY KEY,
-      span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+      span_id TEXT NOT NULL,
       provider TEXT NOT NULL,
       model TEXT NOT NULL,
       request_id TEXT,
@@ -1537,7 +1536,7 @@ recorder_conn.executescript(
     );
     CREATE TABLE tool_call_records (
       id TEXT PRIMARY KEY,
-      span_id TEXT NOT NULL REFERENCES agent_trace_spans(id),
+      span_id TEXT NOT NULL,
       tool_name TEXT NOT NULL,
       tool_version TEXT,
       args_summary TEXT NOT NULL DEFAULT '',

@@ -9,7 +9,6 @@ function count(db, sql, params = []) {
 }
 
 const db = new DatabaseSync(":memory:");
-db.exec("PRAGMA foreign_keys = ON");
 migrate(db);
 
 const mergeRequestRepository = new MergeRequestRepository(db);

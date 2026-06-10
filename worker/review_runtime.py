@@ -4404,6 +4404,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
             mr=mr,
             run_id=run_id,
             choose_effort=choose_effort,
+            project_config=project_config,
         )
         prescan_node = make_prescan_node(
             conn=conn,

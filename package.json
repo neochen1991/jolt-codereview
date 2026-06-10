@@ -31,6 +31,7 @@
     "verify:multi-repo-mr-sync": "npm run build:api && node scripts/verify-multi-repo-mr-sync.mjs",
     "verify:queue-reliability": "npm run build:api && node scripts/verify-queue-reliability.mjs",
     "verify:auto-sync": "npm run build:api && node scripts/verify-auto-sync-scheduler.mjs",
+    "verify:budget-policy": "node scripts/run-python.mjs scripts/verify_budget_policy.py",
     "verify:worker-orchestration": "node scripts/run-python.mjs scripts/verify_worker_orchestration_nodes.py",
     "verify:pr-summary": "node scripts/run-python.mjs scripts/verify_pr_summary_node.py",
     "verify:debate-llm": "node scripts/run-python.mjs scripts/verify_debate_llm_node.py",

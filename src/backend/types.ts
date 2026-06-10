@@ -33,6 +33,7 @@ export interface AppConfig {
     worker_file?: string;
     review_run_dir?: string;
   };
+  budget_policy?: Record<string, unknown>;
   token_usage?: {
     enabled?: boolean;
     endpoint?: string;

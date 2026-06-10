@@ -214,6 +214,19 @@ type ReviewSettingsForm = {
   enable_full_repo_context: boolean;
 };
 
+type BudgetEffortForm = {
+  max_llm_calls: string;
+  max_wall_seconds: string;
+  max_cost_usd: string;
+  max_output_tokens: string;
+  max_findings: string;
+};
+
+type BudgetSettingsForm = {
+  standard: BudgetEffortForm;
+  deep: BudgetEffortForm;
+};
+
 type AgentSettingsForm = {
   max_parallel_agents: string;
   enable_llm_routing: boolean;
@@ -366,6 +379,11 @@ function clampLlmTimeout(value: string) {
 function clampLlmOutputTokens(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(1024, Math.min(12000, parsed)) : 8192;
+}
+
+function positiveNumber(value: string, fallback: number, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(max, parsed)) : fallback;
 }
 
 function csvValue(value: unknown) {
@@ -1917,6 +1935,10 @@ function ConfigWorkspace({
   });
   const [llmStoredApiKey, setLlmStoredApiKey] = useState("");
   const [reviewForm, setReviewForm] = useState<ReviewSettingsForm>({ effort: "standard", max_findings_per_mr: "40", min_confidence: "0.75", enable_full_repo_context: true });
+  const [budgetForm, setBudgetForm] = useState<BudgetSettingsForm>({
+    standard: { max_llm_calls: "80", max_wall_seconds: "1800", max_cost_usd: "5", max_output_tokens: "16000", max_findings: "80" },
+    deep: { max_llm_calls: "120", max_wall_seconds: "2400", max_cost_usd: "10", max_output_tokens: "24000", max_findings: "120" }
+  });
   const [agentForm, setAgentForm] = useState<AgentSettingsForm>({ max_parallel_agents: "3", enable_llm_routing: true, require_rule_coverage: true, default_max_tool_calls: "12" });
   const [toolForm, setToolForm] = useState<ToolSettingsForm>({
     static_tool_enabled: DEFAULT_STATIC_TOOL_ENABLED,
@@ -2042,6 +2064,7 @@ function ConfigWorkspace({
       const effectiveRoot = recordValue((effective as Record<string, unknown>).effective_config);
       const llm = { ...recordValue(effectiveRoot.llm), ...recordValue(settingsMap.llm_policy) };
       const reviewPolicy = { ...recordValue(effectiveRoot.review_policy), ...recordValue(settingsMap.review_policy) };
+      const budgetPolicy = { ...recordValue(effectiveRoot.budget_policy), ...recordValue(settingsMap.budget_policy) };
       const agentPolicy = { ...recordValue(effectiveRoot.agent_policy), ...recordValue(settingsMap.agent_policy) };
       const toolPolicy = { ...recordValue(effectiveRoot.tool_policy), ...recordValue(settingsMap.tool_policy) };
       const queuePolicy = { ...recordValue(effectiveRoot.queue_policy), ...recordValue(settingsMap.queue_policy) };
@@ -2072,6 +2095,25 @@ function ConfigWorkspace({
         max_findings_per_mr: String(reviewPolicy.max_findings_per_mr ?? reviewPolicy.max_findings ?? "40"),
         min_confidence: String(reviewPolicy.min_confidence ?? "0.75"),
         enable_full_repo_context: boolValue(reviewPolicy.enable_full_repo_context, true)
+      });
+      const budgetEfforts = recordValue(budgetPolicy.efforts);
+      const standardBudget = recordValue(budgetEfforts.standard);
+      const deepBudget = recordValue(budgetEfforts.deep);
+      setBudgetForm({
+        standard: {
+          max_llm_calls: String(standardBudget.max_llm_calls ?? "80"),
+          max_wall_seconds: String(standardBudget.max_wall_seconds ?? "1800"),
+          max_cost_usd: String(standardBudget.max_cost_usd ?? "5"),
+          max_output_tokens: String(standardBudget.max_output_tokens ?? "16000"),
+          max_findings: String(standardBudget.max_findings ?? "80")
+        },
+        deep: {
+          max_llm_calls: String(deepBudget.max_llm_calls ?? "120"),
+          max_wall_seconds: String(deepBudget.max_wall_seconds ?? "2400"),
+          max_cost_usd: String(deepBudget.max_cost_usd ?? "10"),
+          max_output_tokens: String(deepBudget.max_output_tokens ?? "24000"),
+          max_findings: String(deepBudget.max_findings ?? "120")
+        }
       });
       setAgentForm({
         max_parallel_agents: String(agentPolicy.max_parallel_agents ?? "3"),
@@ -2328,6 +2370,36 @@ function ConfigWorkspace({
       max_findings_per_mr: Number(reviewForm.max_findings_per_mr),
       min_confidence: Number(reviewForm.min_confidence),
       enable_full_repo_context: reviewForm.enable_full_repo_context
+    });
+  }
+
+  function updateBudgetEffort(effort: keyof BudgetSettingsForm, field: keyof BudgetEffortForm, value: string) {
+    setBudgetForm({
+      ...budgetForm,
+      [effort]: {
+        ...budgetForm[effort],
+        [field]: value
+      }
+    });
+  }
+
+  function budgetPayload(row: BudgetEffortForm) {
+    return {
+      max_llm_calls: positiveNumber(row.max_llm_calls, 80, 500),
+      max_wall_seconds: positiveNumber(row.max_wall_seconds, 1800, 7200),
+      max_cost_usd: positiveNumber(row.max_cost_usd, 5, 999),
+      max_output_tokens: positiveNumber(row.max_output_tokens, 16000, 64000),
+      max_findings: positiveNumber(row.max_findings, 80, 300),
+      on_exceed: "degrade"
+    };
+  }
+
+  async function saveBudgetSettings() {
+    await saveStructuredSetting("budget_policy", "检视预算与熔断", {
+      efforts: {
+        standard: budgetPayload(budgetForm.standard),
+        deep: budgetPayload(budgetForm.deep)
+      }
     });
   }
 
@@ -2790,6 +2862,41 @@ function ConfigWorkspace({
               </div>
               <div className="setting-actions">
                 <button type="button" onClick={saveReviewSettings} disabled={!canEdit}>保存检视策略</button>
+              </div>
+            </article>
+
+            <article className="setting-form-card wide">
+              <div className="setting-form-head">
+                <strong>检视预算与熔断</strong>
+                <span>控制整个 MR 检视过程的 LLM 调用次数、最长耗时和预算上限，触发后会降级跳过剩余模型步骤。</span>
+              </div>
+              <div className="budget-policy-grid">
+                {(["standard", "deep"] as Array<keyof BudgetSettingsForm>).map((effort) => (
+                  <section className="budget-policy-card" key={effort}>
+                    <div>
+                      <strong>{effort === "standard" ? "Standard 日常检视" : "Deep 深度检视"}</strong>
+                      <span>{effort === "standard" ? "推荐用于普通业务 MR" : "推荐用于安全敏感或大 MR"}</span>
+                    </div>
+                    <SettingField label="LLM 调用上限">
+                      <input type="number" min="0" max="500" value={budgetForm[effort].max_llm_calls} onChange={(event) => updateBudgetEffort(effort, "max_llm_calls", event.target.value)} disabled={!canEdit} />
+                    </SettingField>
+                    <SettingField label="最长检视秒数">
+                      <input type="number" min="0" max="7200" value={budgetForm[effort].max_wall_seconds} onChange={(event) => updateBudgetEffort(effort, "max_wall_seconds", event.target.value)} disabled={!canEdit} />
+                    </SettingField>
+                    <SettingField label="预算上限">
+                      <input type="number" min="0" max="999" step="0.1" value={budgetForm[effort].max_cost_usd} onChange={(event) => updateBudgetEffort(effort, "max_cost_usd", event.target.value)} disabled={!canEdit} />
+                    </SettingField>
+                    <SettingField label="输出 Token 上限">
+                      <input type="number" min="0" max="64000" value={budgetForm[effort].max_output_tokens} onChange={(event) => updateBudgetEffort(effort, "max_output_tokens", event.target.value)} disabled={!canEdit} />
+                    </SettingField>
+                    <SettingField label="最大问题数">
+                      <input type="number" min="0" max="300" value={budgetForm[effort].max_findings} onChange={(event) => updateBudgetEffort(effort, "max_findings", event.target.value)} disabled={!canEdit} />
+                    </SettingField>
+                  </section>
+                ))}
+              </div>
+              <div className="setting-actions">
+                <button type="button" onClick={saveBudgetSettings} disabled={!canEdit}>保存预算策略</button>
               </div>
             </article>
 

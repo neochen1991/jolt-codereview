@@ -38,6 +38,24 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "worker_file": "jolt-worker.log",
         "review_run_dir": "review-runs",
     },
+    "budget_policy": {
+        "efforts": {
+            "standard": {
+                "max_llm_calls": 80,
+                "max_wall_seconds": 1800,
+                "max_cost_usd": 5,
+                "max_output_tokens": 16000,
+                "max_findings": 80,
+            },
+            "deep": {
+                "max_llm_calls": 120,
+                "max_wall_seconds": 2400,
+                "max_cost_usd": 10,
+                "max_output_tokens": 24000,
+                "max_findings": 120,
+            },
+        },
+    },
     "token_usage": {
         "enabled": False,
         "endpoint": "",
@@ -55,6 +73,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 SETTINGS_TO_CONFIG = {
     "llm_policy": "llm",
     "review_policy": "review_policy",
+    "budget_policy": "budget_policy",
     "agent_policy": "agent_policy",
     "tool_policy": "tool_policy",
     "queue_policy": "queue_policy",

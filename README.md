@@ -332,6 +332,35 @@ cp config.example.json config.json
 
 生产或团队共享环境建议改用 `default_api_key_env` 或 secret store，避免在团队仓库中长期保存明文 key。
 
+### 检视预算与熔断
+
+单次模型请求超时配置在 `llm.request_timeout_seconds`，整个 MR 检视流程的熔断预算配置在 `budget_policy`。也可以在前端「系统设置 -> 检视预算与熔断」中按项目维护，项目级配置会覆盖 `config.json`。
+
+```json
+{
+  "budget_policy": {
+    "efforts": {
+      "standard": {
+        "max_llm_calls": 80,
+        "max_wall_seconds": 1800,
+        "max_cost_usd": 5,
+        "max_output_tokens": 16000,
+        "max_findings": 80
+      },
+      "deep": {
+        "max_llm_calls": 120,
+        "max_wall_seconds": 2400,
+        "max_cost_usd": 10,
+        "max_output_tokens": 24000,
+        "max_findings": 120
+      }
+    }
+  }
+}
+```
+
+熔断原因会记录到 `review_runs.budget_used_json.truncated_reason`，常见值包括 `llm_calls_exceeded`、`wall_seconds_exceeded`、`cost_usd_exceeded`。触发后当前任务会降级跳过后续模型步骤，保留已完成的静态工具和专家结果。
+
 ### Token 用量上报占位
 
 每个 MR 检视任务结束后，Worker 会汇总本次 `review_run` 的 LLM 调用记录，并写入 `token_usage_reports` 表。内网 token 服务 API 当前预留为占位配置，默认关闭，不会发起外部请求：

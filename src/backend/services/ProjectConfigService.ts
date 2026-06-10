@@ -4,6 +4,7 @@ import type { AppConfig } from "../types.js";
 const SETTINGS_KEYS = [
   "llm_policy",
   "review_policy",
+  "budget_policy",
   "agent_policy",
   "tool_policy",
   "queue_policy",

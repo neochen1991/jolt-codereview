@@ -33,6 +33,24 @@ const DEFAULT_CONFIG: AppConfig = {
     worker_file: "jolt-worker.log",
     review_run_dir: "review-runs"
   },
+  budget_policy: {
+    efforts: {
+      standard: {
+        max_llm_calls: 80,
+        max_wall_seconds: 1800,
+        max_cost_usd: 5,
+        max_output_tokens: 16000,
+        max_findings: 80
+      },
+      deep: {
+        max_llm_calls: 120,
+        max_wall_seconds: 2400,
+        max_cost_usd: 10,
+        max_output_tokens: 24000,
+        max_findings: 120
+      }
+    }
+  },
   token_usage: {
     enabled: false,
     endpoint: "",
@@ -59,6 +77,7 @@ function mergeConfig(base: AppConfig, override: AppConfig): AppConfig {
     codehub: { ...base.codehub, ...override.codehub },
     server: { ...base.server, ...override.server },
     logging: { ...base.logging, ...override.logging },
+    budget_policy: { ...base.budget_policy, ...override.budget_policy },
     token_usage: { ...base.token_usage, ...override.token_usage },
     runtime: { ...base.runtime, ...override.runtime }
   };

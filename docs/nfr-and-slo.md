@@ -174,23 +174,22 @@ Verifier 必须过滤：
 - 平台规则 ID 不存在。
 - 用户反馈抑制项。
 
-## 5. 成本与预算
+## 5. 检视预算
 
 每次 review 必须生成 `budget_json` 和 `budget_used_json`。
 
 默认预算：
 
-| Effort | Max Cost | Max Wall Time | Max LLM Calls |
-| --- | ---: | ---: | ---: |
-| trivial | $0.05 | 30s | 0 |
-| light / fast | $0.20 | 90s | 8 |
-| standard | $1.00 | 900s | 24 |
-| deep | $3.00 | 300s | 32 |
+| Effort | Max Wall Time | Max LLM Calls |
+| --- | ---: | ---: |
+| trivial | 30s | 0 |
+| light / fast | 90s | 8 |
+| standard | 900s | 24 |
+| deep | 300s | 32 |
 
 熔断策略：
 
 - 超过 `max_wall_seconds`：跳过后续低优先级 agent。
-- 超过 `max_cost_usd`：停止后续 LLM 调用。
 - 超过 `max_llm_calls`：停止后续 LLM 调用。
 - 已产生的 findings 继续走 verifier、conflict detection、judge 和 finalize。
 - `report_summary` 必须标注预算截断原因。

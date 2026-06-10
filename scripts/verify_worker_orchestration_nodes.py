@@ -1436,22 +1436,15 @@ assert "build_context" in TARGET_GRAPH_NODE_KEYS
 assert "run_experts" in TARGET_GRAPH_NODE_KEYS
 
 standard_budget = budget_for_effort("standard")
-assert standard_budget["max_cost_usd"] == 1.0, standard_budget
 assert standard_budget["max_wall_seconds"] == 900, standard_budget
 assert standard_budget["max_llm_calls"] == 32, standard_budget
 assert standard_budget["max_llm_calls"] >= 1, standard_budget
-cost_tracker = BudgetTracker.from_budget(standard_budget)
-for _ in range(100):
-    if cost_tracker.should_stop():
-        break
-    cost_tracker.charge_llm("MiniMax-M2.7", 50000, 50000)
-assert cost_tracker.truncated_reason == "cost_usd_exceeded", cost_tracker.snapshot()
 
-wall_tracker = BudgetTracker(max_wall_seconds=1, max_cost_usd=10, max_llm_calls=10, started_at=time.monotonic() - 2)
+wall_tracker = BudgetTracker(max_wall_seconds=1, max_llm_calls=10, started_at=time.monotonic() - 2)
 assert wall_tracker.should_stop()
 assert wall_tracker.truncated_reason == "wall_seconds_exceeded", wall_tracker.snapshot()
 
-call_tracker = BudgetTracker(max_wall_seconds=100, max_cost_usd=10, max_llm_calls=1)
+call_tracker = BudgetTracker(max_wall_seconds=100, max_llm_calls=1)
 call_tracker.charge_llm("MiniMax-M2.7", 1, 1)
 assert call_tracker.truncated_reason == "llm_calls_exceeded", call_tracker.snapshot()
 
@@ -1769,7 +1762,7 @@ print(json.dumps({
     "judge_final_count": len(final_findings),
     "judge_rejected_count": len(limited_rejected),
     "standard_budget": standard_budget,
-    "budget_tracker_after_cost_test": cost_tracker.snapshot(),
+    "budget_tracker_after_call_limit_test": call_tracker.snapshot(),
     "deepagents_real_tool_guard": True,
     "code_index": {
         "class_count": len(code_index["classes"]),

@@ -43,14 +43,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "standard": {
                 "max_llm_calls": 80,
                 "max_wall_seconds": 1800,
-                "max_cost_usd": 5,
                 "max_output_tokens": 16000,
                 "max_findings": 80,
             },
             "deep": {
                 "max_llm_calls": 120,
                 "max_wall_seconds": 2400,
-                "max_cost_usd": 10,
                 "max_output_tokens": 24000,
                 "max_findings": 120,
             },

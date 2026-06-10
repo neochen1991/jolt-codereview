@@ -83,7 +83,7 @@ def main() -> None:
         ChangedFile("src/frontend/PaymentPanel.tsx", "modified", 12, 1, 13, "+setLoading(false)\n+<button onClick={submit}>Pay</button>\n"),
         ChangedFile("src/main/java/com/acme/cache/PaymentCache.java", "modified", 8, 0, 8, "+redisTemplate.opsForValue().set(key, value);\n"),
     ]
-    routed = route_agents_with_llm(config, recorder, span, agent_configs, files, BudgetTracker(max_wall_seconds=120, max_cost_usd=1, max_llm_calls=4))
+    routed = route_agents_with_llm(config, recorder, span, agent_configs, files, BudgetTracker(max_wall_seconds=120, max_llm_calls=4))
     recorder.finish(span)
     recorder.flush()
     calls = [dict(row) for row in conn.execute("SELECT status, provider, model, input_tokens, output_tokens FROM llm_call_records").fetchall()]

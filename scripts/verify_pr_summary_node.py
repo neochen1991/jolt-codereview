@@ -181,7 +181,7 @@ def main() -> None:
                 "tool_observations": [],
                 "conflicts": [],
                 "fetch_degraded": False,
-                "budget_tracker": BudgetTracker(max_wall_seconds=300, max_cost_usd=1.0, max_llm_calls=8),
+                "budget_tracker": BudgetTracker(max_wall_seconds=300, max_llm_calls=8),
             }
         )
         recorder.flush()

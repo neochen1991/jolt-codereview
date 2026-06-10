@@ -69,7 +69,7 @@ def main() -> None:
     conn = create_conn()
     recorder = Recorder(conn, "run_debate_verify")
     span = recorder.span("run_targeted_debate", "debate_moderator")
-    budget = BudgetTracker(max_wall_seconds=180, max_cost_usd=1.0, max_llm_calls=4)
+    budget = BudgetTracker(max_wall_seconds=180, max_llm_calls=4)
     findings = [
         {
             "agent_id": "security_agent",

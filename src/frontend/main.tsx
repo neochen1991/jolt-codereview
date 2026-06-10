@@ -217,7 +217,6 @@ type ReviewSettingsForm = {
 type BudgetEffortForm = {
   max_llm_calls: string;
   max_wall_seconds: string;
-  max_cost_usd: string;
   max_output_tokens: string;
   max_findings: string;
 };
@@ -836,6 +835,7 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pendingMrActions, setPendingMrActions] = useState<Record<string, MrActionState>>({});
+  const [selectedMrIds, setSelectedMrIds] = useState<string[]>([]);
   const [repoInput, setRepoInput] = useState("");
   const [message, setMessage] = useState("CodeHub 已同步 · 2 分钟前");
   const [publishNotice, setPublishNotice] = useState<PublishResultNotice | null>(null);
@@ -854,6 +854,7 @@ function App() {
     ]);
     setRepos(repoData);
     setMrs(mrData.items);
+    setSelectedMrIds((previous) => previous.filter((id) => mrData.items.some((mr) => mr.id === id)));
     const requestedId = nextActiveId ?? activeMrIdRef.current ?? activeMrId ?? null;
     const selectedId = requestedId && mrData.items.some((mr) => mr.id === requestedId)
       ? requestedId
@@ -1068,6 +1069,104 @@ function App() {
       endMrAction(mrId);
       setBusy(false);
     }
+  }
+
+  function workflowStatusForMr(mr: MergeRequest, action?: MrActionState) {
+    return action === "pause" ? "paused" : action === "stop" ? "cancelled" : action ? "reviewing" : mr.review_status;
+  }
+
+  function mrSupportsBatchAction(mr: MergeRequest, action: "start" | "pause" | "stop" | "delete") {
+    const workflowStatus = workflowStatusForMr(mr, pendingMrActions[mr.id]);
+    const queueBlocked = mr.queue_blocked_by_project && mr.review_status === "queued";
+    if (pendingMrActions[mr.id]) return false;
+    if (action === "start") return !queueBlocked && !ACTIVE_REVIEW_STATUSES.includes(workflowStatus);
+    if (action === "pause") return ["queued", ...ACTIVE_REVIEW_STATUSES].includes(workflowStatus);
+    if (action === "stop") return !["waiting_confirmation", "submitted", "no_issue", "cancelled"].includes(workflowStatus);
+    if (action === "delete") return !ACTIVE_REVIEW_STATUSES.includes(workflowStatus);
+    return false;
+  }
+
+  function toggleMrSelection(mrId: string, selected: boolean) {
+    setSelectedMrIds((previous) => {
+      const next = new Set(previous);
+      if (selected) next.add(mrId);
+      else next.delete(mrId);
+      return Array.from(next);
+    });
+  }
+
+  function setVisibleMrSelection(ids: string[], selected: boolean) {
+    setSelectedMrIds((previous) => {
+      const next = new Set(previous);
+      for (const id of ids) {
+        if (selected) next.add(id);
+        else next.delete(id);
+      }
+      return Array.from(next);
+    });
+  }
+
+  async function bulkMrAction(action: "start" | "pause" | "stop" | "delete") {
+    const selected = selectedMrIds
+      .map((id) => mrs.find((mr) => mr.id === id))
+      .filter((mr): mr is MergeRequest => Boolean(mr));
+    const targets = selected.filter((mr) => mrSupportsBatchAction(mr, action));
+    const skipped = selected.length - targets.length;
+    if (!selected.length) {
+      setMessage("请先选择 MR");
+      return;
+    }
+    if (!targets.length) {
+      setMessage(`选中的 MR 当前都不适合执行${bulkActionLabel(action)}`);
+      return;
+    }
+    if (action === "delete" && !window.confirm(`删除选中的 ${targets.length} 个本地 MR？删除后可通过重新同步再次拉取。${skipped ? `\n已自动跳过 ${skipped} 个正在运行或不可删除的 MR。` : ""}`)) {
+      return;
+    }
+
+    const actionState: MrActionState = action === "delete" ? "stop" : action;
+    const optimisticStatus = action === "pause" ? "paused" : action === "stop" || action === "delete" ? "cancelled" : "reviewing";
+    const ids = targets.map((mr) => mr.id);
+    setBusy(true);
+    setPendingMrActions((previous) => ({ ...previous, ...Object.fromEntries(ids.map((id) => [id, actionState])) }));
+    for (const id of ids) optimisticMrStatus(id, optimisticStatus);
+    try {
+      const results = await Promise.allSettled(targets.map((mr) => {
+        if (action === "start") {
+          return api(`/api/mr-review/merge-requests/${mr.id}/review-jobs`, {
+            method: "POST",
+            body: JSON.stringify({ effort_level: "standard", reason: "manual_bulk_start" })
+          });
+        }
+        if (action === "pause") return api(`/api/mr-review/merge-requests/${mr.id}/pause`, { method: "POST", body: "{}" });
+        if (action === "stop") return api(`/api/mr-review/merge-requests/${mr.id}/stop`, { method: "POST", body: "{}" });
+        return api(`/api/mr-review/merge-requests/${mr.id}`, { method: "DELETE" });
+      }));
+      const failed = results.filter((result) => result.status === "rejected");
+      if (action === "delete") {
+        setSelectedMrIds((previous) => previous.filter((id) => !ids.includes(id)));
+        if (activeMrIdRef.current && ids.includes(activeMrIdRef.current)) {
+          activeMrIdRef.current = null;
+          setActiveMrId(null);
+          setDetail(null);
+        }
+      }
+      await loadAll(activeMrIdRef.current);
+      setMessage(`已对 ${targets.length - failed.length}/${targets.length} 个 MR 执行${bulkActionLabel(action)}${skipped ? `，跳过 ${skipped} 个` : ""}${failed.length ? `，失败 ${failed.length} 个` : ""}`);
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setPendingMrActions((previous) => {
+        const next = { ...previous };
+        for (const id of ids) delete next[id];
+        return next;
+      });
+      setBusy(false);
+    }
+  }
+
+  function bulkActionLabel(action: "start" | "pause" | "stop" | "delete") {
+    return action === "start" ? "开始" : action === "pause" ? "暂停" : action === "stop" ? "停止" : "删除";
   }
 
   async function deleteMr(mr: MergeRequest) {
@@ -1388,6 +1487,10 @@ function App() {
                 syncing={syncing}
                 busy={busy}
                 pendingMrActions={pendingMrActions}
+                selectedMrIds={selectedMrIds}
+                toggleMrSelection={toggleMrSelection}
+                setVisibleMrSelection={setVisibleMrSelection}
+                bulkMrAction={bulkMrAction}
                 startReview={startReview}
                 pauseReview={pauseReview}
                 stopReview={stopReview}
@@ -1936,8 +2039,8 @@ function ConfigWorkspace({
   const [llmStoredApiKey, setLlmStoredApiKey] = useState("");
   const [reviewForm, setReviewForm] = useState<ReviewSettingsForm>({ effort: "standard", max_findings_per_mr: "40", min_confidence: "0.75", enable_full_repo_context: true });
   const [budgetForm, setBudgetForm] = useState<BudgetSettingsForm>({
-    standard: { max_llm_calls: "80", max_wall_seconds: "1800", max_cost_usd: "5", max_output_tokens: "16000", max_findings: "80" },
-    deep: { max_llm_calls: "120", max_wall_seconds: "2400", max_cost_usd: "10", max_output_tokens: "24000", max_findings: "120" }
+    standard: { max_llm_calls: "80", max_wall_seconds: "1800", max_output_tokens: "16000", max_findings: "80" },
+    deep: { max_llm_calls: "120", max_wall_seconds: "2400", max_output_tokens: "24000", max_findings: "120" }
   });
   const [agentForm, setAgentForm] = useState<AgentSettingsForm>({ max_parallel_agents: "3", enable_llm_routing: true, require_rule_coverage: true, default_max_tool_calls: "12" });
   const [toolForm, setToolForm] = useState<ToolSettingsForm>({
@@ -2103,14 +2206,12 @@ function ConfigWorkspace({
         standard: {
           max_llm_calls: String(standardBudget.max_llm_calls ?? "80"),
           max_wall_seconds: String(standardBudget.max_wall_seconds ?? "1800"),
-          max_cost_usd: String(standardBudget.max_cost_usd ?? "5"),
           max_output_tokens: String(standardBudget.max_output_tokens ?? "16000"),
           max_findings: String(standardBudget.max_findings ?? "80")
         },
         deep: {
           max_llm_calls: String(deepBudget.max_llm_calls ?? "120"),
           max_wall_seconds: String(deepBudget.max_wall_seconds ?? "2400"),
-          max_cost_usd: String(deepBudget.max_cost_usd ?? "10"),
           max_output_tokens: String(deepBudget.max_output_tokens ?? "24000"),
           max_findings: String(deepBudget.max_findings ?? "120")
         }
@@ -2387,7 +2488,6 @@ function ConfigWorkspace({
     return {
       max_llm_calls: positiveNumber(row.max_llm_calls, 80, 500),
       max_wall_seconds: positiveNumber(row.max_wall_seconds, 1800, 7200),
-      max_cost_usd: positiveNumber(row.max_cost_usd, 5, 999),
       max_output_tokens: positiveNumber(row.max_output_tokens, 16000, 64000),
       max_findings: positiveNumber(row.max_findings, 80, 300),
       on_exceed: "degrade"
@@ -2868,7 +2968,7 @@ function ConfigWorkspace({
             <article className="setting-form-card wide">
               <div className="setting-form-head">
                 <strong>检视预算与熔断</strong>
-                <span>控制整个 MR 检视过程的 LLM 调用次数、最长耗时和预算上限，触发后会降级跳过剩余模型步骤。</span>
+                <span>控制整个 MR 检视过程的 LLM 调用次数、最长耗时、输出长度和问题数量，触发后会降级跳过剩余模型步骤。</span>
               </div>
               <div className="budget-policy-grid">
                 {(["standard", "deep"] as Array<keyof BudgetSettingsForm>).map((effort) => (
@@ -2882,9 +2982,6 @@ function ConfigWorkspace({
                     </SettingField>
                     <SettingField label="最长检视秒数">
                       <input type="number" min="0" max="7200" value={budgetForm[effort].max_wall_seconds} onChange={(event) => updateBudgetEffort(effort, "max_wall_seconds", event.target.value)} disabled={!canEdit} />
-                    </SettingField>
-                    <SettingField label="预算上限">
-                      <input type="number" min="0" max="999" step="0.1" value={budgetForm[effort].max_cost_usd} onChange={(event) => updateBudgetEffort(effort, "max_cost_usd", event.target.value)} disabled={!canEdit} />
                     </SettingField>
                     <SettingField label="输出 Token 上限">
                       <input type="number" min="0" max="64000" value={budgetForm[effort].max_output_tokens} onChange={(event) => updateBudgetEffort(effort, "max_output_tokens", event.target.value)} disabled={!canEdit} />
@@ -3354,6 +3451,10 @@ function MrQueue({
   syncing,
   busy,
   pendingMrActions,
+  selectedMrIds,
+  toggleMrSelection,
+  setVisibleMrSelection,
+  bulkMrAction,
   startReview,
   pauseReview,
   stopReview,
@@ -3379,6 +3480,10 @@ function MrQueue({
   syncing: boolean;
   busy: boolean;
   pendingMrActions: Record<string, MrActionState>;
+  selectedMrIds: string[];
+  toggleMrSelection: (mrId: string, selected: boolean) => void;
+  setVisibleMrSelection: (ids: string[], selected: boolean) => void;
+  bulkMrAction: (action: "start" | "pause" | "stop" | "delete") => void;
   startReview: (mrId: string) => void;
   pauseReview: (mrId: string) => void;
   stopReview: (mrId: string) => void;
@@ -3392,6 +3497,11 @@ function MrQueue({
     ["waiting_confirmation", "待确认", stats.waiting],
     ["submitted", "已提交", stats.submitted]
   ] as const;
+  const visibleIds = items.map((mr) => mr.id);
+  const selectedVisibleCount = visibleIds.filter((id) => selectedMrIds.includes(id)).length;
+  const selectedCount = selectedMrIds.length;
+  const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length;
+  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
 
   return (
     <section className="queue-panel">
@@ -3452,8 +3562,40 @@ function MrQueue({
           {syncing ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
         </button>
       </div>
+      <div className="mr-bulk-bar">
+        <label className="mr-select-all">
+          <input
+            type="checkbox"
+            checked={allVisibleSelected}
+            ref={(input) => {
+              if (input) input.indeterminate = someVisibleSelected;
+            }}
+            onChange={(event) => setVisibleMrSelection(visibleIds, event.target.checked)}
+            disabled={!visibleIds.length || busy}
+          />
+          <span>{selectedCount ? `已选择 ${selectedCount} 个 MR` : "选择当前列表 MR"}</span>
+        </label>
+        <div className="mr-bulk-actions">
+          <button type="button" onClick={() => bulkMrAction("start")} disabled={!selectedCount || busy}>批量开始</button>
+          <button type="button" onClick={() => bulkMrAction("pause")} disabled={!selectedCount || busy}>批量暂停</button>
+          <button type="button" onClick={() => bulkMrAction("stop")} disabled={!selectedCount || busy}>批量停止</button>
+          <button className="danger" type="button" onClick={() => bulkMrAction("delete")} disabled={!selectedCount || busy}>批量删除</button>
+        </div>
+      </div>
       <div className="mr-table">
         <div className="mr-head">
+          <span className="mr-select-cell">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              ref={(input) => {
+                if (input) input.indeterminate = someVisibleSelected;
+              }}
+              onChange={(event) => setVisibleMrSelection(visibleIds, event.target.checked)}
+              disabled={!visibleIds.length || busy}
+              aria-label="选择当前列表全部 MR"
+            />
+          </span>
           <span>MR</span>
           <span>仓库</span>
           <span>作者</span>
@@ -3471,12 +3613,21 @@ function MrQueue({
             const displayStatus = queueBlocked ? "project_queued" : workflowStatus;
             const queueBlockedReason = mr.queue_blocked_reason || "项目内已有 MR 正在检视，当前 MR 将排队等待";
             const rowBusy = Boolean(action);
+            const selected = selectedMrIds.includes(mr.id);
             return (
               <div
-                className={`mr-row ${activeMrId === mr.id ? "active" : ""} ${rowBusy ? "pending-action" : ""} ${queueBlocked ? "project-queued" : ""}`}
+                className={`mr-row ${activeMrId === mr.id ? "active" : ""} ${rowBusy ? "pending-action" : ""} ${queueBlocked ? "project-queued" : ""} ${selected ? "selected" : ""}`}
                 key={mr.id}
                 onClick={() => openMr(mr.id)}
               >
+                <span className="mr-select-cell" onClick={(event) => event.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    onChange={(event) => toggleMrSelection(mr.id, event.target.checked)}
+                    aria-label={`选择 MR !${mr.number}`}
+                  />
+                </span>
                 <span className="mr-title">
                   <span>
                     <strong>!{mr.number}</strong>
@@ -3955,8 +4106,8 @@ function ContextRules({ runs, mr }: { runs: Array<Record<string, unknown>>; mr: 
       <p><strong>检视强度</strong><span>{String(run?.effort_level || "standard")}</span></p>
       <p><strong>Sandbox</strong><span>{String(run?.sandbox_uri || "--")}</span></p>
       <p><strong>数据策略</strong><span>{String(policy.default_llm_provider || "internal-minimax-2.7")} · {String(policy.prompt_retention || "hash_only")}</span></p>
-      <p><strong>预算策略</strong><span>{String(budget.effort || run?.effort_level || "standard")} · ${String(budget.max_cost_usd ?? "--")} · {String(budget.max_wall_seconds || "--")}s</span></p>
-      <p><strong>预算用量</strong><span>{String(budgetUsed.llm_calls || 0)} calls · ${String(budgetUsed.cost_usd ?? "0")} · {budgetStatus}</span></p>
+      <p><strong>预算策略</strong><span>{String(budget.effort || run?.effort_level || "standard")} · {String(budget.max_llm_calls ?? "--")} calls · {String(budget.max_wall_seconds || "--")}s</span></p>
+      <p><strong>预算用量</strong><span>{String(budgetUsed.llm_calls || 0)} calls · {budgetStatus}</span></p>
       <p><strong>目标仓库</strong><span>{mr.repository_name} · {mr.target_branch}</span></p>
     </div>
   );

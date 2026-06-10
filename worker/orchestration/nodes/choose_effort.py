@@ -19,13 +19,6 @@ def _numeric_override(raw: Any, fallback: int | float) -> int | float:
 
 
 def budget_for_effort(effort: str, budget_policy: dict[str, Any] | None = None) -> dict[str, Any]:
-    cost_by_effort = {
-        "trivial": 0.05,
-        "fast": 0.20,
-        "light": 0.20,
-        "standard": 1.00,
-        "deep": 3.00,
-    }
     calls_by_effort = {
         "trivial": 0,
         "fast": 12,
@@ -45,7 +38,6 @@ def budget_for_effort(effort: str, budget_policy: dict[str, Any] | None = None) 
         "max_input_tokens": 0 if effort == "trivial" else (400000 if effort == "deep" else 120000 if effort == "standard" else 30000),
         "max_output_tokens": 0 if effort == "trivial" else (16000 if effort == "deep" else 8000),
         "max_wall_seconds": wall_seconds_by_effort.get(effort, 180),
-        "max_cost_usd": cost_by_effort.get(effort, 0.20),
         "max_llm_calls": calls_by_effort.get(effort, 8),
         "max_llm_calls_per_agent": 0 if effort == "trivial" else 2,
         "max_findings": 40,
@@ -54,7 +46,7 @@ def budget_for_effort(effort: str, budget_policy: dict[str, Any] | None = None) 
     policy = budget_policy or {}
     effort_overrides = policy.get("efforts") if isinstance(policy.get("efforts"), dict) else {}
     override = effort_overrides.get(effort) if isinstance(effort_overrides.get(effort), dict) else {}
-    for key in ("max_input_tokens", "max_output_tokens", "max_wall_seconds", "max_cost_usd", "max_llm_calls", "max_llm_calls_per_agent", "max_findings"):
+    for key in ("max_input_tokens", "max_output_tokens", "max_wall_seconds", "max_llm_calls", "max_llm_calls_per_agent", "max_findings"):
         if key in override:
             budget[key] = _numeric_override(override.get(key), budget[key])
     if override.get("on_exceed") in {"degrade", "fail"}:

@@ -343,14 +343,12 @@ cp config.example.json config.json
       "standard": {
         "max_llm_calls": 80,
         "max_wall_seconds": 1800,
-        "max_cost_usd": 5,
         "max_output_tokens": 16000,
         "max_findings": 80
       },
       "deep": {
         "max_llm_calls": 120,
         "max_wall_seconds": 2400,
-        "max_cost_usd": 10,
         "max_output_tokens": 24000,
         "max_findings": 120
       }
@@ -359,7 +357,7 @@ cp config.example.json config.json
 }
 ```
 
-熔断原因会记录到 `review_runs.budget_used_json.truncated_reason`，常见值包括 `llm_calls_exceeded`、`wall_seconds_exceeded`、`cost_usd_exceeded`。触发后当前任务会降级跳过后续模型步骤，保留已完成的静态工具和专家结果。
+熔断原因会记录到 `review_runs.budget_used_json.truncated_reason`，常见值包括 `llm_calls_exceeded`、`wall_seconds_exceeded`。触发后当前任务会降级跳过后续模型步骤，保留已完成的静态工具和专家结果。
 
 ### Token 用量上报占位
 

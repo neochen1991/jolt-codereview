@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from tools.code_graph_rules import evaluate_code_graph_rules
+
 
 SUPPORTED_SUFFIXES = {
     ".java": "java",
@@ -50,6 +52,13 @@ CALL_NODE_TYPES = {
     "method_invocation",
     "call_expression",
     "object_creation_expression",
+}
+LOOP_NODE_TYPES = {
+    "for_statement",
+    "enhanced_for_statement",
+    "while_statement",
+    "do_statement",
+    "for_in_statement",
 }
 CONTROL_WORDS = {
     "if",
@@ -215,6 +224,15 @@ def build_diff_graph(files: list[Any]) -> dict[str, Any]:
     return _build_index(indexed, {"index_kind": "tree_sitter_diff_graph"})
 
 
+def architecture_findings_from_graph(
+    graph: dict[str, Any],
+    changed_files: list[Any],
+    *,
+    raw_artifact_id: str | None = None,
+) -> list[dict[str, Any]]:
+    return evaluate_code_graph_rules(graph, changed_files, raw_artifact_id=raw_artifact_id)
+
+
 def _positive_int(value: Any, default: int) -> int:
     try:
         parsed = int(value)
@@ -307,13 +325,22 @@ def _parse_file(file_path: str, language: str, content: str) -> dict[str, Any]:
     except Exception as exc:
         return {"status": "parse_failed", "error": f"{type(exc).__name__}: {exc}"}
     state = {"functions": [], "classes": [], "imports": [], "calls": []}
-    _walk(tree.root_node, source, file_path, language, state, ["<module>"])
+    _walk(tree.root_node, source, file_path, language, state, ["<module>"], 0)
     return {**state, "status": "parsed", "has_error": bool(getattr(tree.root_node, "has_error", False))}
 
 
-def _walk(node: Any, source: bytes, file_path: str, language: str, state: dict[str, list[dict[str, Any]]], scope: list[str]) -> None:
+def _walk(
+    node: Any,
+    source: bytes,
+    file_path: str,
+    language: str,
+    state: dict[str, list[dict[str, Any]]],
+    scope: list[str],
+    loop_depth: int,
+) -> None:
     node_type = str(node.type)
     pushed = False
+    next_loop_depth = loop_depth + 1 if node_type in LOOP_NODE_TYPES else loop_depth
     if node_type in IMPORT_NODE_TYPES:
         state["imports"].append({"file_path": file_path, "language": language, "line": _line(node), "import": _text(node, source).strip()})
     if node_type in CLASS_NODE_TYPES:
@@ -325,7 +352,15 @@ def _walk(node: Any, source: bytes, file_path: str, language: str, state: dict[s
     elif node_type in FUNCTION_NODE_TYPES:
         name = _node_name(node, source) or _assigned_function_name(node, source)
         if name and name not in CONTROL_WORDS:
-            state["functions"].append({"file_path": file_path, "language": language, "line": _line(node), "name": name})
+            state["functions"].append(
+                {
+                    "file_path": file_path,
+                    "language": language,
+                    "line": _line(node),
+                    "name": name,
+                    "snippet": _snippet(node, source, 1200),
+                }
+            )
             scope.append(name)
             pushed = True
     if node_type in CALL_NODE_TYPES:
@@ -338,10 +373,13 @@ def _walk(node: Any, source: bytes, file_path: str, language: str, state: dict[s
                     "line": _line(node),
                     "caller": scope[-1] if scope else "<module>",
                     "callee": callee,
+                    "receiver": _call_receiver(node, source),
+                    "snippet": _snippet(node, source, 500),
+                    "loop_depth": loop_depth,
                 }
             )
     for child in node.named_children:
-        _walk(child, source, file_path, language, state, scope)
+        _walk(child, source, file_path, language, state, scope, next_loop_depth)
     if pushed:
         scope.pop()
 
@@ -376,6 +414,15 @@ def _call_name(node: Any, source: bytes) -> str:
     return match.group(1) if match else ""
 
 
+def _call_receiver(node: Any, source: bytes) -> str:
+    child = node.child_by_field_name("object")
+    if child is not None:
+        return _text(child, source).strip()
+    text = _text(node, source)
+    match = re.search(r"([A-Za-z_]\w*)\s*\.\s*[A-Za-z_]\w*\s*\(", text)
+    return match.group(1) if match else ""
+
+
 def _last_identifier(text: str) -> str:
     names = re.findall(r"[A-Za-z_]\w*", text)
     return names[-1] if names else ""
@@ -389,6 +436,10 @@ def _text(node: Any, source: bytes) -> str:
     if node is None:
         return ""
     return source[int(node.start_byte) : int(node.end_byte)].decode("utf-8", errors="replace")
+
+
+def _snippet(node: Any, source: bytes, limit: int) -> str:
+    return re.sub(r"\s+", " ", _text(node, source)).strip()[:limit]
 
 
 def _impact_symbols(functions: list[dict[str, Any]], classes: list[dict[str, Any]], calls: list[dict[str, Any]]) -> list[dict[str, Any]]:

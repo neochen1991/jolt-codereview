@@ -33,6 +33,7 @@ from orchestration.nodes.detect_conflicts import detect_conflicts
 from orchestration.nodes.choose_effort import budget_for_effort
 from orchestration.nodes.judge_findings import (
     apply_debate_verdicts,
+    dedupe_same_line_same_issue_findings,
     filter_to_diff_introduced_findings,
     filter_tool_observations_to_added_lines,
     judge_candidate_findings,
@@ -640,6 +641,58 @@ open_source_promoted = promote_tool_observations(
 )
 assert len(open_source_promoted) == 3, open_source_promoted
 assert {item["agent_id"] for item in open_source_promoted} == {"coding_agent", "security_agent", "dependency_agent"}, open_source_promoted
+tree_sitter_ddd_promoted = promote_tool_observations(
+    [
+        {
+            "tool_name": "tree_sitter_code_graph",
+            "rule_id": "DDD-LAYER-001",
+            "severity": "high",
+            "confidence": 0.91,
+            "file_path": "src/main/java/com/acme/interfaces/PaymentController.java",
+            "line_start": 3,
+            "message": "tree-sitter 代码图谱发现接口层直接 import infrastructure persistence repository.",
+            "raw_artifact_id": "/tmp/tree-sitter-code-graph.json",
+        }
+    ],
+    [],
+)
+assert len(tree_sitter_ddd_promoted) == 1, tree_sitter_ddd_promoted
+assert tree_sitter_ddd_promoted[0]["agent_id"] == "ddd_agent", tree_sitter_ddd_promoted
+assert tree_sitter_ddd_promoted[0]["tool_rule_id"] == "DDD-LAYER-001", tree_sitter_ddd_promoted
+tree_sitter_security_perf_promoted = promote_tool_observations(
+    [
+        {
+            "tool_name": "tree_sitter_code_graph",
+            "rule_id": "BE-API-001",
+            "severity": "medium",
+            "confidence": 0.87,
+            "file_path": "src/main/java/com/acme/interfaces/RiskImportController.java",
+            "line_start": 14,
+            "message": "Controller method accepts @RequestBody without @Valid.",
+        },
+        {
+            "tool_name": "tree_sitter_code_graph",
+            "rule_id": "jolt.java.objectinputstream-readobject",
+            "severity": "high",
+            "confidence": 0.9,
+            "file_path": "src/main/java/com/acme/interfaces/RiskImportController.java",
+            "line_start": 15,
+            "message": "ObjectInputStream.readObject is called on request controlled input.",
+        },
+        {
+            "tool_name": "tree_sitter_code_graph",
+            "rule_id": "PERF-QUERY-001",
+            "severity": "high",
+            "confidence": 0.88,
+            "file_path": "src/main/java/com/acme/interfaces/RiskImportController.java",
+            "line_start": 17,
+            "message": "JDBC query call is inside a loop.",
+        },
+    ],
+    [],
+)
+assert len(tree_sitter_security_perf_promoted) == 3, tree_sitter_security_perf_promoted
+assert {item["agent_id"] for item in tree_sitter_security_perf_promoted} == {"backend_agent", "security_agent", "performance_agent"}, tree_sitter_security_perf_promoted
 semgrep_domain_promoted = promote_tool_observations(
     [
         {
@@ -1753,6 +1806,45 @@ for trace_column in ["tool_provenance_json", "source_observations_json", "qualit
     assert trace_column in migration_source, trace_column
     assert trace_column in judge_source, trace_column
 assert "not_selected_final_issue" in judge_source, "Judge must not persist unselected candidates as final review findings"
+
+same_line_merged, same_line_rejected = dedupe_same_line_same_issue_findings([
+    {
+        "agent_id": "security_agent",
+        "severity": "high",
+        "confidence": 0.86,
+        "head_sha": "abc",
+        "file_path": "src/main/java/com/example/PaymentRepository.java",
+        "line_start": 42,
+        "line_end": 42,
+        "title": "SQL 使用字符串拼接存在注入风险",
+        "problem_description": "line 42: userId 被拼接进 SQL。",
+        "recommendation": "使用 PreparedStatement 参数绑定。",
+        "suggested_code": "PreparedStatement ps = connection.prepareStatement(sql);",
+        "evidence": "String sql = \"select * from t where user_id=\" + userId;",
+        "covered_rules": ["SEC-INJECT-003"],
+        "skipped_rules": [],
+    },
+    {
+        "agent_id": "database_agent",
+        "severity": "high",
+        "confidence": 0.83,
+        "head_sha": "abc",
+        "file_path": "src/main/java/com/example/PaymentRepository.java",
+        "line_start": 42,
+        "line_end": 42,
+        "title": "动态 SQL 拼接会造成注入",
+        "problem_description": "line 42: 外部参数进入 SQL 字符串拼接。",
+        "recommendation": "数据库访问层必须使用绑定变量。",
+        "suggested_code": "ps.setString(1, userId);",
+        "evidence": "String sql = \"select * from t where user_id=\" + userId;",
+        "covered_rules": ["ALI-MYBATIS-001"],
+        "skipped_rules": [],
+    },
+])
+assert len(same_line_merged) == 1, same_line_merged
+assert len(same_line_rejected) == 1, same_line_rejected
+assert set(same_line_merged[0]["merged_agent_ids"]) == {"security_agent", "database_agent"}, same_line_merged
+assert set(same_line_merged[0]["covered_rules"]) >= {"SEC-INJECT-003", "ALI-MYBATIS-001"}, same_line_merged
 
 print(json.dumps({
     "conflict_count": len(conflicts),

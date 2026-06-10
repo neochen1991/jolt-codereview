@@ -355,6 +355,188 @@ def verify_tree_sitter_bounded_scan() -> dict[str, object]:
     }
 
 
+def verify_tree_sitter_ddd_observations() -> dict[str, object]:
+    source = """package com.acme.interfaces;
+
+import com.acme.infrastructure.persistence.PaymentJpaRepository;
+
+@RestController
+class PaymentController {
+  private final PaymentJpaRepository paymentJpaRepository;
+
+  PaymentController(PaymentJpaRepository paymentJpaRepository) {
+    this.paymentJpaRepository = paymentJpaRepository;
+  }
+
+  void capture(String id) {
+    paymentJpaRepository.save(id);
+  }
+}
+"""
+    files = [
+        ChangedFile(
+            filename="src/main/java/com/acme/interfaces/PaymentController.java",
+            status="modified",
+            additions=16,
+            deletions=0,
+            changes=16,
+            patch="""@@ -0,0 +1,16 @@
++package com.acme.interfaces;
++
++import com.acme.infrastructure.persistence.PaymentJpaRepository;
++
++@RestController
++class PaymentController {
++  private final PaymentJpaRepository paymentJpaRepository;
++
++  PaymentController(PaymentJpaRepository paymentJpaRepository) {
++    this.paymentJpaRepository = paymentJpaRepository;
++  }
++
++  void capture(String id) {
++    paymentJpaRepository.save(id);
++  }
++}
+""",
+        )
+    ]
+    recorder = Recorder()
+    with tempfile.TemporaryDirectory(prefix="jolt-tree-sitter-ddd-") as temp_dir:
+        _summary, findings = run_external_static_prescan(
+            recorder,
+            "span_tree_sitter_ddd",
+            Path(temp_dir),
+            files,
+            "head_tree_sitter_ddd",
+            None,
+            None,
+            {
+                "tool_policy": {
+                    "enabled_tools": ["tree-sitter"],
+                    "static_runners": {"tree_sitter_code_graph": {"timeout_seconds": 5}},
+                }
+            },
+            {"src/main/java/com/acme/interfaces/PaymentController.java": source},
+        )
+    ddd_findings = [
+        item for item in findings
+        if item.get("tool_name") == "tree_sitter_code_graph" and item.get("tool_rule_id") == "DDD-LAYER-001"
+    ]
+    assert ddd_findings, findings
+    finding = ddd_findings[0]
+    assert finding["agent_id"] == "ddd_agent", finding
+    assert finding["file_path"].endswith("PaymentController.java"), finding
+    assert finding["line_start"] == 3, finding
+    assert "infrastructure" in finding["evidence"].lower(), finding
+    return {
+        "ddd_observation_count": len(ddd_findings),
+        "first_rule": finding["tool_rule_id"],
+        "first_line": finding["line_start"],
+    }
+
+
+def verify_tree_sitter_security_backend_performance_observations() -> dict[str, object]:
+    source = """package com.acme.interfaces;
+
+import java.io.ObjectInputStream;
+import java.sql.Statement;
+import java.util.List;
+import java.util.Map;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+class RiskImportController {
+  @PostMapping("/risk/import")
+  public Map<String, Object> importRisk(@RequestBody Map<String, Object> payload, ObjectInputStream input, Statement statement, List<String> userIds) throws Exception {
+    Object command = input.readObject();
+    for (String userId : userIds) {
+      statement.executeQuery("select * from payments where user_id = '" + userId + "'");
+    }
+    return payload;
+  }
+}
+"""
+    files = [
+        ChangedFile(
+            filename="src/main/java/com/acme/interfaces/RiskImportController.java",
+            status="modified",
+            additions=20,
+            deletions=0,
+            changes=20,
+            patch="""@@ -0,0 +1,20 @@
++package com.acme.interfaces;
++
++import java.io.ObjectInputStream;
++import java.sql.Statement;
++import java.util.List;
++import java.util.Map;
++import org.springframework.web.bind.annotation.PostMapping;
++import org.springframework.web.bind.annotation.RequestBody;
++import org.springframework.web.bind.annotation.RestController;
++
++@RestController
++class RiskImportController {
++  @PostMapping("/risk/import")
++  public Map<String, Object> importRisk(@RequestBody Map<String, Object> payload, ObjectInputStream input, Statement statement, List<String> userIds) throws Exception {
++    Object command = input.readObject();
++    for (String userId : userIds) {
++      statement.executeQuery("select * from payments where user_id = '" + userId + "'");
++    }
++    return payload;
++  }
++}
+""",
+        )
+    ]
+    recorder = Recorder()
+    with tempfile.TemporaryDirectory(prefix="jolt-tree-sitter-security-perf-") as temp_dir:
+        _summary, findings = run_external_static_prescan(
+            recorder,
+            "span_tree_sitter_security_perf",
+            Path(temp_dir),
+            files,
+            "head_tree_sitter_security_perf",
+            None,
+            None,
+            {
+                "tool_policy": {
+                    "enabled_tools": ["tree-sitter"],
+                    "static_runners": {"tree_sitter_code_graph": {"timeout_seconds": 5}},
+                }
+            },
+            {"src/main/java/com/acme/interfaces/RiskImportController.java": source},
+        )
+    tree_findings = [item for item in findings if item.get("tool_name") == "tree_sitter_code_graph"]
+    covered = {rule for item in tree_findings for rule in item.get("covered_rules", [])}
+    assert "BE-API-001" in covered, tree_findings
+    assert "SEC-INJECT-003" in covered, tree_findings
+    assert "PERF-QUERY-001" in covered, tree_findings
+    assert any(item.get("agent_id") == "backend_agent" for item in tree_findings), tree_findings
+    assert any(item.get("agent_id") == "security_agent" for item in tree_findings), tree_findings
+    assert any(item.get("agent_id") == "performance_agent" for item in tree_findings), tree_findings
+    return {
+        "tree_sitter_observation_count": len(tree_findings),
+        "covered_rules": sorted(covered),
+    }
+
+
+def verify_code_graph_rule_layer() -> dict[str, object]:
+    rules_path = Path("worker/tools/code_graph_rules.py")
+    assert rules_path.exists(), "code graph rules must live outside tree_sitter_tool.py"
+    rules_text = rules_path.read_text("utf-8")
+    tree_sitter_text = Path("worker/tools/tree_sitter_tool.py").read_text("utf-8")
+    assert "def evaluate_code_graph_rules" in rules_text, "rules module must expose evaluate_code_graph_rules"
+    for marker in ["DDD-LAYER-001", "BE-API-001", "ObjectInputStream 反序列化", "循环内执行数据库查询"]:
+        assert marker in rules_text, marker
+        assert marker not in tree_sitter_text, marker
+    return {
+        "rules_module": str(rules_path),
+        "parser_rule_markers_removed": True,
+    }
+
+
 def main() -> None:
     result = {
         "ok": True,
@@ -363,6 +545,9 @@ def main() -> None:
         "policy_and_baseline": verify_policy_and_baseline(),
         "checkstyle_noise_filter": verify_checkstyle_noise_filter(),
         "tree_sitter_bounded_scan": verify_tree_sitter_bounded_scan(),
+        "tree_sitter_ddd_observations": verify_tree_sitter_ddd_observations(),
+        "tree_sitter_security_backend_performance_observations": verify_tree_sitter_security_backend_performance_observations(),
+        "code_graph_rule_layer": verify_code_graph_rule_layer(),
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

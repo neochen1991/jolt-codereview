@@ -52,7 +52,7 @@ from tools.gateway import ToolGateway
 from tools.java_report_tool import parse_external_report_payload
 from tools.java_web_static_tool import scan_java_web_files
 from tools.registry import findings_to_observations, load_tool_observations, save_tool_observations
-from tools.tree_sitter_tool import build_graph as build_tree_sitter_graph
+from tools.tree_sitter_tool import architecture_findings_from_graph, build_graph as build_tree_sitter_graph
 from tools.tool_normalizer import CATEGORY_PRIMARY_RULE, RULE_CATEGORY_MAP, canonical_rule_id, dedupe_tool_findings, line_bucket, normalize_tool_finding, normalized_rule_category
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -3131,6 +3131,7 @@ def run_external_static_prescan(
 
     outputs_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
+    tree_sitter_findings: list[dict[str, Any]] = []
     if static_tool_enabled(project_config, "tree_sitter_code_graph"):
         tree_started = time.time()
         tree_options = tree_sitter_graph_options(project_config, files)
@@ -3152,6 +3153,14 @@ def run_external_static_prescan(
         tree_graph = build_tree_sitter_graph(worktree, tree_options)
         tree_graph_output = outputs_dir / "tree-sitter-code-graph.json"
         tree_graph_output.write_text(json.dumps(tree_graph, ensure_ascii=False, indent=2), "utf-8")
+        tree_sitter_findings = [
+            normalize_tool_finding(item)
+            for item in architecture_findings_from_graph(
+                tree_graph,
+                files,
+                raw_artifact_id=str(tree_graph_output),
+            )
+        ]
         tree_graph_status = str(tree_graph.get("status") or "failed")
         if tree_graph.get("timeout"):
             tree_status = "timeout"
@@ -3170,6 +3179,7 @@ def run_external_static_prescan(
                 f"classes={len(tree_graph.get('classes') or [])}, "
                 f"functions={len(tree_graph.get('functions') or [])}, "
                 f"calls={len(tree_graph.get('callers') or [])}"
+                + f", architecture_findings={len(tree_sitter_findings)}"
                 + (", truncated=true" if tree_graph.get("truncated") else "")
                 + (", timeout=true" if tree_graph.get("timeout") else "")
             ),
@@ -3184,7 +3194,7 @@ def run_external_static_prescan(
                 "version": "python-tree-sitter",
                 "stdout_path": str(tree_graph_output),
                 "returncode": 0 if tree_graph_status in {"indexed", "indexed_partial", "timeout_partial"} else 1,
-                "findings": [],
+                "findings": tree_sitter_findings,
                 "metrics": {
                     "worktree_mode": worktree_mode,
                     "source_file_count": fetched_source_count,
@@ -3195,6 +3205,7 @@ def run_external_static_prescan(
                     "function_count": len(tree_graph.get("functions") or []),
                     "call_count": len(tree_graph.get("callers") or []),
                     "impact_symbol_count": len(tree_graph.get("impact_symbols") or []),
+                    "architecture_finding_count": len(tree_sitter_findings),
                     "truncated": bool(tree_graph.get("truncated")),
                     "timeout": bool(tree_graph.get("timeout")),
                     "skipped_file_count": len(tree_graph.get("skipped_files") or []),
@@ -3330,6 +3341,7 @@ def run_external_static_prescan(
         + security_tool_findings
         + iac_tool_findings
         + external_findings
+        + tree_sitter_findings
         + java_web_findings
     )
     findings, rule_policy_suppressed, rule_policy_applied = apply_project_rule_policy(project_config, findings)

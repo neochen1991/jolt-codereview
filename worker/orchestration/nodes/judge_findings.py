@@ -23,6 +23,7 @@ OSS_TOOL_PROMOTION_THRESHOLDS = {
     "kics": 0.8,
     "openapi-diff": 0.8,
     "gitleaks": 0.82,
+    "tree_sitter_code_graph": 0.82,
 }
 PROMOTABLE_TOOL_RULES = {
     "BE-API-001",
@@ -641,10 +642,86 @@ def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) 
     covered.update(secondary.get("covered_rules") or [])
     skipped = set(primary.get("skipped_rules") or [])
     skipped.update(secondary.get("skipped_rules") or [])
+    agents = set(str(item) for item in (primary.get("merged_agent_ids") or []) if item)
+    for value in [primary.get("agent_id"), secondary.get("agent_id"), *(secondary.get("merged_agent_ids") or [])]:
+        if value:
+            agents.add(str(value))
     primary["covered_rules"] = sorted(str(item) for item in covered if item)
     primary["skipped_rules"] = sorted(str(item) for item in skipped if item)
+    primary["merged_agent_ids"] = sorted(agents)
     primary["confidence"] = min(0.99, max(float(primary.get("confidence") or 0), float(secondary.get("confidence") or 0)) + 0.03)
     return primary
+
+
+def _line_overlap_or_same(left: dict[str, Any], right: dict[str, Any], *, tolerance: int = 1) -> bool:
+    left_start = _as_int(left.get("line_start"))
+    right_start = _as_int(right.get("line_start"))
+    if left_start is None or right_start is None:
+        return False
+    left_end = _as_int(left.get("line_end")) or left_start
+    right_end = _as_int(right.get("line_end")) or right_start
+    return left_start <= right_end + tolerance and right_start <= left_end + tolerance
+
+
+def _token_set(value: str) -> set[str]:
+    normalized = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", " ", value.lower())
+    return {token for token in normalized.split() if len(token) >= 2}
+
+
+def _title_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
+    left_tokens = _token_set(str(left.get("title") or ""))
+    right_tokens = _token_set(str(right.get("title") or ""))
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+
+
+def _same_line_same_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    if str(left.get("file_path") or "") != str(right.get("file_path") or ""):
+        return False
+    if not _line_overlap_or_same(left, right):
+        return False
+
+    left_normalized = normalize_tool_finding(left)
+    right_normalized = normalize_tool_finding(right)
+    left_rules = {str(rule) for rule in (left_normalized.get("covered_rules") or []) if rule}
+    right_rules = {str(rule) for rule in (right_normalized.get("covered_rules") or []) if rule}
+    if left_rules & right_rules:
+        return True
+
+    left_root = _root_cause_signature(left_normalized)
+    right_root = _root_cause_signature(right_normalized)
+    if left_root and left_root == right_root:
+        return True
+
+    left_typed = _typed_issue_signature(left_normalized)
+    right_typed = _typed_issue_signature(right_normalized)
+    if left_typed and left_typed == right_typed:
+        return True
+
+    if _selection_category_key(left_normalized) == _selection_category_key(right_normalized):
+        return True
+
+    return _title_similarity(left_normalized, right_normalized) >= 0.62
+
+
+def dedupe_same_line_same_issue_findings(findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    ordered = sorted([_normalize_for_judging(item) for item in findings], key=_priority_sort_key, reverse=True)
+    merged: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for item in ordered:
+        target_index = next((index for index, existing in enumerate(merged) if _same_line_same_issue(existing, item)), None)
+        if target_index is None:
+            merged.append(item)
+            continue
+        existing = merged[target_index]
+        if _priority_sort_key(item) > _priority_sort_key(existing):
+            rejected.append({**existing, "rejected_reasons": ["deduped_same_line_same_issue"]})
+            merged[target_index] = _merge_finding_metadata(item, existing)
+        else:
+            rejected.append({**item, "rejected_reasons": ["deduped_same_line_same_issue"]})
+            merged[target_index] = _merge_finding_metadata(existing, item)
+    return merged, rejected
 
 
 def _stable_sort_key(finding: dict[str, Any]) -> tuple[int, int, float, str, int, str]:
@@ -2063,6 +2140,7 @@ def build_quality_trace(finding: dict[str, Any], source_observations: list[dict[
             "line_end": finding.get("line_end"),
         },
         "dedupe_hash": finding.get("dedupe_hash"),
+        "merged_agent_ids": finding.get("merged_agent_ids") or [finding.get("agent_id")],
         "covered_rules": finding.get("covered_rules") or [],
         "skipped_rules": finding.get("skipped_rules") or [],
         "rule_reconciliation": finding.get("rule_reconciliation"),
@@ -2347,6 +2425,24 @@ def make_judge_findings_node(
                 continue
             judge_rejections.append({**item, "rejected_reasons": ["not_selected_final_issue"]})
         final_findings = final_selected_findings
+        final_findings, same_line_rejections = dedupe_same_line_same_issue_findings(final_findings)
+        if same_line_rejections:
+            judge_rejections.extend(same_line_rejections)
+            recorder.event(
+                judge_span,
+                "finding_deduped",
+                f"合并 {len(same_line_rejections)} 个同文件同行重复问题",
+                {
+                    "deduped_count": len(same_line_rejections),
+                    "deduped_agents": sorted(
+                        {
+                            str(item.get("agent_id") or "")
+                            for item in same_line_rejections
+                            if item.get("agent_id")
+                        }
+                    ),
+                },
+            )
         for rejected in judge_rejections:
             upsert_candidate_finding(
                 conn,

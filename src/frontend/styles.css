@@ -1841,7 +1841,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
   min-height: 0;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: auto;
   scrollbar-gutter: stable both-edges;
   scrollbar-color: #9fb5d1 #eef4fb;
@@ -2209,16 +2209,19 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .mr-table {
   min-height: 0;
+  min-width: 0;
+  width: 100%;
   display: grid;
   grid-template-rows: 44px minmax(0, 1fr);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .mr-head,
 .mr-row {
-  min-width: 0;
+  min-width: 1060px;
   display: grid;
-  grid-template-columns: 30px minmax(190px, 1.4fr) minmax(84px, 0.52fr) minmax(54px, 0.34fr) 34px 64px 38px 64px minmax(266px, 0.96fr);
+  grid-template-columns: 30px minmax(220px, 1.35fr) minmax(96px, 0.5fr) minmax(58px, 0.32fr) 34px 64px 38px 70px minmax(316px, auto);
   align-items: center;
   column-gap: 7px;
 }
@@ -2232,7 +2235,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .mr-body {
-  overflow-x: visible;
+  overflow-x: clip;
   overflow-y: auto;
 }
 
@@ -2307,6 +2310,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   justify-content: flex-end;
   overflow: visible;
   white-space: nowrap;
+}
+
+.mr-row > .mr-actions {
+  overflow: visible;
 }
 
 .mr-action-button.subtle {
@@ -4612,11 +4619,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
   .mr-table {
     grid-template-rows: 44px auto;
-    overflow: visible;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .mr-body {
-    overflow: visible;
+    overflow-x: clip;
+    overflow-y: visible;
   }
 
   .detail-panel {

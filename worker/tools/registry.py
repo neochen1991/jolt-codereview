@@ -74,15 +74,16 @@ def load_tool_observations(conn: sqlite3.Connection, review_run_id: str, limit: 
         WHERE review_run_id = ?
         ORDER BY
           CASE tool_name
-            WHEN 'semgrep' THEN 0
-            WHEN 'gitleaks' THEN 1
-            WHEN 'trivy' THEN 2
-            WHEN 'osv' THEN 3
-            WHEN 'dependency-check' THEN 4
-            WHEN 'java_web_static' THEN 5
-            WHEN 'pmd' THEN 6
-            WHEN 'spotbugs' THEN 7
-            WHEN 'checkstyle' THEN 8
+            WHEN 'tree_sitter_code_graph' THEN 0
+            WHEN 'semgrep' THEN 1
+            WHEN 'gitleaks' THEN 2
+            WHEN 'trivy' THEN 3
+            WHEN 'osv' THEN 4
+            WHEN 'dependency-check' THEN 5
+            WHEN 'java_web_static' THEN 6
+            WHEN 'pmd' THEN 7
+            WHEN 'spotbugs' THEN 8
+            WHEN 'checkstyle' THEN 9
             ELSE 20
           END,
           CASE severity

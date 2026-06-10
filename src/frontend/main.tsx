@@ -464,6 +464,38 @@ function formatDurationMs(value: unknown) {
   return `${(ms / 1000).toFixed(ms >= 10000 ? 0 : 1)}s`;
 }
 
+function parseBackendTime(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+  const date = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateTime(value: unknown) {
+  const date = parseBackendTime(value);
+  if (!date) return "--";
+  return date.toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+}
+
+function formatElapsedSeconds(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const rest = safeSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${rest}s`;
+  if (minutes > 0) return `${minutes}m ${rest}s`;
+  return `${rest}s`;
+}
+
 const ACTIVE_REVIEW_STATUSES = ["fetching", "pre_scanning", "reviewing", "judging", "running"];
 const SYSTEM_AGENT_IDS = new Set(["router_agent", "budget_guard", "summary_agent", "system", "unknown_agent"]);
 const REVIEW_STEPS = [
@@ -532,7 +564,8 @@ function findingSource(finding: Finding) {
 
 function isReviewExpertAgent(agentId: string) {
   const normalized = String(agentId || "").trim();
-  return Boolean(normalized) && !SYSTEM_AGENT_IDS.has(normalized);
+  if (!normalized || SYSTEM_AGENT_IDS.has(normalized)) return false;
+  return normalized.endsWith("_agent") || normalized.includes("_agent_");
 }
 
 function addAgentId(target: Set<string>, value: unknown) {
@@ -552,41 +585,39 @@ function addAgentIdsFromPayload(target: Set<string>, payload: Record<string, unk
   }
 }
 
+function recordTimestamp(row: Record<string, unknown>) {
+  return row.timestamp || row.created_at || row.started_at || row.completed_at || "";
+}
+
 function participatingAgentIds(detail: Detail) {
-  const startedAgents = new Set<string>();
+  const agents = new Set<string>();
   for (const row of detail.trace || []) {
-    if (String(row.event_type || "") === "agent_started") addAgentId(startedAgents, row.agent_id);
+    addAgentId(agents, row.agent_id);
+    if (String(row.event_type || "") === "agent_routed") {
+      addAgentIdsFromPayload(agents, safeJson(String(row.payload_json || "{}")));
+    }
   }
-  if (startedAgents.size) return Array.from(startedAgents).sort();
 
-  const routedAgents = new Set<string>();
-  for (const row of detail.trace || []) {
-    if (String(row.event_type || "") !== "agent_routed") continue;
-    addAgentIdsFromPayload(routedAgents, safeJson(String(row.payload_json || "{}")));
-  }
-  if (routedAgents.size) return Array.from(routedAgents).sort();
-
-  const coverageAgents = new Set<string>();
   for (const run of detail.runs || []) {
     const coverage = safeJson(String(run.coverage_json || "{}"));
-    const agents = Array.isArray(coverage.agents_executed) ? coverage.agents_executed : [];
-    agents.forEach((agent) => addAgentId(coverageAgents, agent));
+    const coverageAgents = Array.isArray(coverage.agents_executed) ? coverage.agents_executed : [];
+    coverageAgents.forEach((agent) => addAgentId(agents, agent));
   }
-  if (coverageAgents.size) return Array.from(coverageAgents).sort();
 
-  const activityAgents = new Set<string>();
   const sessionLogs = detail.session_logs;
   [
     ...(sessionLogs?.messages || []),
     ...(sessionLogs?.tool_calls || []),
     ...(sessionLogs?.llm_calls || []),
     ...(sessionLogs?.mcp_calls || [])
-  ].forEach((row) => addAgentId(activityAgents, row.agent_id));
-  if (activityAgents.size) return Array.from(activityAgents).sort();
+  ].forEach((row) => {
+    addAgentId(agents, row.agent_id);
+    addAgentId(agents, row.from_agent);
+    addAgentId(agents, row.to_agent);
+  });
 
-  const findingAgents = new Set<string>();
-  detail.findings.forEach((finding) => addAgentId(findingAgents, finding.agent_id));
-  return Array.from(findingAgents).sort();
+  detail.findings.forEach((finding) => addAgentId(agents, finding.agent_id));
+  return Array.from(agents).sort();
 }
 
 function riskLevel(score: number) {
@@ -596,10 +627,9 @@ function riskLevel(score: number) {
 }
 
 function shortTime(value: string) {
-  if (!value) return "--";
-  const date = new Date(value.replace(" ", "T") + "Z");
-  if (Number.isNaN(date.getTime())) return value.slice(11, 16) || value;
-  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const date = parseBackendTime(value);
+  if (!date) return value ? value.slice(11, 16) || value : "--";
+  return date.toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 function mrMatchesTimeFilter(value: string, filter: string) {
@@ -3788,6 +3818,14 @@ function DetailPanel({
 }) {
   const [tab, setTab] = useState<"findings" | "process" | "tools">("findings");
   const [activeFinding, setActiveFinding] = useState<Finding | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  const activeStatus = detail ? effectiveReviewStatus(detail) : "";
+  useEffect(() => {
+    if (!ACTIVE_REVIEW_STATUSES.includes(activeStatus)) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [activeStatus]);
 
   if (!detail) {
     return (
@@ -3804,7 +3842,7 @@ function DetailPanel({
   const allSelected = detail.findings.length > 0 && selectedCount === detail.findings.length;
   const highCount = detail.findings.filter((finding) => finding.severity === "high" || finding.severity === "critical").length;
   const agentCount = participatingAgentIds(detail).length;
-  const duration = estimateDuration(detail);
+  const duration = estimateDuration(detail, now);
   const currentStatus = effectiveReviewStatus(detail);
   const sortedFindings = sortFindingsBySeverity(detail.findings);
 
@@ -4042,7 +4080,10 @@ function ProcessTimeline({ detail }: { detail: Detail }) {
             <div>
               <strong>{String(item.span_key || item.event_type || "trace")}</strong>
               <p>{String(item.summary || item.status || "执行记录")}</p>
-              <small>{String(item.agent_id || item.event_type || "system")}</small>
+              <small>
+                <time>{formatDateTime(recordTimestamp(item))}</time>
+                <em>{String(item.agent_id || item.event_type || "system")}</em>
+              </small>
             </div>
           </article>
         ))}
@@ -4054,6 +4095,7 @@ function ProcessTimeline({ detail }: { detail: Detail }) {
           <div className="static-tool-head">
             <span>工具</span>
             <span>状态</span>
+            <span>时间</span>
             <span>耗时</span>
             <span>输出</span>
             <span>Artifact</span>
@@ -4065,6 +4107,7 @@ function ProcessTimeline({ detail }: { detail: Detail }) {
               <div className="static-tool-row" key={`${String(row.tool_name)}-${index}`}>
                 <strong>{String(row.tool_name || "--")}</strong>
                 <em className={`tool-run-status ${String(row.status || "").replace(/[^a-z0-9_-]/gi, "_")}`}>{String(row.status || "--")}</em>
+                <time>{formatDateTime(recordTimestamp(row))}</time>
                 <span>{formatDurationMs(row.duration_ms)}</span>
                 <p>{String(row.output_summary || "--")}</p>
                 <small title={artifact}>{artifact}</small>
@@ -4081,6 +4124,7 @@ function ProcessTimeline({ detail }: { detail: Detail }) {
             {rows.slice(0, 4).map((row, index) => (
               <p key={index}>
                 <span>{String(row.span_key || row.tool_name || row.model || row.artifact_type || row.from_agent || title)}</span>
+                <time>{formatDateTime(recordTimestamp(row))}</time>
                 <em>{String(row[summaryKey] || row.status || row.output_summary || row.storage_uri || "--")}</em>
               </p>
             ))}
@@ -4918,17 +4962,15 @@ function agentLabel(agentId: string) {
   return map[agentId] || agentId;
 }
 
-function estimateDuration(detail: Detail) {
+function estimateDuration(detail: Detail, now = Date.now()) {
   const run = detail.runs[0];
   const started = String(run?.started_at || "");
   const completed = String(run?.completed_at || "");
-  if (!started || !completed) return detail.runs.length ? "进行中" : "--";
-  const start = new Date(started.replace(" ", "T") + "Z").getTime();
-  const end = new Date(completed.replace(" ", "T") + "Z").getTime();
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return "<1m";
-  const seconds = Math.max(1, Math.round((end - start) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  const start = parseBackendTime(started)?.getTime();
+  const end = completed ? parseBackendTime(completed)?.getTime() : now;
+  if (!detail.runs.length) return "--";
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return "进行中";
+  return formatElapsedSeconds(Math.max(0, Math.round(((end as number) - (start as number)) / 1000)));
 }
 
 function safeJson(value: string) {

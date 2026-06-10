@@ -3857,7 +3857,19 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .process-list small {
+  display: flex;
+  gap: 8px;
+  align-items: center;
   color: #7d8a9e;
+}
+
+.process-list small time,
+.process-list small em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: normal;
 }
 
 .static-tool-detail {
@@ -3891,7 +3903,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .static-tool-head,
 .static-tool-row {
   display: grid;
-  grid-template-columns: minmax(180px, 0.9fr) 128px 76px minmax(260px, 1.5fr) minmax(220px, 1fr);
+  grid-template-columns: minmax(150px, 0.8fr) 96px 116px 68px minmax(220px, 1.4fr) minmax(180px, 0.9fr);
   gap: 10px;
   align-items: center;
   padding: 8px 12px;
@@ -3912,6 +3924,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .static-tool-row strong,
 .static-tool-row span,
+.static-tool-row time,
 .static-tool-row p,
 .static-tool-row small,
 .static-tool-head span {
@@ -3934,6 +3947,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .static-tool-row small {
   color: #7d8a9e;
+}
+
+.static-tool-row time {
+  color: #60728b;
+  font-size: 12px;
 }
 
 .tool-run-status {
@@ -4478,7 +4496,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   margin: 0;
   padding: 6px 10px;
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
+  grid-template-columns: 96px 112px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
   border-bottom: 1px solid #edf2f8;
@@ -4488,6 +4506,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .session-grid p:last-child { border-bottom: 0; }
 .session-grid span {
   color: #334155;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-grid time {
+  color: #7d8a9e;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

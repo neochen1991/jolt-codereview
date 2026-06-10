@@ -683,6 +683,7 @@ function rebuildTableWithoutForeignKeys(db: Db, tableName: string, createSql: st
     new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${escapeRegExp(tableName)}`, "i"),
     `CREATE TABLE ${quoteIdentifier(tableName)}`
   );
+  db.exec("PRAGMA foreign_keys = OFF");
   db.exec("BEGIN IMMEDIATE");
   try {
     db.exec(`ALTER TABLE ${quoteIdentifier(tableName)} RENAME TO ${quoteIdentifier(tempName)}`);

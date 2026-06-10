@@ -14,7 +14,7 @@ const files = execFileSync("rg", ["--files", ...targets], { cwd: root, encoding:
 const patterns = [
   /\b(TEXT|INTEGER|REAL|BLOB|NUMERIC)\b[^;\n,]*\bREFERENCES\b/i,
   /\bFOREIGN\s+KEY\b/i,
-  /PRAGMA\s+foreign_keys/i,
+  /PRAGMA\s+foreign_keys\s*=\s*ON/i,
 ];
 
 const violations = [];

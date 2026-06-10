@@ -1,0 +1,9 @@
+1. Cover: left editorial title, right generated visual, bottom metric rail.
+2. Scenario map: SDLC timeline with three agent-depth bands.
+3. Competitor matrix: table with highlighted Jolt row and market gap callout.
+4. Architecture: stacked system layers and evidence loop.
+5. Execution principle: sequence flow with verification gate.
+6. Value: four value pillars and pilot KPI ladder.
+7. Demo: storyboard with screen beats and audience proof points.
+8. Roadmap: three-phase timeline with risk/hardening emphasis.
+9. Close: launch checklist and decision ask.

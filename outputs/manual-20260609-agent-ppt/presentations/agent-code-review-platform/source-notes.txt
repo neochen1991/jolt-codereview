@@ -1,0 +1,13 @@
+Primary local context:
+- Repository: /Users/neochen/jolt-codereview
+- Memory-derived audit context: MR review mainline is real and verified; platform is suitable for controlled internal pilot, not immediate production rollout until security, queue/worker reliability, and full-review governance hardening are complete.
+- Verified prior capability themes: React frontend, TypeScript API, Python/LangGraph worker, Verifier/Judge governance, static tooling, trace/artifact writes, GitHub/CodeHub integration.
+
+Generated image asset:
+- /Users/neochen/jolt-codereview/outputs/manual-20260609-agent-ppt/presentations/agent-code-review-platform/assets/agent-command-center.png
+- Source original: /Users/neochen/.codex/generated_images/019eac76-2035-7af0-8e8a-2897dc5d46f4/ig_0c2113efbe000789016a280e892f8c8193b5b537c63b3f5231.png
+- Prompt: premium enterprise AI Agent code review command-center visual in blue and white style; no logos, no readable text, no watermark.
+
+Competitor notes:
+- Competitor analysis is a strategic positioning view based on common public product categories as of the deck date; no logos or proprietary claims are embedded.
+- Named competitors: GitHub Copilot Code Review, Cursor, Devin, Qodo, CodeRabbit.

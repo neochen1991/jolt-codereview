@@ -1,0 +1,19 @@
+Thesis:
+Agentic CodeReview is moving from "assistant suggestion" to "governed engineering workflow". Jolt's opportunity is not to out-chat copilots, but to own the review loop: evidence, multi-agent reasoning, verification, and traceable delivery decisions.
+
+Audience:
+Engineering leads, platform owners, product and delivery stakeholders.
+
+One-line arc:
+Start with where Agent delivers value, show why review is a differentiated wedge, explain the architecture and execution mechanics, then close with measurable rollout value and a practical roadmap.
+
+Slides:
+1. Cover | Claim: Agentic CodeReview turns review from comment writing into an evidence workflow. | Proof object: generated command-center visual + metric rail.
+2. Agent scenarios | Claim: The highest-value Agent scenarios combine tool use, context retrieval, and governed action. | Proof object: scenario map across SDLC stages.
+3. Competitor analysis | Claim: The market is crowded at the assistant layer; the gap is workflow governance and enterprise evidence. | Proof object: competitor matrix.
+4. Architecture | Claim: Jolt separates interface, orchestration, tools, evidence, and publishing so each layer can be hardened independently. | Proof object: layered architecture diagram.
+5. Implementation principle | Claim: The review loop works because findings must survive context, debate, verification, and final projection. | Proof object: sequence flow.
+6. Value | Claim: The value is measurable in review throughput, defect escape reduction, auditability, and reviewer focus. | Proof object: value model and KPI ladder.
+7. Demo | Claim: A useful demo should show traceability from MR diff to final issue, not just a chat transcript. | Proof object: demo storyboard.
+8. Roadmap | Claim: The next phase is hardening: auth/RBAC, queue reliability, full-review governance, and inline publishing. | Proof object: phased roadmap.
+9. Close | Claim: Start with a controlled pilot, prove the review loop, then scale the platform boundary. | Proof object: decision checklist.

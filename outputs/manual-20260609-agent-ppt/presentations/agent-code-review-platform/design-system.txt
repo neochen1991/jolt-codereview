@@ -1,0 +1,43 @@
+Slide size:
+- 1280x720, widescreen.
+
+Typography:
+- Title/display: PingFang SC, semibold.
+- Body/labels: PingFang SC.
+- Mono/code labels: Menlo when available.
+
+Palette:
+- Paper background: #F6FAFF
+- Header / panels: #FFFFFF
+- Soft blue panel: #E7F3FF
+- Text primary: #12324A
+- Text secondary: #496A83
+- Main accent: #1378D1
+- Secondary accent: #F5A623
+- Risk accent: #D94B4B
+- Line: #C9DDF0
+
+Chart and diagram grammar:
+- Use editable shapes for matrices, lanes, bars, and architecture boxes.
+- Use direct labels, no heavy legends.
+- Use hairline rules and restrained fills; no decorative pseudo-logos.
+- Highlight Jolt with a teal outline and dark fill.
+
+Footer grammar:
+- Quiet source note on lower-left, page marker on lower-right.
+
+Layout families:
+- Cover with image anchor and metric rail.
+- Editorial scenario map.
+- Dense comparison matrix.
+- Layered architecture.
+- Horizontal sequence flow.
+- Value model with KPI ladder.
+- Demo storyboard.
+- Roadmap timeline.
+- Decision checklist.
+
+Banned motifs:
+- Fake third-party logos.
+- Decorative orbs, gradients, mascots, or generic SaaS card wallpaper.
+- Exact ROI percentages without supplied evidence.

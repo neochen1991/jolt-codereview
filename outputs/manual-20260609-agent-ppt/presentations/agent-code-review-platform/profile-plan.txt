@@ -1,0 +1,27 @@
+task mode: create
+primary deck-profile: engineering-platform
+secondary profile gates: product-platform, strategy-leadership
+audience: engineering leads, product owners, internal platform stakeholders
+required proof objects:
+- scenario and competitor map
+- product capability comparison
+- architecture map
+- execution sequence / implementation principle
+- value model tied to engineering workflow
+- demo storyboard
+- roadmap
+source and asset requirements:
+- Use repository-derived capability language where possible.
+- Avoid invented production metrics; show value as measurable dimensions and pilot targets.
+- Use generated raster image only as atmospheric cover/anchor visual; keep diagrams editable.
+brand authenticity constraints:
+- No fabricated third-party logos.
+- Competitors named as text only.
+- Jolt CodeReview is treated as project name, not a recreated official logo.
+profile-specific QA gates:
+- Architecture labels must stay technically specific.
+- Connectors and lanes must show real execution order.
+- Value slide must not claim production readiness beyond current evidence.
+known missing inputs:
+- No target audience template or corporate brand deck supplied.
+- No live benchmark numbers supplied; deck uses pilot KPI framework instead of exact ROI claims.

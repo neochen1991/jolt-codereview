@@ -1,0 +1,17 @@
+Final QA after blue-white render:
+- story: 4
+- specificity: 4
+- rhythm: 4
+- whitespace: 4
+- chart clarity: 4
+- typography: 4
+- restraint: 4
+- precision: 4
+- coherence: 4
+- reference delta: n/a
+
+Profile gates:
+- Engineering platform: pass. Architecture and sequence slides use specific labels.
+- Product platform: pass. Product capability is tied to workflow and value model.
+- Brand authenticity: pass. No fabricated third-party marks.
+- Mechanical check: final PPTX exported, 9 slides rendered, layout QA has 0 errors and warning-only tight-text notes.

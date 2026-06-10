@@ -2040,7 +2040,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .queue-panel {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) 64px;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) 64px;
 }
 
 .panel-heading {

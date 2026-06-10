@@ -28,6 +28,7 @@ import {
   SlidersHorizontal,
   Trash2,
   Wrench,
+  X,
   UserRound,
   Users,
   Zap
@@ -292,6 +293,14 @@ type DataSettingsForm = {
   fallback_on_violation: string;
 };
 
+type AgentBindingDetail = {
+  kind: "rule" | "skill" | "asset";
+  title: string;
+  subtitle: string;
+  content: string;
+  metadata: Array<[string, string]>;
+};
+
 type LlmTestState = {
   status: "idle" | "testing" | "ok" | "failed";
   message: string;
@@ -392,6 +401,13 @@ function csvValue(value: unknown) {
 
 function recordValue(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value ? value as Record<string, unknown> : {};
+}
+
+function compactMetadata(items: Array<[string, unknown]>): Array<[string, string]> {
+  return items.reduce<Array<[string, string]>>((result, [label, value]) => {
+    if (value !== undefined && value !== null && value !== "") result.push([label, String(value)]);
+    return result;
+  }, []);
 }
 
 function boolValue(value: unknown, fallback = false) {
@@ -2617,18 +2633,11 @@ function ConfigWorkspace({
   }
 
   function agentRuleCount(agentKey: string) {
-    return agentRuleNames(agentKey).length;
+    return agentRuleDetails(agentKey).length;
   }
 
   function agentToolCount(agentKey: string) {
     return toolBindings.filter((binding) => String(binding.agent_key) === agentKey && Boolean(binding.enabled)).length;
-  }
-
-  function agentRuleNames(agentKey: string) {
-    const boundDocIds = new Set(ruleBindings.filter((binding) => String(binding.agent_key) === agentKey).map((binding) => String(binding.rule_document_id)));
-    return ruleDocs
-      .filter((rule) => boundDocIds.has(String(rule.id)) || String(rule.name || "").includes(agentLabel(agentKey)) || String(rule.id || "").includes(agentKey))
-      .map((rule) => String(rule.name || rule.id));
   }
 
   function agentToolNames(agentKey: string) {
@@ -2638,17 +2647,69 @@ function ConfigWorkspace({
   }
 
   function agentSkillNames(agentKey: string) {
+    return agentSkillDetails(agentKey).map((skill) => skill.title);
+  }
+
+  function agentRuleDetails(agentKey: string): AgentBindingDetail[] {
+    const bindingsByDocId = new Map(
+      ruleBindings
+        .filter((binding) => String(binding.agent_key) === agentKey)
+        .map((binding) => [String(binding.rule_document_id), binding])
+    );
+    return ruleDocs
+      .filter((rule) => bindingsByDocId.has(String(rule.id)) || String(rule.name || "").includes(agentLabel(agentKey)) || String(rule.id || "").includes(agentKey))
+      .map((rule) => {
+        const binding = bindingsByDocId.get(String(rule.id));
+        return {
+          kind: "rule",
+          title: String(rule.name || rule.id || "未命名规范"),
+          subtitle: String(rule.doc_type || "规范文档"),
+          content: String(rule.content || "暂无规范内容"),
+          metadata: compactMetadata([
+            ["文档 ID", rule.id],
+            ["类型", rule.doc_type],
+            ["版本", rule.version],
+            ["状态", rule.status],
+            ["优先级", binding?.priority],
+            ["绑定 ID", binding?.id]
+          ])
+        };
+      });
+  }
+
+  function agentSkillDetails(agentKey: string): AgentBindingDetail[] {
     const boundSkillKeys = new Set(
       skillBindings
         .filter((binding) => String(binding.agent_key) === agentKey && Boolean(binding.enabled))
         .map((binding) => String(binding.skill_key))
     );
+    const bindingBySkillKey = new Map(
+      skillBindings
+        .filter((binding) => String(binding.agent_key) === agentKey && Boolean(binding.enabled))
+        .map((binding) => [String(binding.skill_key), binding])
+    );
     return customSkills
       .filter((skill) => boundSkillKeys.has(String(skill.skill_key)))
-      .map((skill) => String(skill.name || skill.skill_key));
+      .map((skill) => {
+        const binding = bindingBySkillKey.get(String(skill.skill_key));
+        return {
+          kind: "skill",
+          title: String(skill.name || skill.skill_key || "未命名 Skill"),
+          subtitle: String(skill.skill_key || "custom skill"),
+          content: String(skill.content || "暂无 Skill 内容"),
+          metadata: compactMetadata([
+            ["Skill Key", skill.skill_key],
+            ["描述", skill.description],
+            ["版本", skill.version],
+            ["状态", skill.status],
+            ["优先级", binding?.priority],
+            ["绑定状态", binding?.enabled === false ? "停用" : "启用"]
+          ])
+        };
+      });
   }
 
-  function agentSkillAssetNames(agentKey: string) {
+  function agentSkillAssetDetails(agentKey: string): AgentBindingDetail[] {
     const boundSkillKeys = new Set(
       skillBindings
         .filter((binding) => String(binding.agent_key) === agentKey && Boolean(binding.enabled))
@@ -2656,7 +2717,19 @@ function ConfigWorkspace({
     );
     return skillAssets
       .filter((asset) => boundSkillKeys.has(String(asset.skill_key)))
-      .map((asset) => `${String(asset.skill_key)}/${String(asset.asset_path)}`);
+      .map((asset) => ({
+        kind: "asset",
+        title: String(asset.asset_path || "未命名资源"),
+        subtitle: String(asset.skill_key || "Skill 资源"),
+        content: String(asset.content || "暂无资源内容"),
+        metadata: compactMetadata([
+          ["Skill Key", asset.skill_key],
+          ["资源路径", asset.asset_path],
+          ["资源类型", asset.asset_type],
+          ["可执行", asset.executable ? "是" : "否"],
+          ["资源 ID", asset.id]
+        ])
+      }));
   }
 
   function agentQualityRow(agentKey: string) {
@@ -2806,10 +2879,11 @@ function ConfigWorkspace({
                     projectId={projectId}
                     ruleCount={agentRuleCount(String(row.agent_key || row.agent_id))}
                     toolCount={agentToolCount(String(row.agent_key || row.agent_id))}
-                    ruleNames={agentRuleNames(String(row.agent_key || row.agent_id))}
                     toolNames={agentToolNames(String(row.agent_key || row.agent_id))}
                     skillNames={agentSkillNames(String(row.agent_key || row.agent_id))}
-                    skillAssetNames={agentSkillAssetNames(String(row.agent_key || row.agent_id))}
+                    ruleDetails={agentRuleDetails(String(row.agent_key || row.agent_id))}
+                    skillDetails={agentSkillDetails(String(row.agent_key || row.agent_id))}
+                    skillAssetDetails={agentSkillAssetDetails(String(row.agent_key || row.agent_id))}
                     quality={agentQualityRow(String(row.agent_key || row.agent_id))}
                     reload={loadConfigView}
                     setMessage={setMessage}
@@ -3340,10 +3414,11 @@ function AgentProfileCard({
   projectId,
   ruleCount,
   toolCount,
-  ruleNames,
   toolNames,
   skillNames,
-  skillAssetNames,
+  ruleDetails,
+  skillDetails,
+  skillAssetDetails,
   quality,
   reload,
   setMessage,
@@ -3354,10 +3429,11 @@ function AgentProfileCard({
   projectId: string;
   ruleCount: number;
   toolCount: number;
-  ruleNames: string[];
   toolNames: string[];
   skillNames: string[];
-  skillAssetNames: string[];
+  ruleDetails: AgentBindingDetail[];
+  skillDetails: AgentBindingDetail[];
+  skillAssetDetails: AgentBindingDetail[];
   quality: Record<string, unknown>;
   reload: () => Promise<void>;
   setMessage: (value: string) => void;
@@ -3372,6 +3448,7 @@ function AgentProfileCard({
   const [maxFindings, setMaxFindings] = useState(String(row.max_findings ?? "12"));
   const [maxLlmCalls, setMaxLlmCalls] = useState(String(row.max_llm_calls ?? "6"));
   const [maxToolCalls, setMaxToolCalls] = useState(String(row.max_tool_calls ?? "12"));
+  const [bindingDetail, setBindingDetail] = useState<AgentBindingDetail | null>(null);
 
   async function saveProfile() {
     await api(`/api/projects/${projectId}/expert-profiles/${agentKey}`, {
@@ -3430,7 +3507,19 @@ function AgentProfileCard({
         <div className="agent-binding-grid">
           <div>
             <strong>绑定规范</strong>
-            {(ruleNames.length ? ruleNames : ["未绑定规范文档"]).map((name, index) => <span key={`${agentKey}-rule-${index}-${name}`}>{name}</span>)}
+            {ruleDetails.length
+              ? ruleDetails.map((detail, index) => (
+                <button
+                  className="agent-binding-button"
+                  type="button"
+                  key={`${agentKey}-rule-${index}-${detail.title}`}
+                  onClick={() => setBindingDetail(detail)}
+                  title="查看规范详情"
+                >
+                  {detail.title}
+                </button>
+              ))
+              : <span>未绑定规范文档</span>}
           </div>
           <div>
             <strong>绑定工具</strong>
@@ -3438,11 +3527,35 @@ function AgentProfileCard({
           </div>
           <div>
             <strong>绑定 Skill</strong>
-            {(skillNames.length ? skillNames : ["未绑定自定义 Skill"]).map((name, index) => <span key={`${agentKey}-skill-${index}-${name}`}>{name}</span>)}
+            {skillDetails.length
+              ? skillDetails.map((detail, index) => (
+                <button
+                  className="agent-binding-button"
+                  type="button"
+                  key={`${agentKey}-skill-${index}-${detail.title}`}
+                  onClick={() => setBindingDetail(detail)}
+                  title="查看 Skill 内容"
+                >
+                  {detail.title}
+                </button>
+              ))
+              : <span>未绑定自定义 Skill</span>}
           </div>
           <div>
             <strong>Skill 资源</strong>
-            {(skillAssetNames.length ? skillAssetNames : ["未绑定 Skill 资源"]).map((name, index) => <span key={`${agentKey}-asset-${index}-${name}`}>{name}</span>)}
+            {skillAssetDetails.length
+              ? skillAssetDetails.map((detail, index) => (
+                <button
+                  className="agent-binding-button"
+                  type="button"
+                  key={`${agentKey}-asset-${index}-${detail.subtitle}-${detail.title}`}
+                  onClick={() => setBindingDetail(detail)}
+                  title="查看 Skill 资源内容"
+                >
+                  {detail.subtitle}/{detail.title}
+                </button>
+              ))
+              : <span>未绑定 Skill 资源</span>}
           </div>
         </div>
         <div className="agent-metrics-line">
@@ -3457,7 +3570,37 @@ function AgentProfileCard({
         <button type="button" onClick={() => toggleAgent(row)} disabled={!canEdit}>{Boolean(row.enabled) ? "停用" : "启用"}</button>
         <button type="button" onClick={saveProfile} disabled={!canEdit}>保存</button>
       </div>
+      {bindingDetail && <AgentBindingDetailModal detail={bindingDetail} onClose={() => setBindingDetail(null)} />}
     </article>
+  );
+}
+
+function AgentBindingDetailModal({ detail, onClose }: { detail: AgentBindingDetail; onClose: () => void }) {
+  const kindLabel = detail.kind === "rule" ? "规范文档" : detail.kind === "skill" ? "Skill" : "Skill 资源";
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`${kindLabel}详情`} onClick={onClose}>
+      <section className="agent-binding-modal" onClick={(event) => event.stopPropagation()}>
+        <header>
+          <div>
+            <span>{kindLabel}</span>
+            <strong>{detail.title}</strong>
+            <p>{detail.subtitle}</p>
+          </div>
+          <button type="button" className="modal-close-button" onClick={onClose} aria-label="关闭详情">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="agent-binding-meta">
+          {detail.metadata.map(([label, value]) => (
+            <p key={`${label}-${value}`}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </p>
+          ))}
+        </div>
+        <pre className="agent-binding-content">{detail.content || "暂无内容"}</pre>
+      </section>
+    </div>
   );
 }
 

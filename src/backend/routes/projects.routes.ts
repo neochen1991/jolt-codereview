@@ -4,6 +4,8 @@ import type { FindingRow } from "../types.js";
 import { compactLlmTestInput, testOpenAiCompatibleLlm, type LlmTestInput } from "../services/LlmConnectivityService.js";
 import type { BackendRouteContext } from "./context.js";
 
+const PROJECT_MEMBER_ROLES = new Set(["observer", "developer", "reviewer", "project_admin"]);
+
 export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
   const {
     all,
@@ -125,6 +127,11 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       const displayName = String(input.display_name ?? username);
       const role = String(input.role ?? "developer");
       if (!username) return badRequest("username is required");
+      if (!PROJECT_MEMBER_ROLES.has(role)) return badRequest("role is invalid");
+      if (role === "project_admin") {
+        const rootDenied = ensureRoot(actorId);
+        if (rootDenied) return rootDenied;
+      }
       const userId = String(input.user_id ?? `user_${sha1(username).slice(0, 12)}`);
       const memberId = String(input.member_id ?? `member_${sha1(`${params.projectId}:${userId}`).slice(0, 12)}`);
       const member = projectRepository.upsertMember({
@@ -145,8 +152,14 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       const input = body as Record<string, unknown>;
       if (typeof input.role === "string") {
-        projectRepository.updateMemberRole(params.projectId, params.memberId, input.role);
-        auditLog({ userId: actorId, projectId: params.projectId, action: "project.members.update_role", resourceType: "project_member", resourceId: params.memberId, summary: `role=${input.role}` });
+        const role = String(input.role);
+        if (!PROJECT_MEMBER_ROLES.has(role)) return badRequest("role is invalid");
+        if (role === "project_admin") {
+          const rootDenied = ensureRoot(actorId);
+          if (rootDenied) return rootDenied;
+        }
+        projectRepository.updateMemberRole(params.projectId, params.memberId, role);
+        auditLog({ userId: actorId, projectId: params.projectId, action: "project.members.update_role", resourceType: "project_member", resourceId: params.memberId, summary: `role=${role}` });
       }
       return projectRepository.findMember(params.projectId, params.memberId) ?? notFound();
     }),
@@ -222,6 +235,7 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       if (!actorId) return { statusCode: 401, error: "unauthorized", message: "login is required" };
       const input = body as Record<string, unknown>;
       const requestedRole = String(input.requested_role ?? "developer");
+      if (!PROJECT_MEMBER_ROLES.has(requestedRole)) return badRequest("requested_role is invalid");
       const request = projectRepository.createJoinRequest({
         id: id("join"),
         projectId: params.projectId,
@@ -238,6 +252,16 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       const status = String((body as Record<string, unknown>)?.status ?? "");
       if (!["approved", "rejected"].includes(status)) return badRequest("status must be approved or rejected");
+      if (status === "approved") {
+        const request = get<{ requested_role?: string }>(
+          "SELECT requested_role FROM project_join_requests WHERE id = ? AND project_id = ?",
+          [params.requestId, params.projectId]
+        );
+        if (request?.requested_role === "project_admin") {
+          const rootDenied = ensureRoot(actorId);
+          if (rootDenied) return rootDenied;
+        }
+      }
       const request = projectRepository.reviewJoinRequest({
         projectId: params.projectId,
         requestId: params.requestId,
@@ -259,6 +283,11 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       const input = body as Record<string, unknown>;
       const role = String(input.role || "developer");
+      if (!PROJECT_MEMBER_ROLES.has(role)) return badRequest("role is invalid");
+      if (role === "project_admin") {
+        const rootDenied = ensureRoot(actorId);
+        if (rootDenied) return rootDenied;
+      }
       const maxUses = Math.max(1, Math.min(500, Number(input.max_uses || 1)));
       const expiresAt = String(input.expires_at || "").trim() || null;
       const inviteCode = `jolt-${randomBytes(9).toString("base64url")}`;

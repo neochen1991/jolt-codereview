@@ -1702,6 +1702,7 @@ function App() {
               reload={loadAll}
               setMessage={setMessage}
               canEdit={canManageProject}
+              canManageSystem={canManageSystem}
             />
           )
         )}
@@ -2441,7 +2442,8 @@ function ConfigWorkspace({
   repos,
   reload,
   setMessage,
-  canEdit
+  canEdit,
+  canManageSystem
 }: {
   view: ViewKey;
   projectId: string;
@@ -2449,6 +2451,7 @@ function ConfigWorkspace({
   reload: () => Promise<void>;
   setMessage: (value: string) => void;
   canEdit: boolean;
+  canManageSystem: boolean;
 }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [quality, setQuality] = useState<Record<string, unknown> | null>(null);
@@ -2515,6 +2518,8 @@ function ConfigWorkspace({
   const [reviewingJoinRequestId, setReviewingJoinRequestId] = useState("");
   const [reviewingJoinRequestAction, setReviewingJoinRequestAction] = useState<"approved" | "rejected" | "">("");
   const [removingMemberId, setRemovingMemberId] = useState("");
+  const [changingMemberRoleId, setChangingMemberRoleId] = useState("");
+  const [memberRoleDrafts, setMemberRoleDrafts] = useState<Record<string, string>>({});
   const [invitations, setInvitations] = useState<Record<string, unknown>[]>([]);
   const [inviteRole, setInviteRole] = useState("developer");
   const [inviteMaxUses, setInviteMaxUses] = useState("1");
@@ -2889,6 +2894,29 @@ function ConfigWorkspace({
       await reload();
     } finally {
       setRemovingMemberId("");
+    }
+  }
+
+  async function updateMemberRole(row: Record<string, unknown>, role: string) {
+    const memberId = String(row.id || "");
+    if (!memberId) return;
+    const displayName = String(row.display_name || row.username || row.user_id || "该用户");
+    setChangingMemberRoleId(memberId);
+    try {
+      await api(`/api/projects/${projectId}/members/${memberId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ role })
+      });
+      setMessage(`${displayName} 已设为 ${role}`);
+      setSuccessNotice({
+        title: "项目角色已更新",
+        message: `${displayName} 的项目角色已调整为 ${role}。`,
+        detail: "成员列表已刷新，新的项目权限立即生效。"
+      });
+      await loadConfigView();
+      await reload();
+    } finally {
+      setChangingMemberRoleId("");
     }
   }
 
@@ -3487,7 +3515,7 @@ function ConfigWorkspace({
                     <option value="developer">developer</option>
                     <option value="reviewer">reviewer</option>
                     <option value="observer">observer</option>
-                    <option value="project_admin">project_admin</option>
+                    {canManageSystem && <option value="project_admin">project_admin</option>}
                   </select>
                   <input type="number" min="1" max="500" value={inviteMaxUses} onChange={(event) => setInviteMaxUses(event.target.value)} disabled={!canEdit} />
                   <button type="button" onClick={createInvitation} disabled={!canEdit}>创建邀请码</button>
@@ -3503,19 +3531,50 @@ function ConfigWorkspace({
                 <button type="button" onClick={addMember} disabled={!canEdit}>添加开发者</button>
               </div>
               <div className="joined-user-list">
-                {rows.map((row) => (
-                  <article key={String(row.id)}>
-                    <div>
-                      <strong>{String(row.display_name || row.username || row.user_id)}</strong>
-                      <span>{String(row.username || "--")} · {String(row.email || "未配置邮箱")}</span>
-                      <em>{String(row.role || "developer")} · {String(row.status || "active")}</em>
-                    </div>
-                    <button type="button" onClick={() => removeMember(row)} disabled={!canEdit || removingMemberId === String(row.id)}>
-                      <Trash2 size={15} />
-                      {removingMemberId === String(row.id) ? "移除中..." : "移除权限"}
-                    </button>
-                  </article>
-                ))}
+                {rows.map((row) => {
+                  const memberId = String(row.id || "");
+                  const currentRole = String(row.role || "developer");
+                  const draftRole = memberRoleDrafts[memberId] ?? currentRole;
+                  const roleChanged = draftRole !== currentRole;
+                  return (
+                    <article key={memberId}>
+                      <div>
+                        <strong>{String(row.display_name || row.username || row.user_id)}</strong>
+                        <span>{String(row.username || "--")} · {String(row.email || "未配置邮箱")}</span>
+                        <em>{currentRole} · {String(row.status || "active")}</em>
+                      </div>
+                      <div className="member-row-actions">
+                        {canManageSystem && (
+                          <div className="member-role-actions">
+                            <select
+                              value={draftRole}
+                              onChange={(event) => setMemberRoleDrafts((previous) => ({ ...previous, [memberId]: event.target.value }))}
+                              disabled={!canEdit || changingMemberRoleId === memberId}
+                              aria-label={`${String(row.username || row.display_name || "用户")} 项目角色`}
+                            >
+                              <option value="observer">observer</option>
+                              <option value="developer">developer</option>
+                              <option value="reviewer">reviewer</option>
+                              <option value="project_admin">project_admin</option>
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => updateMemberRole(row, draftRole)}
+                              disabled={!canEdit || !roleChanged || changingMemberRoleId === memberId}
+                            >
+                              <ShieldCheck size={15} />
+                              {changingMemberRoleId === memberId ? "保存中..." : "保存角色"}
+                            </button>
+                          </div>
+                        )}
+                        <button className="danger" type="button" onClick={() => removeMember(row)} disabled={!canEdit || removingMemberId === memberId}>
+                          <Trash2 size={15} />
+                          {removingMemberId === memberId ? "移除中..." : "移除权限"}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
                 {!rows.length && <div className="config-table-empty">暂无已加入用户</div>}
               </div>
             </div>

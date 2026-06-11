@@ -63,6 +63,8 @@ npm run start:windows
 .\scripts\start-windows.ps1 -InstallIfMissing
 ```
 
+启动脚本会检查运行时依赖是否完整，包括 Node 包 `pg` / `@types/pg` 和 Python 包 `psycopg`。如果内网同步代码后出现缺包，优先重新执行 `.\scripts\install-windows.ps1`，或用 `.\scripts\start-windows.ps1 -InstallIfMissing` 自动修复。
+
 ## 环境要求
 
 - Windows 10/11、macOS 或 Linux。
@@ -438,7 +440,7 @@ npm run dev
 - API: `http://127.0.0.1:8011`
 - Frontend: `http://127.0.0.1:5173`
 
-`npm run dev` 由 Node 脚本启动，不依赖 bash，可在 Windows 下运行。Windows 专用脚本会在启动前补齐 `CONFIG_PATH` 和 `PYTHON_BIN`。
+`npm run dev` 由 Node 脚本启动，不依赖 bash，可在 Windows 下运行。启动前会检查 `pg`、`@types/pg` 和 `psycopg` 等运行时依赖；如需自动补齐缺失包，可设置 `JOLT_INSTALL_MISSING_DEPS=1 npm run dev`。Windows 专用脚本会在启动前补齐 `CONFIG_PATH` 和 `PYTHON_BIN`。
 Python Worker 会优先使用 `PYTHON_BIN`、`config.json` 中的 `runtime.python_bin`，其次自动使用项目内 `.venv`。
 
 启动后会同时拉起：
@@ -524,6 +526,7 @@ npm run verify:codehub
 
 - PowerShell 提示脚本不可执行：先执行 `Set-ExecutionPolicy -Scope Process Bypass -Force`，只影响当前终端窗口。
 - `node:sqlite` 或 `Cannot find module node:sqlite`：Node.js 版本过低，升级到 Node.js 24+ 后重新执行 `npm install`。
+- `Cannot find package 'pg'` 或 Python 报 `No module named psycopg`：依赖目录存在但包不完整。执行 `npm install` 和 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`；也可以直接运行 `.\scripts\start-windows.ps1 -InstallIfMissing`。
 - `Python 3 was not found`：安装 Python 3.10+，或设置 `$env:PYTHON_BIN="C:\Path\To\python.exe"`。
 - Python 报 `UnicodeEncodeError` / `UnicodeDecodeError` / `gbk codec can't encode/decode`：优先使用 `.\scripts\start-windows.ps1` 或 `npm run start:windows`。脚本会设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8` 并切换控制台到 UTF-8；如果你直接运行 Python，也先执行 `$env:PYTHONUTF8="1"; $env:PYTHONIOENCODING="utf-8"; chcp 65001`。
 - 安装后 `pmd`、`checkstyle`、`spotbugs`、`dependency-check` 等命令仍不可用：重新打开 PowerShell，让用户级 `PATH` 生效，然后执行 `npm run verify:windows`。

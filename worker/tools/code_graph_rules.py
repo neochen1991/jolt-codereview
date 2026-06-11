@@ -21,8 +21,10 @@ def evaluate_code_graph_rules(
         role = graph_view.layer_role(file_path)
         candidates = [
             *_architecture_import_findings(graph_view, file_path, role, raw_artifact_id),
+            *_domain_model_findings(graph_view, file_path, role, raw_artifact_id),
+            *_application_service_findings(graph_view, file_path, role, raw_artifact_id),
             *_endpoint_signature_findings(graph_view, file_path, role, raw_artifact_id),
-            *_call_findings(graph_view, file_path, raw_artifact_id),
+            *_call_findings(graph_view, file_path, role, raw_artifact_id),
         ]
         for finding in candidates:
             key = (finding["file_path"], finding["tool_rule_id"], int(finding["line_start"]), finding["evidence"])
@@ -62,6 +64,24 @@ class CodeGraphView:
             return "infrastructure"
         return "unknown"
 
+    def function_for_line(self, file_path: str, line: int) -> dict[str, Any] | None:
+        candidates = self.functions_by_file.get(file_path, [])
+        before = [item for item in candidates if int(item.get("line") or 0) <= line]
+        if before:
+            return max(before, key=lambda item: int(item.get("line") or 0))
+        return candidates[0] if candidates else None
+
+    def function_context(self, file_path: str, line: int) -> str:
+        function = self.function_for_line(file_path, line)
+        return str(function.get("snippet") or "") if function else ""
+
+    def file_context(self, file_path: str) -> str:
+        snippets = [
+            *(str(item.get("snippet") or "") for item in self.classes_by_file.get(file_path, [])),
+            *(str(item.get("snippet") or "") for item in self.functions_by_file.get(file_path, [])),
+        ]
+        return "\n".join(item for item in snippets if item)
+
 
 def _architecture_import_findings(
     graph_view: CodeGraphView,
@@ -74,7 +94,7 @@ def _architecture_import_findings(
         import_text = str(import_item.get("import") or "")
         line = int(import_item.get("line") or 1)
         target = _import_target_kind(import_text)
-        if role == "interface" and target == "infrastructure":
+        if role == "interface" and (target == "infrastructure" or _looks_like_repository_dependency(import_text)):
             findings.append(
                 _finding(
                     agent_id="ddd_agent",
@@ -83,8 +103,8 @@ def _architecture_import_findings(
                     confidence=0.91,
                     file_path=file_path,
                     line=line,
-                    title="Controller 直接依赖基础设施仓储或 Mapper",
-                    description="tree-sitter 代码图谱发现接口层文件直接 import 基础设施/持久化类型，绕过应用层和领域边界，容易把 Repository/Mapper 调用泄漏到 Controller。",
+                    title="Controller 直接依赖仓储或 Mapper",
+                    description="tree-sitter 代码图谱发现接口层文件直接 import Repository/Mapper/JPA 类型，绕过应用层和领域边界，容易把持久化调用泄漏到 Controller。",
                     recommendation="Controller 只依赖应用服务或用例入口；仓储、Mapper、JPA/MyBatis 类型应留在 infrastructure adapter 内部。",
                     suggested_code="""@RestController
 class PaymentController {
@@ -158,6 +178,100 @@ Page<PaymentEntity> page = paymentJpaRepository.findAll(toPageable(query));""",
     return findings
 
 
+def _domain_model_findings(
+    graph_view: CodeGraphView,
+    file_path: str,
+    role: str,
+    raw_artifact_id: str | None,
+) -> list[dict[str, Any]]:
+    if role != "domain":
+        return []
+    findings: list[dict[str, Any]] = []
+    context = graph_view.file_context(file_path)
+    compact = context.replace("\n", " ")
+    if _contains_map_string_object(context):
+        findings.append(
+            _finding(
+                agent_id="ddd_agent",
+                rule_id="DDD-VO-002",
+                severity="medium",
+                confidence=0.86,
+                file_path=file_path,
+                line=_first_context_line(graph_view, file_path),
+                title="领域模型使用 Map<String,Object> 弱类型属性",
+                description="tree-sitter 结构分析发现领域对象使用 Map<String,Object> 承载业务属性，字段语义、约束和不变量无法在模型中表达。",
+                recommendation="为业务属性建模为明确的 Value Object 或领域字段，在构造/工厂方法中校验约束，避免把动态 Map 暴露为领域状态。",
+                suggested_code="""final class PaymentAttributes {
+    private final PaymentChannel channel;
+    private final Money amount;
+}""",
+                evidence=f"{file_path} domain model contains weak Map<String,Object> state: {compact[:260]}",
+                raw_artifact_id=raw_artifact_id,
+            )
+        )
+    for function in graph_view.functions_by_file.get(file_path, []):
+        name = str(function.get("name") or "")
+        snippet = str(function.get("snippet") or "")
+        if name.startswith("set") and ("public" in snippet or "void set" in snippet):
+            findings.append(
+                _finding(
+                    agent_id="ddd_agent",
+                    rule_id="DDD-AGG-004",
+                    severity="medium",
+                    confidence=0.85,
+                    file_path=file_path,
+                    line=int(function.get("line") or 1),
+                    title="聚合/实体暴露 public setter 破坏不变量封装",
+                    description="tree-sitter 方法签名发现领域对象暴露 public setter，外部代码可绕过领域行为直接改状态，聚合不变量难以集中维护。",
+                    recommendation="用表达业务意图的方法替代 setter，并在方法内部校验状态流转、金额、租户等不变量。",
+                    suggested_code="""public void markCaptured(CaptureResult result) {
+    ensureCanCapture();
+    this.status = PaymentStatus.CAPTURED;
+}""",
+                    evidence=f"{file_path}:{function.get('line')} exposes setter in domain model: {snippet[:260]}",
+                    raw_artifact_id=raw_artifact_id,
+                )
+            )
+    return findings
+
+
+def _application_service_findings(
+    graph_view: CodeGraphView,
+    file_path: str,
+    role: str,
+    raw_artifact_id: str | None,
+) -> list[dict[str, Any]]:
+    if role != "application":
+        return []
+    findings: list[dict[str, Any]] = []
+    for call in graph_view.calls_by_file.get(file_path, []):
+        callee = str(call.get("callee") or "")
+        snippet = str(call.get("snippet") or "")
+        line = int(call.get("line") or 1)
+        context = graph_view.function_context(file_path, line)
+        if _is_mutating_repository_call(callee, snippet) and "@Transactional" not in context:
+            findings.append(
+                _finding(
+                    agent_id="backend_agent",
+                    rule_id="BE-TX-002",
+                    severity="medium",
+                    confidence=0.86,
+                    file_path=file_path,
+                    line=line,
+                    title="应用服务执行写库操作但缺少事务边界",
+                    description="tree-sitter 调用图发现应用层方法调用 Repository/Mapper 写操作，但方法上下文没有 @Transactional，异常时可能出现部分写入或领域事件与状态不一致。",
+                    recommendation="在应用服务用例方法上声明事务边界，或把写操作编排移动到已有事务的应用服务中。",
+                    suggested_code="""@Transactional
+public void capture(Payment payment) {
+    paymentRepository.save(payment);
+}""",
+                    evidence=f"{file_path}:{line} mutating repository call without @Transactional: {snippet[:260]}",
+                    raw_artifact_id=raw_artifact_id,
+                )
+            )
+    return findings
+
+
 def _endpoint_signature_findings(
     graph_view: CodeGraphView,
     file_path: str,
@@ -193,13 +307,32 @@ def _endpoint_signature_findings(
     return findings
 
 
-def _call_findings(graph_view: CodeGraphView, file_path: str, raw_artifact_id: str | None) -> list[dict[str, Any]]:
+def _call_findings(graph_view: CodeGraphView, file_path: str, role: str, raw_artifact_id: str | None) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for call in graph_view.calls_by_file.get(file_path, []):
         callee = str(call.get("callee") or "")
         snippet = str(call.get("snippet") or "")
         lowered = snippet.lower()
         line = int(call.get("line") or 1)
+        function_context = graph_view.function_context(file_path, line)
+        context_lowered = function_context.lower()
+        if role == "interface" and _is_repository_call(callee, snippet):
+            findings.append(
+                _finding(
+                    agent_id="ddd_agent",
+                    rule_id="DDD-LAYER-001",
+                    severity="high",
+                    confidence=0.89,
+                    file_path=file_path,
+                    line=line,
+                    title="Controller 直接调用仓储/Mapper",
+                    description="tree-sitter 调用图发现接口层方法直接调用 Repository/Mapper，绕过应用服务用例编排，接口层会承担事务、领域规则和持久化细节。",
+                    recommendation="Controller 调用应用服务或 UseCase，由应用层协调仓储和领域对象；接口层只做协议适配和 DTO 转换。",
+                    suggested_code="""capturePaymentUseCase.capture(request.toCommand());""",
+                    evidence=f"{file_path}:{line} controller calls repository/mapper directly: {snippet[:260]}",
+                    raw_artifact_id=raw_artifact_id,
+                )
+            )
         if callee == "readObject":
             findings.append(
                 _finding(
@@ -258,7 +391,7 @@ SafeCommand command = safeJsonMapper.readValue(payload, SafeCommand.class);""",
                         raw_artifact_id=raw_artifact_id,
                     )
                 )
-            if ("executequery" in lowered or "executeupdate" in lowered) and "+" in snippet:
+            if ("executequery" in lowered or "executeupdate" in lowered) and ("+" in snippet or _has_sql_concat_context(function_context)):
                 findings.append(
                     _finding(
                         agent_id="security_agent",
@@ -275,10 +408,27 @@ SafeCommand command = safeJsonMapper.readValue(payload, SafeCommand.class);""",
 );
 ps.setString(1, userId);
 ResultSet rs = ps.executeQuery();""",
-                        evidence=f"{file_path}:{line} SQL execution uses concatenated expression: {snippet[:260]}",
+                        evidence=f"{file_path}:{line} SQL execution uses concatenated expression: {(snippet or function_context)[:260]}",
                         raw_artifact_id=raw_artifact_id,
                     )
                 )
+        if callee == "set" and "redis" in context_lowered and "opsforvalue" in context_lowered and not _has_ttl_context(function_context):
+            findings.append(
+                _finding(
+                    agent_id="backend_agent",
+                    rule_id="REDIS-TTL-002",
+                    severity="medium",
+                    confidence=0.84,
+                    file_path=file_path,
+                    line=line,
+                    title="Redis 缓存写入缺少 TTL",
+                    description="tree-sitter 调用图发现 Redis opsForValue().set 写缓存时没有过期时间，业务缓存可能无限增长或长期保留旧状态。",
+                    recommendation="为业务缓存设置明确 TTL，并把 key 设计为包含租户/业务维度的稳定结构。",
+                    suggested_code="""redisTemplate.opsForValue().set(key, value, Duration.ofMinutes(30));""",
+                    evidence=f"{file_path}:{line} Redis set without TTL: {snippet[:260]}",
+                    raw_artifact_id=raw_artifact_id,
+                )
+            )
     return findings
 
 
@@ -306,6 +456,45 @@ def _is_query_call(callee: str, snippet: str) -> bool:
     ):
         return True
     return False
+
+
+def _looks_like_repository_dependency(import_text: str) -> bool:
+    lowered = import_text.lower()
+    return any(marker in lowered for marker in ["repository", "mapper", "dao", "jparepository", "mybatis"])
+
+
+def _contains_map_string_object(value: str) -> bool:
+    compact = value.replace(" ", "")
+    return "Map<String,Object>" in compact or "Map<java.lang.String,Object>" in compact
+
+
+def _first_context_line(graph_view: CodeGraphView, file_path: str) -> int:
+    lines = [
+        *(int(item.get("line") or 1) for item in graph_view.classes_by_file.get(file_path, [])),
+        *(int(item.get("line") or 1) for item in graph_view.functions_by_file.get(file_path, [])),
+    ]
+    return min(lines) if lines else 1
+
+
+def _is_repository_call(callee: str, snippet: str) -> bool:
+    lowered = snippet.lower()
+    return _is_query_call(callee, snippet) or any(marker in lowered for marker in ["repository.", "mapper.", "dao."])
+
+
+def _is_mutating_repository_call(callee: str, snippet: str) -> bool:
+    if callee not in {"save", "delete", "update", "insert", "merge", "persist", "flush"}:
+        return False
+    return any(marker in snippet.lower() for marker in ["repository", "mapper", "dao", "entitymanager"])
+
+
+def _has_sql_concat_context(context: str) -> bool:
+    lowered = context.lower()
+    return bool(("select " in lowered or "update " in lowered or "delete " in lowered or "insert " in lowered) and "+" in context)
+
+
+def _has_ttl_context(context: str) -> bool:
+    lowered = context.lower()
+    return any(marker in lowered for marker in ["duration.", "chronounit.", "expire(", "timeout", "ttl"])
 
 
 def _finding(

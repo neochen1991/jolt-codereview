@@ -346,7 +346,15 @@ def _walk(
     if node_type in CLASS_NODE_TYPES:
         name = _node_name(node, source)
         if name:
-            state["classes"].append({"file_path": file_path, "language": language, "line": _line(node), "name": name})
+            state["classes"].append(
+                {
+                    "file_path": file_path,
+                    "language": language,
+                    "line": _line(node),
+                    "name": name,
+                    "snippet": _snippet(node, source, 1800),
+                }
+            )
             scope.append(name)
             pushed = True
     elif node_type in FUNCTION_NODE_TYPES:

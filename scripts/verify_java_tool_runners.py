@@ -522,6 +522,102 @@ class RiskImportController {
     }
 
 
+def verify_tree_sitter_semantic_context_observations() -> dict[str, object]:
+    sources = {
+        "src/main/java/com/acme/interfaces/PaymentController.java": """package com.acme.interfaces;
+
+import com.acme.domain.PaymentRepository;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+class PaymentController {
+  private final PaymentRepository paymentRepository;
+
+  PaymentController(PaymentRepository paymentRepository) {
+    this.paymentRepository = paymentRepository;
+  }
+
+  void capture(String id) {
+    paymentRepository.save(id);
+  }
+}
+""",
+        "src/main/java/com/acme/application/PaymentApplicationService.java": """package com.acme.application;
+
+import com.acme.domain.PaymentRepository;
+
+class PaymentApplicationService {
+  private final PaymentRepository paymentRepository;
+
+  void capture(Payment payment) {
+    paymentRepository.save(payment);
+  }
+}
+""",
+        "src/main/java/com/acme/domain/Payment.java": """package com.acme.domain;
+
+import java.util.Map;
+
+class Payment {
+  private Map<String, Object> attributes;
+  private String status;
+
+  public void setStatus(String status) {
+    this.status = status;
+  }
+}
+""",
+        "src/main/java/com/acme/infrastructure/PaymentJdbcGateway.java": """package com.acme.infrastructure;
+
+import java.sql.Statement;
+
+class PaymentJdbcGateway {
+  void search(Statement statement, String userId) throws Exception {
+    String sql = "select * from payments where user_id = '" + userId + "'";
+    statement.executeQuery(sql);
+  }
+}
+""",
+    }
+    files = [
+        ChangedFile(
+            filename=filename,
+            status="modified",
+            additions=len(source.splitlines()),
+            deletions=0,
+            changes=len(source.splitlines()),
+            patch="\n".join(["@@ -0,0 +1,1 @@", *[f"+{line}" for line in source.splitlines()]]),
+        )
+        for filename, source in sources.items()
+    ]
+    recorder = Recorder()
+    with tempfile.TemporaryDirectory(prefix="jolt-tree-sitter-semantic-context-") as temp_dir:
+        _summary, findings = run_external_static_prescan(
+            recorder,
+            "span_tree_sitter_semantic_context",
+            Path(temp_dir),
+            files,
+            "head_tree_sitter_semantic_context",
+            None,
+            None,
+            {
+                "tool_policy": {
+                    "enabled_tools": ["tree-sitter"],
+                    "static_runners": {"tree_sitter_code_graph": {"timeout_seconds": 5}},
+                }
+            },
+            sources,
+        )
+    tree_findings = [item for item in findings if item.get("tool_name") == "tree_sitter_code_graph"]
+    covered = {rule for item in tree_findings for rule in item.get("covered_rules", [])}
+    for expected in ["DDD-LAYER-001", "BE-TX-002", "DDD-VO-002", "DDD-AGG-004", "SEC-INJECT-003"]:
+        assert expected in covered, {"missing": expected, "covered": sorted(covered), "findings": tree_findings}
+    return {
+        "tree_sitter_observation_count": len(tree_findings),
+        "covered_rules": sorted(covered),
+    }
+
+
 def verify_code_graph_rule_layer() -> dict[str, object]:
     rules_path = Path("worker/tools/code_graph_rules.py")
     assert rules_path.exists(), "code graph rules must live outside tree_sitter_tool.py"
@@ -547,6 +643,7 @@ def main() -> None:
         "tree_sitter_bounded_scan": verify_tree_sitter_bounded_scan(),
         "tree_sitter_ddd_observations": verify_tree_sitter_ddd_observations(),
         "tree_sitter_security_backend_performance_observations": verify_tree_sitter_security_backend_performance_observations(),
+        "tree_sitter_semantic_context_observations": verify_tree_sitter_semantic_context_observations(),
         "code_graph_rule_layer": verify_code_graph_rule_layer(),
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))

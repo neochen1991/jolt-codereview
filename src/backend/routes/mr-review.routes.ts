@@ -343,14 +343,29 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
     if (!repo) return notFound();
     const denied = ensureProjectRole(repo.project_id, userId, "reviewer");
     if (denied) return denied;
-    if (findingIds.length === 0) return badRequest("finding_ids is required");
+    const requestedFindingIds = Array.from(new Set(findingIds.filter(Boolean)));
+    if (requestedFindingIds.length === 0) return badRequest("finding_ids is required");
+    const placeholders = requestedFindingIds.map(() => "?").join(",");
+    const findings = all<FindingRow>(`SELECT * FROM review_findings WHERE id IN (${placeholders})`, requestedFindingIds);
+    if (!findings.length) return badRequest("no publishable findings");
+    const publishedRecords = dryRun
+      ? []
+      : all<{ finding_id: string }>(
+        `SELECT DISTINCT finding_id FROM vcs_publish_records WHERE finding_id IN (${placeholders}) AND publish_status = 'published'`,
+        requestedFindingIds
+      );
+    const publishedRecordIds = new Set(publishedRecords.map((record) => record.finding_id));
+    const skippedFindingIds = dryRun
+      ? []
+      : findings
+        .filter((finding) => finding.publish_state === "published" || publishedRecordIds.has(finding.id))
+        .map((finding) => finding.id);
+    const skippedFindingIdSet = new Set(skippedFindingIds);
+    const publishableFindings = dryRun ? findings : findings.filter((finding) => !skippedFindingIdSet.has(finding.id));
+    const body = publishableFindings.length ? formatPublishBody(mr, publishableFindings, repo.provider) : "";
+    let commentRef = body ? `dry_run_${sha1(body).slice(0, 10)}` : "";
   
-    const placeholders = findingIds.map(() => "?").join(",");
-    const findings = all<FindingRow>(`SELECT * FROM review_findings WHERE id IN (${placeholders})`, findingIds);
-    const body = formatPublishBody(mr, findings, repo.provider);
-    let commentRef = `dry_run_${sha1(body).slice(0, 10)}`;
-  
-    if (!dryRun) {
+    if (!dryRun && publishableFindings.length > 0) {
       const publishConfig = effectiveConfigForUser(userId);
       const ref = repo.provider === "github"
         ? await postIssueComment(publishConfig, repoConfig(repo), mr.number, body)
@@ -358,7 +373,7 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
       commentRef = ref.id;
     }
   
-    for (const finding of findings) {
+    for (const finding of publishableFindings) {
       const publishId = id("pub");
       db.prepare(`
         INSERT INTO vcs_publish_records (
@@ -377,17 +392,33 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
       });
     }
   
-    mergeRequestRepository.updateReviewStatus(mrId, dryRun ? "waiting_confirmation" : "submitted");
+    if (dryRun || publishableFindings.length > 0) {
+      mergeRequestRepository.updateReviewStatus(mrId, dryRun ? "waiting_confirmation" : "submitted");
+    }
     auditLog({
       userId,
       projectId: repo.project_id,
       action: dryRun ? "mr_review.publish.dry_run" : "mr_review.publish",
       resourceType: "merge_request",
       resourceId: mrId,
-      summary: `${dryRun ? "Dry-run" : "Published"} ${findings.length} findings to ${repo.provider}`,
-      metadata: { finding_ids: findingIds, provider: repo.provider, comment_ref: commentRef }
+      summary: `${dryRun ? "Dry-run" : "Published"} ${publishableFindings.length} findings to ${repo.provider}`,
+      metadata: {
+        finding_ids: requestedFindingIds,
+        published_finding_ids: publishableFindings.map((finding) => finding.id),
+        skipped_finding_ids: skippedFindingIds,
+        provider: repo.provider,
+        comment_ref: commentRef
+      }
     });
-    return { comment_ref: commentRef, dry_run: dryRun, body, published_count: findings.length };
+    return {
+      comment_ref: commentRef,
+      dry_run: dryRun,
+      body,
+      published_count: publishableFindings.length,
+      skipped_count: skippedFindingIds.length,
+      skipped_finding_ids: skippedFindingIds,
+      message: skippedFindingIds.length ? "已提交的问题不会重复提交，本次已自动跳过。" : ""
+    };
   }
   const ctx: BackendRouteContext = {
     config,

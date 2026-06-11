@@ -16,6 +16,7 @@ import {
   Filter,
   Folder,
   GitBranch,
+  AlertTriangle,
   Link2,
   Loader2,
   LockKeyhole,
@@ -39,14 +40,83 @@ const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8011";
 const DEFAULT_PROJECT_ID = "project_default";
 const DEFAULT_WORKSPACE_MESSAGE = "请选择项目进入 MR 工作台";
 type ViewKey = "mr" | "full" | "issues" | "rules" | "agents" | "repos" | "policy" | "users" | "tools" | "queue" | "personal" | "settings" | "system";
+type RouteScreen = "login" | "projects" | "workspace";
+type WorkspaceRouteState = {
+  screen: RouteScreen;
+  projectId: string;
+  view: ViewKey;
+  mrId: string | null;
+};
 
 let authToken = typeof window !== "undefined" ? window.localStorage.getItem("jolt_auth_token") : null;
+const WORKSPACE_ROUTE_KEY = "jolt_workspace_route";
+const VIEW_KEY_SET = new Set<ViewKey>(["mr", "full", "issues", "rules", "agents", "repos", "policy", "users", "tools", "queue", "personal", "settings", "system"]);
 
 function setApiToken(token: string | null) {
   authToken = token;
   if (typeof window === "undefined") return;
   if (token) window.localStorage.setItem("jolt_auth_token", token);
   else window.localStorage.removeItem("jolt_auth_token");
+}
+
+function normalizeViewKey(value: unknown): ViewKey {
+  const view = String(value || "mr");
+  return VIEW_KEY_SET.has(view as ViewKey) ? view as ViewKey : "mr";
+}
+
+function readWorkspaceRoute(): WorkspaceRouteState {
+  const fallback: WorkspaceRouteState = { screen: "login", projectId: DEFAULT_PROJECT_ID, view: "mr", mrId: null };
+  if (typeof window === "undefined") return fallback;
+  let stored: Partial<WorkspaceRouteState> = {};
+  try {
+    stored = JSON.parse(window.localStorage.getItem(WORKSPACE_ROUTE_KEY) || "{}") as Partial<WorkspaceRouteState>;
+  } catch {
+    stored = {};
+  }
+  const pathParts = window.location.pathname.split("/").filter(Boolean);
+  const params = new URLSearchParams(window.location.search);
+  if (pathParts[0] === "login") {
+    return { screen: "login", projectId: stored.projectId || fallback.projectId, view: normalizeViewKey(stored.view), mrId: null };
+  }
+  if (pathParts[0] === "projects" && !pathParts[1]) {
+    return { screen: "projects", projectId: stored.projectId || fallback.projectId, view: normalizeViewKey(stored.view), mrId: null };
+  }
+  if (pathParts[0] === "projects" && pathParts[1]) {
+    return {
+      screen: "workspace",
+      projectId: decodeURIComponent(pathParts[1]),
+      view: normalizeViewKey(pathParts[2] === "review" ? "mr" : pathParts[2] || stored.view),
+      mrId: params.get("mr") || stored.mrId || null
+    };
+  }
+  return {
+    screen: stored.screen || fallback.screen,
+    projectId: stored.projectId || fallback.projectId,
+    view: normalizeViewKey(stored.view),
+    mrId: stored.mrId || null
+  };
+}
+
+function writeWorkspaceRoute(state: WorkspaceRouteState) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(WORKSPACE_ROUTE_KEY, JSON.stringify(state));
+  let nextPath = "/login";
+  let nextSearch = "";
+  if (state.screen === "projects") {
+    nextPath = "/projects";
+  }
+  if (state.screen === "workspace") {
+    const viewPath = state.view === "mr" ? "review" : state.view;
+    nextPath = `/projects/${encodeURIComponent(state.projectId || DEFAULT_PROJECT_ID)}/${viewPath}`;
+    if (state.mrId) {
+      const params = new URLSearchParams();
+      params.set("mr", state.mrId);
+      nextSearch = `?${params.toString()}`;
+    }
+  }
+  if (window.location.pathname !== nextPath || window.location.search !== nextSearch || window.location.hash) {
+    window.history.replaceState(null, "", `${nextPath}${nextSearch}`);
+  }
 }
 
 type User = {
@@ -354,7 +424,16 @@ type PublishResultNotice = {
   message: string;
   publishedCount: number;
   requestedCount: number;
+  skippedCount?: number;
   detail?: string;
+};
+
+type PublishApiResult = {
+  published_count: number;
+  dry_run: boolean;
+  skipped_count?: number;
+  skipped_finding_ids?: string[];
+  message?: string;
 };
 
 type MarkdownExportResponse = {
@@ -572,6 +651,20 @@ function reviewStepIndex(status: string) {
 function severityText(severity: string) {
   const map: Record<string, string> = { critical: "严重", high: "高危", medium: "中危", low: "低危" };
   return map[severity] || severity;
+}
+
+function publishStateLabel(state: string) {
+  const map: Record<string, string> = {
+    pending: "待提交",
+    dry_run: "已预览",
+    published: "已提交过",
+    false_positive: "误报"
+  };
+  return map[state] || state;
+}
+
+function isAlreadyPublishedFinding(finding: Pick<Finding, "publish_state">) {
+  return finding.publish_state === "published";
 }
 
 function severityRank(severity: string) {
@@ -908,11 +1001,12 @@ function readPathMap(map: Record<string, string>, filePath: string) {
 }
 
 function App() {
+  const initialRoute = useMemo(() => readWorkspaceRoute(), []);
   const [repos, setRepos] = useState<Repo[]>([]);
   const [mrs, setMrs] = useState<MergeRequest[]>([]);
   const [detail, setDetail] = useState<Detail | null>(null);
-  const [activeMrId, setActiveMrId] = useState<string | null>(null);
-  const activeMrIdRef = useRef<string | null>(null);
+  const [activeMrId, setActiveMrId] = useState<string | null>(initialRoute.mrId);
+  const activeMrIdRef = useRef<string | null>(initialRoute.mrId);
   const [mrPreview, setMrPreview] = useState<Detail | null>(null);
   const [mrPreviewFiles, setMrPreviewFiles] = useState<MrChangedFile[]>([]);
   const [mrPreviewLoading, setMrPreviewLoading] = useState(false);
@@ -929,13 +1023,13 @@ function App() {
   const [message, setMessage] = useState(DEFAULT_WORKSPACE_MESSAGE);
   const [authMessage, setAuthMessage] = useState("");
   const [publishNotice, setPublishNotice] = useState<PublishResultNotice | null>(null);
-  const [activeView, setActiveView] = useState<ViewKey>("mr");
+  const [activeView, setActiveView] = useState<ViewKey>(initialRoute.view);
   const [ready, setReady] = useState(false);
-  const [authLanding, setAuthLanding] = useState(true);
+  const [authLanding, setAuthLanding] = useState(!authToken || initialRoute.screen === "login");
   const [user, setUser] = useState<User | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [activeProjectId, setActiveProjectId] = useState(DEFAULT_PROJECT_ID);
-  const [projectChosen, setProjectChosen] = useState(false);
+  const [activeProjectId, setActiveProjectId] = useState(initialRoute.projectId || DEFAULT_PROJECT_ID);
+  const [projectChosen, setProjectChosen] = useState(Boolean(authToken && initialRoute.screen === "workspace"));
   const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
 
   async function loadCurrentUser() {
@@ -948,7 +1042,9 @@ function App() {
     }
     setUser(me.user);
     setProjects(me.projects || []);
-    if (me.projects?.[0]?.id) setActiveProjectId(me.projects[0].id);
+    if (!me.projects?.some((project) => project.id === activeProjectId) && me.projects?.[0]?.id) {
+      setActiveProjectId(me.projects[0].id);
+    }
   }
 
   async function loadAll(nextActiveId?: string | null) {
@@ -1003,6 +1099,19 @@ function App() {
     const timer = window.setInterval(() => loadAll().catch(() => undefined), 8000);
     return () => window.clearInterval(timer);
   }, [ready, projectChosen, activeProjectId]);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (!user || authLanding) {
+      writeWorkspaceRoute({ screen: "login", projectId: activeProjectId, view: activeView, mrId: activeMrId });
+      return;
+    }
+    if (!projectChosen) {
+      writeWorkspaceRoute({ screen: "projects", projectId: activeProjectId, view: activeView, mrId: null });
+      return;
+    }
+    writeWorkspaceRoute({ screen: "workspace", projectId: activeProjectId, view: activeView, mrId: activeMrId });
+  }, [activeMrId, activeProjectId, activeView, authLanding, projectChosen, ready, user]);
 
   async function sync() {
     setSyncing(true);
@@ -1356,7 +1465,8 @@ function App() {
 
   async function publish(dryRun = false) {
     if (!detail) return;
-    const findingIds = detail.findings.filter((finding) => finding.selected).map((finding) => finding.id);
+    const selectedFindings = detail.findings.filter((finding) => finding.selected);
+    const findingIds = selectedFindings.map((finding) => finding.id);
     const requestedCount = findingIds.length;
     if (!findingIds.length) {
       setMessage("没有选中的 finding");
@@ -1364,27 +1474,38 @@ function App() {
     }
     setBusy(true);
     try {
-      const result = await api<{ published_count: number; dry_run: boolean }>(`/api/mr-review/merge-requests/${detail.mr.id}/publish`, {
+      const result = await api<PublishApiResult>(`/api/mr-review/merge-requests/${detail.mr.id}/publish`, {
         method: "POST",
         body: JSON.stringify({ finding_ids: findingIds, dry_run: dryRun })
       });
       await loadAll(detail.mr.id);
       const publishedCount = Number(result.published_count || 0);
+      const skippedCount = Number(result.skipped_count || 0);
       const actionLabel = result.dry_run ? "生成 dry-run 发布记录" : "提交检视意见";
       const title = result.dry_run
         ? "发布预览已生成"
-        : publishedCount === requestedCount
+        : publishedCount === 0 && skippedCount > 0
+          ? "所选问题已提交过"
+          : publishedCount === requestedCount
           ? "检视意见提交成功"
           : "检视意见部分提交成功";
-      const successMessage = `成功${actionLabel} ${publishedCount} / ${requestedCount} 条。`;
-      setMessage(result.dry_run ? `已生成 ${publishedCount} 条 dry-run 发布记录` : `已发布 ${publishedCount} 条意见`);
+      const duplicateText = skippedCount > 0 ? `，${skippedCount} 条已提交过并已跳过` : "";
+      const successMessage = result.dry_run
+        ? `成功${actionLabel} ${publishedCount} / ${requestedCount} 条。`
+        : `成功${actionLabel} ${publishedCount} / ${requestedCount} 条${duplicateText}。`;
+      setMessage(result.dry_run ? `已生成 ${publishedCount} 条 dry-run 发布记录` : `已发布 ${publishedCount} 条意见${duplicateText}`);
       setPublishNotice({
         status: "success",
         title,
         message: successMessage,
         publishedCount,
         requestedCount,
-        detail: result.dry_run ? "当前为 dry-run，仅生成发布记录，不会提交到代码平台。" : "已完成代码平台提交请求。"
+        skippedCount,
+        detail: result.dry_run
+          ? "当前为 dry-run，仅生成发布记录，不会提交到代码平台。"
+          : skippedCount > 0
+            ? "已提交过的问题不会重复提交，系统已自动跳过这些问题。"
+            : "已完成代码平台提交请求。"
       });
     } catch (error) {
       const errorMessage = (error as Error).message;
@@ -1546,9 +1667,18 @@ function App() {
   async function enterProject(projectId: string) {
     setActiveProjectId(projectId);
     setProjectChosen(true);
+    setActiveView("mr");
     activeMrIdRef.current = null;
     setActiveMrId(null);
     setDetail(null);
+  }
+
+  function switchWorkspaceProject(projectId: string) {
+    setActiveProjectId(projectId);
+    activeMrIdRef.current = null;
+    setActiveMrId(null);
+    setDetail(null);
+    setSelectedMrIds([]);
   }
 
   if (!ready) {
@@ -1596,7 +1726,7 @@ function App() {
       <Sidebar
         projects={projects}
         activeProjectId={activeProjectId}
-        setActiveProjectId={setActiveProjectId}
+        setActiveProjectId={switchWorkspaceProject}
         repos={repos}
         repoInput={repoInput}
         setRepoInput={setRepoInput}
@@ -1891,6 +2021,7 @@ function AuthPage({
 
 function PublishResultModal({ notice, onClose }: { notice: PublishResultNotice; onClose: () => void }) {
   const success = notice.status === "success";
+  const skippedCount = Number(notice.skippedCount || 0);
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={notice.title} onClick={onClose}>
       <section className={`publish-result-modal ${notice.status}`} onClick={(event) => event.stopPropagation()}>
@@ -1902,6 +2033,7 @@ function PublishResultModal({ notice, onClose }: { notice: PublishResultNotice; 
           <p>{notice.message}</p>
           <div className="publish-result-counts" aria-label="发布结果统计">
             <span><b>{notice.publishedCount}</b> 成功</span>
+            {skippedCount > 0 && <span className="skipped"><b>{skippedCount}</b> 已提交过</span>}
             <span><b>{notice.requestedCount}</b> 选中</span>
           </div>
           {notice.detail && <span className="publish-result-detail">{notice.detail}</span>}
@@ -4873,6 +5005,7 @@ function DetailPanel({
 
   const hasRun = detail.runs.length > 0;
   const selectedCount = detail.findings.filter((finding) => finding.selected).length;
+  const selectedAlreadyPublishedCount = detail.findings.filter((finding) => finding.selected && isAlreadyPublishedFinding(finding)).length;
   const allSelected = detail.findings.length > 0 && selectedCount === detail.findings.length;
   const highCount = detail.findings.filter((finding) => finding.severity === "high" || finding.severity === "critical").length;
   const agentCount = participatingAgentIds(detail).length;
@@ -4946,6 +5079,12 @@ function DetailPanel({
       </div>
 
       <div className="detail-actions">
+        {selectedAlreadyPublishedCount > 0 && (
+          <div className="publish-duplicate-warning" role="status">
+            <AlertTriangle size={16} />
+            <span>已选 {selectedAlreadyPublishedCount} 条问题已提交过，本次提交会自动跳过，避免重复提交。</span>
+          </div>
+        )}
         <button type="button" onClick={() => onToggleAllFindings(!allSelected)} disabled={busy || !detail.findings.length}>
           <Check size={18} />
           {allSelected ? "取消全选" : "全选问题"}
@@ -5213,8 +5352,9 @@ function FindingRow({
   onOpen: () => void;
 }) {
   const source = findingSource(finding);
+  const alreadyPublished = isAlreadyPublishedFinding(finding);
   return (
-    <article className="finding-row" onClick={onOpen} role="button" tabIndex={0} onKeyDown={(event) => {
+    <article className={`finding-row ${alreadyPublished ? "already-published" : ""}`} onClick={onOpen} role="button" tabIndex={0} onKeyDown={(event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         onOpen();
@@ -5226,6 +5366,12 @@ function FindingRow({
       </label>
       <span className="agent-pill">{agentLabel(finding.agent_id)}</span>
       <span className={`finding-source-tag ${source.type}`} title={source.detail}>{source.label}</span>
+      <span
+        className={`publish-state-badge ${finding.publish_state || "pending"}`}
+        title={alreadyPublished ? "该问题已提交过，再次提交时会自动跳过" : publishStateLabel(finding.publish_state || "pending")}
+      >
+        {publishStateLabel(finding.publish_state || "pending")}
+      </span>
       <span className="confidence">{finding.confidence.toFixed(2)}</span>
       <div className="finding-main">
         <div className="finding-location-line">
@@ -5233,7 +5379,9 @@ function FindingRow({
           <span>{formatFindingLineRange(finding)}</span>
         </div>
         <strong>{finding.title}</strong>
-        <small className="finding-description">{finding.problem_description || finding.recommendation || "暂无问题描述"}</small>
+        <small className="finding-description">
+          {alreadyPublished ? "该问题已提交过，本次不会重复提交。" : (finding.problem_description || finding.recommendation || "暂无问题描述")}
+        </small>
       </div>
       <button type="button" onClick={(event) => {
         event.stopPropagation();
@@ -5385,7 +5533,11 @@ function FindingDetailModal({
               <span className={`finding-source-tag ${source.type}`}>{source.label}</span>
               <span>{agentLabel(finding.agent_id)}</span>
               <span>置信度 {finding.confidence.toFixed(2)}</span>
-              {finding.publish_state && <span>{finding.publish_state}</span>}
+              {finding.publish_state && (
+                <span className={`publish-state-badge ${finding.publish_state}`}>
+                  {publishStateLabel(finding.publish_state)}
+                </span>
+              )}
             </div>
             <strong>{finding.title}</strong>
             <p>

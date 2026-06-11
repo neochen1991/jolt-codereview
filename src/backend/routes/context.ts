@@ -99,7 +99,15 @@ export interface BackendRouteContext {
   ): Promise<
     | ReturnType<typeof import("../http.js").notFound>
     | ReturnType<typeof import("../http.js").badRequest>
-    | { comment_ref: string; dry_run: boolean; body: string; published_count: number }
+    | {
+      comment_ref: string;
+      dry_run: boolean;
+      body: string;
+      published_count: number;
+      skipped_count: number;
+      skipped_finding_ids: string[];
+      message: string;
+    }
   >;
     formatPublishBody(mr: MergeRequestRow, findings: FindingRow[], provider?: string): string;
 }

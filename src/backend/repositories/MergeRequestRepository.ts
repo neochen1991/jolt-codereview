@@ -47,6 +47,13 @@ export class MergeRequestRepository {
           LIMIT 1
         ) AS latest_run_status,
         (
+          SELECT rr.started_at FROM review_runs rr
+          JOIN review_jobs rj ON rj.id = rr.review_job_id
+          WHERE rj.merge_request_id = mr.id
+          ORDER BY rr.started_at DESC
+          LIMIT 1
+        ) AS review_started_at,
+        (
           SELECT rj.status FROM review_jobs rj
           WHERE rj.merge_request_id = mr.id
           ORDER BY rj.updated_at DESC, rj.created_at DESC

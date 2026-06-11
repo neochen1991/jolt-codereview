@@ -93,6 +93,7 @@ type MergeRequest = {
   latest_head_sha: string;
   html_url: string;
   updated_at: string;
+  review_started_at?: string | null;
   finding_count: number;
   latest_run_status?: string;
   queue_blocked_by_project?: boolean;
@@ -1442,7 +1443,7 @@ function App() {
         mr.review_status === statusFilter;
       const repoOk = repoFilter === "all" || mr.repository_id === repoFilter || mr.repository_name === repoFilter;
       const authorOk = authorFilter === "all" || mr.author === authorFilter;
-      const timeOk = mrMatchesTimeFilter(mr.updated_at, timeFilter);
+      const timeOk = mrMatchesTimeFilter(mr.review_started_at || mr.updated_at, timeFilter);
       const text = `${mr.title} ${mr.repository_name} ${mr.author} ${mr.number}`.toLowerCase();
       return statusOk && repoOk && authorOk && timeOk && text.includes(query.toLowerCase());
     });
@@ -4665,7 +4666,7 @@ function MrQueue({
           <span>风险</span>
           <span>状态</span>
           <span>问题</span>
-          <span>更新时间</span>
+          <span>检视开始</span>
           <span>操作</span>
         </div>
         <div className="mr-body">
@@ -4703,7 +4704,7 @@ function MrQueue({
                 <RiskBadge score={mr.risk_score} />
                 <StatusBadge status={displayStatus} title={queueBlocked ? queueBlockedReason : undefined} />
                 <span>{mr.finding_count || (workflowStatus === "queued" ? "--" : 0)}</span>
-                <span>{shortTime(mr.updated_at)}</span>
+                <span>{mr.review_started_at ? shortTime(mr.review_started_at) : "--"}</span>
                 <span className="mr-actions">
                   <button
                     className="mr-action-button"

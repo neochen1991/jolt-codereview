@@ -16,6 +16,23 @@ if (!existsSync(path.join(root, "node_modules"))) {
   process.exit(1);
 }
 
+try {
+  const dependencyCheck = execFileSync(
+    process.execPath,
+    ["scripts/check-runtime-deps.mjs"],
+    {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }
+  );
+  process.stdout.write(dependencyCheck);
+} catch (error) {
+  if (error.stdout) process.stdout.write(error.stdout);
+  if (error.stderr) process.stderr.write(error.stderr);
+  process.exit(error.status || 1);
+}
+
 const env = {
   ...process.env,
   CONFIG_PATH: process.env.CONFIG_PATH || path.join(root, "config.json")

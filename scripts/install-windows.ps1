@@ -342,6 +342,21 @@ function Test-All {
   $ok = (Test-Version -Name "trivy" -Args @("--version") -Required $requireStaticTools) -and $ok
   $ok = (Test-Version -Name "kics" -Args @("version") -Required $requireStaticTools) -and $ok
   $ok = (Test-Version -Name "openapi-diff" -Args @("--version") -Required $requireStaticTools) -and $ok
+  if ($ok) {
+    Push-Location $RootDir
+    try {
+      node scripts/check-runtime-deps.mjs
+      if ($LASTEXITCODE -ne 0) {
+        $ok = $false
+        Write-Warn "Runtime package dependency check failed. Run scripts\install-windows.ps1 or scripts\start-windows.ps1 -InstallIfMissing."
+      }
+    } catch {
+      $ok = $false
+      Write-Warn "Runtime package dependency check failed. Run scripts\install-windows.ps1 or scripts\start-windows.ps1 -InstallIfMissing."
+    } finally {
+      Pop-Location
+    }
+  }
   if (-not $ok) {
     throw "Some tools are missing. Reopen PowerShell so the user PATH takes effect, then rerun this script."
   }

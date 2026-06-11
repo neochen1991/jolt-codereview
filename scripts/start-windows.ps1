@@ -51,6 +51,10 @@ function Ensure-ProjectReady {
       & $VenvPython -m pip install --upgrade pip
       & $VenvPython -m pip install -r requirements.txt
     }
+    Write-Step "Checking runtime package dependencies"
+    $depArgs = @("scripts/check-runtime-deps.mjs")
+    if ($InstallIfMissing) { $depArgs += "--install" }
+    node @depArgs
     if (-not (Test-Path $ConfigPath)) {
       if (Test-Path "config.example.json") {
         Copy-Item "config.example.json" "config.json"

@@ -365,6 +365,11 @@ verify_all() {
   verify_command trivy --version || missing=1
   verify_command kics version || missing=1
   verify_command openapi-diff --version || missing=1
+  if have node; then
+    node "$ROOT_DIR/scripts/check-runtime-deps.mjs" || missing=1
+  else
+    missing=1
+  fi
   if [ "$missing" -ne 0 ]; then
     warn "Some tools are still missing. Reopen your shell or add $BIN_DIR, $HOME/.local/bin and $HOME/.npm-global/bin to PATH."
     return 1

@@ -65,8 +65,10 @@
     "verify:windows": "powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1 -VerifyOnly"
   },
   "dependencies": {
+    "@types/pg": "^8.20.0",
     "@vitejs/plugin-react": "^5.1.1",
     "lucide-react": "^0.555.0",
+    "pg": "^8.21.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "vite": "^7.2.6"

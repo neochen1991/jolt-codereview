@@ -53,12 +53,18 @@ export function createAgentRoutes(ctx: BackendRouteContext): Route[] {
     agentToolBindingService
   } = ctx;
   const routes: Route[] = [
-    route("GET", "/api/projects/:projectId/agents", ({ params }) =>
-      agentConfigService.listAgents(params.projectId)
-    ),
-    route("GET", "/api/projects/:projectId/expert-profiles", ({ params }) =>
-      agentConfigService.listExpertProfiles(params.projectId)
-    ),
+    route("GET", "/api/projects/:projectId/agents", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return agentConfigService.listAgents(params.projectId);
+    }),
+    route("GET", "/api/projects/:projectId/expert-profiles", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return agentConfigService.listExpertProfiles(params.projectId);
+    }),
     route("POST", "/api/projects/:projectId/expert-profiles", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectWrite(params.projectId, actorId);
@@ -115,9 +121,12 @@ export function createAgentRoutes(ctx: BackendRouteContext): Route[] {
       auditLog({ userId: actorId, projectId: params.projectId, action: "expert_profiles.update", resourceType: "expert_profile", resourceId: params.agentKey, summary: "updated expert profile" });
       return updated;
     }),
-    route("GET", "/api/projects/:projectId/expert-tool-bindings", ({ params }) =>
-      agentToolBindingService.listBindings(params.projectId)
-    ),
+    route("GET", "/api/projects/:projectId/expert-tool-bindings", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return agentToolBindingService.listBindings(params.projectId);
+    }),
     route("POST", "/api/projects/:projectId/expert-tool-bindings", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectWrite(params.projectId, actorId);

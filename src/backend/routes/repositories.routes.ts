@@ -33,9 +33,12 @@ export function createRepositoryRoutes(ctx: BackendRouteContext): Route[] {
     auditRepository
   } = ctx;
   const routes: Route[] = [
-    route("GET", "/api/projects/:projectId/repositories", ({ params }) =>
-      repositoryRepository.listByProject(params.projectId)
-    ),
+    route("GET", "/api/projects/:projectId/repositories", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "observer");
+      if (denied) return denied;
+      return repositoryRepository.listByProject(params.projectId);
+    }),
     route("POST", "/api/projects/:projectId/repositories", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectWrite(params.projectId, actorId);

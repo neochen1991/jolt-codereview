@@ -1,8 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
+import { API, authHeaders } from "./api-auth.mjs";
 import { loadConfig, root } from "./config-utils.mjs";
 
-const API = process.env.API_BASE || "http://127.0.0.1:8011";
 const config = loadConfig();
 const db = new DatabaseSync(path.resolve(root, config.server?.database_path || "data/jolt-codereview.sqlite"));
 const row = db.prepare(`
@@ -20,7 +20,7 @@ if (!row) throw new Error("no finding found for jolt chat verification");
 async function post(body) {
   const response = await fetch(`${API}/api/webhooks/github/project_default/jolt-comment`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify(body)
   });
   const json = await response.json();

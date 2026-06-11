@@ -1,28 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { authenticatedRequest } from "./api-auth.mjs";
 import { loadConfig, root } from "./config-utils.mjs";
 
-const API = process.env.API_BASE || "http://127.0.0.1:8011";
 const PROJECT_ID = process.env.PROJECT_ID || "project_default";
 const auditPath = path.join(root, "docs", "plans", "2026-06-06-design-implementation-audit.md");
 
 function dbPath() {
   const config = loadConfig();
   return path.resolve(root, config.server?.database_path || "data/jolt-codereview.sqlite");
-}
-
-async function request(route, init) {
-  const response = await fetch(`${API}${route}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {})
-    }
-  });
-  const json = await response.json();
-  if (!response.ok) throw new Error(`${route} failed: ${JSON.stringify(json)}`);
-  return json;
 }
 
 function tableColumns(db, table) {
@@ -136,17 +123,17 @@ if (!dataPolicy.default_llm_provider || !dataPolicy.prompt_retention || !Array.i
 
 db.close();
 
-await request("/api/me");
-await request(`/api/projects/${PROJECT_ID}/members`);
-await request(`/api/projects/${PROJECT_ID}/repositories`);
-await request(`/api/projects/${PROJECT_ID}/rule-sets`);
-await request(`/api/projects/${PROJECT_ID}/agents`);
-await request(`/api/projects/${PROJECT_ID}/review-policy`);
-await request(`/api/mr-review/projects/${PROJECT_ID}/merge-requests`);
-await request(`/api/full-review/projects/${PROJECT_ID}/jobs`);
-await request(`/api/projects/${PROJECT_ID}/review-quality/summary`);
-await request(`/api/projects/${PROJECT_ID}/evaluation-reports`);
-await request(`/api/projects/${PROJECT_ID}/rule-health`);
+await authenticatedRequest("/api/me");
+await authenticatedRequest(`/api/projects/${PROJECT_ID}/members`);
+await authenticatedRequest(`/api/projects/${PROJECT_ID}/repositories`);
+await authenticatedRequest(`/api/projects/${PROJECT_ID}/rule-sets`);
+await authenticatedRequest(`/api/projects/${PROJECT_ID}/agents`);
+await authenticatedRequest(`/api/projects/${PROJECT_ID}/review-policy`);
+await authenticatedRequest(`/api/mr-review/projects/${PROJECT_ID}/merge-requests`);
+await authenticatedRequest(`/api/full-review/projects/${PROJECT_ID}/jobs`);
+await authenticatedRequest(`/api/projects/${PROJECT_ID}/review-quality/summary`);
+await authenticatedRequest(`/api/projects/${PROJECT_ID}/evaluation-reports`);
+await authenticatedRequest(`/api/projects/${PROJECT_ID}/rule-health`);
 
 console.log(JSON.stringify({
   ok: true,

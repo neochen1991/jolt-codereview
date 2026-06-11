@@ -1,6 +1,7 @@
 import type { AppConfig } from "../types.js";
 import type { MergeRequestRepository } from "../repositories/MergeRequestRepository.js";
 import type { RepositoryRepository, RepositoryRow } from "../repositories/RepositoryRepository.js";
+import type { ProjectConfigService } from "./ProjectConfigService.js";
 import type { ReviewQueueService } from "./ReviewQueueService.js";
 import { CodeHubProvider } from "../vcs/CodeHubProvider.js";
 import { GithubProvider } from "../vcs/GithubProvider.js";
@@ -15,11 +16,12 @@ export class MrSyncService {
   private readonly providers: Record<string, VcsProvider>;
 
   constructor(
-    config: AppConfig,
+    private readonly config: AppConfig,
     private readonly repositoryRepository: RepositoryRepository,
     private readonly mergeRequestRepository: MergeRequestRepository,
     private readonly reviewQueueService: ReviewQueueService,
-    private readonly runWorkerOnce: () => void
+    private readonly runWorkerOnce: () => void,
+    private readonly projectConfigService?: ProjectConfigService
   ) {
     this.providers = {
       github: new GithubProvider(config),
@@ -27,8 +29,22 @@ export class MrSyncService {
     };
   }
 
-  async syncProject(projectId: string) {
+  private effectiveConfigForProject(projectId: string): AppConfig {
+    return this.projectConfigService?.effectiveConfig(projectId, this.config).effective_config ?? this.config;
+  }
+
+  private providersFor(config: AppConfig): Record<string, VcsProvider> {
+    return config === this.config
+      ? this.providers
+      : {
+          github: new GithubProvider(config),
+          codehub: new CodeHubProvider(config)
+        };
+  }
+
+  async syncProject(projectId: string, requestedBy?: string | null) {
     const repos = this.repositoryRepository.listActiveByProject(projectId);
+    const providers = this.providersFor(this.effectiveConfigForProject(projectId));
     let merged = 0;
     let jobs = 0;
     const errors: string[] = [];
@@ -43,7 +59,7 @@ export class MrSyncService {
     }> = [];
 
     for (const repo of repos) {
-      const provider = this.providers[repo.provider];
+      const provider = providers[repo.provider];
       if (!provider) {
         const error = `unsupported provider ${repo.provider}`;
         errors.push(`${repo.name}: ${error}`);
@@ -62,7 +78,7 @@ export class MrSyncService {
         const mergeRequests = await provider.listOpenMergeRequests(repo);
         let repoJobs = 0;
         for (const mergeRequest of mergeRequests) {
-          const result = this.upsertAndEnqueue(repo, mergeRequest);
+          const result = this.upsertAndEnqueue(repo, mergeRequest, requestedBy);
           if (result.jobCreated) {
             jobs += 1;
             repoJobs += 1;
@@ -96,7 +112,7 @@ export class MrSyncService {
     return { repositories: repos.length, merge_requests: merged, jobs_created: jobs, errors, repository_results: repositoryResults };
   }
 
-  upsertAndEnqueue(repository: RepositoryRow, mergeRequest: NormalizedMergeRequest) {
+  upsertAndEnqueue(repository: RepositoryRow, mergeRequest: NormalizedMergeRequest, requestedBy?: string | null) {
     const mrId = `mr_${repository.id}_${mergeRequest.externalId}`;
     const existing = this.mergeRequestRepository.findByRepositoryAndExternalId(repository.id, mergeRequest.externalId);
     const score = riskScore(mergeRequest);
@@ -121,7 +137,8 @@ export class MrSyncService {
       mergeRequestId: existing?.id ?? mrId,
       headSha: mergeRequest.headSha,
       priority: score,
-      effortLevel: "standard"
+      effortLevel: "standard",
+      requestedBy: requestedBy ?? null
     });
     return {
       mergeRequestId: existing?.id ?? mrId,

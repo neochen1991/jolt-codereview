@@ -1,42 +1,24 @@
-const API = process.env.API_BASE || "http://127.0.0.1:8011";
+import { authenticatedRequest, authHeaders, request } from "./api-auth.mjs";
+
 const PROJECT_ID = process.env.PROJECT_ID || "project_default";
 
-async function request(path, init) {
-  const response = await fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {})
-    }
-  });
-  const json = await response.json();
-  if (!response.ok) {
-    throw new Error(`${path} failed: ${JSON.stringify(json)}`);
-  }
-  return json;
-}
-
 const health = await request("/api/health");
-const login = await request("/api/auth/login", {
-  method: "POST",
-  body: JSON.stringify({ username: "local-admin" })
-});
-if (!login.token) throw new Error("login did not return token");
+const headers = await authHeaders();
 const session = await request("/api/auth/session", {
-  headers: { Authorization: `Bearer ${login.token}` }
+  headers
 });
-const repos = await request(`/api/projects/${PROJECT_ID}/repositories`);
-const members = await request(`/api/projects/${PROJECT_ID}/members`);
-const ruleSets = await request(`/api/projects/${PROJECT_ID}/rule-sets`);
-const agents = await request(`/api/projects/${PROJECT_ID}/agents`);
-const reviewPolicy = await request(`/api/projects/${PROJECT_ID}/review-policy`);
-const fullReview = await request(`/api/full-review/projects/${PROJECT_ID}/jobs`);
-const deadLetters = await request(`/api/mr-review/projects/${PROJECT_ID}/dead-letters`);
-const auditLogs = await request(`/api/projects/${PROJECT_ID}/audit-logs`);
-const quality = await request(`/api/projects/${PROJECT_ID}/review-quality/summary`);
-const evaluation = await request(`/api/projects/${PROJECT_ID}/evaluation-reports`);
-const ruleHealth = await request(`/api/projects/${PROJECT_ID}/rule-health`);
-const list = await request(`/api/mr-review/projects/${PROJECT_ID}/merge-requests`);
+const repos = await authenticatedRequest(`/api/projects/${PROJECT_ID}/repositories`);
+const members = await authenticatedRequest(`/api/projects/${PROJECT_ID}/members`);
+const ruleSets = await authenticatedRequest(`/api/projects/${PROJECT_ID}/rule-sets`);
+const agents = await authenticatedRequest(`/api/projects/${PROJECT_ID}/agents`);
+const reviewPolicy = await authenticatedRequest(`/api/projects/${PROJECT_ID}/review-policy`);
+const fullReview = await authenticatedRequest(`/api/full-review/projects/${PROJECT_ID}/jobs`);
+const deadLetters = await authenticatedRequest(`/api/mr-review/projects/${PROJECT_ID}/dead-letters`);
+const auditLogs = await authenticatedRequest(`/api/projects/${PROJECT_ID}/audit-logs`);
+const quality = await authenticatedRequest(`/api/projects/${PROJECT_ID}/review-quality/summary`);
+const evaluation = await authenticatedRequest(`/api/projects/${PROJECT_ID}/evaluation-reports`);
+const ruleHealth = await authenticatedRequest(`/api/projects/${PROJECT_ID}/rule-health`);
+const list = await authenticatedRequest(`/api/mr-review/projects/${PROJECT_ID}/merge-requests`);
 const counts = list.items.reduce((acc, item) => {
   acc[item.review_status] = (acc[item.review_status] || 0) + 1;
   return acc;
@@ -46,12 +28,12 @@ let detailSummary = null;
 let reviewed = null;
 let reviewedEvidence = null;
 for (const candidate of list.items.filter((item) => item.review_status !== "queued")) {
-  const detail = await request(`/api/mr-review/merge-requests/${candidate.id}`);
+  const detail = await authenticatedRequest(`/api/mr-review/merge-requests/${candidate.id}`);
   const latestRunId = detail.runs[0]?.id;
-  const logs = latestRunId ? await request(`/api/mr-review/review-runs/${latestRunId}/session-logs`) : null;
-  const artifacts = latestRunId ? await request(`/api/mr-review/review-runs/${latestRunId}/artifacts`) : null;
-  const runDetail = latestRunId ? await request(`/api/mr-review/review-runs/${latestRunId}`) : null;
-  const compare = await request(`/api/mr-review/merge-requests/${candidate.id}/review-runs/compare`);
+  const logs = latestRunId ? await authenticatedRequest(`/api/mr-review/review-runs/${latestRunId}/session-logs`) : null;
+  const artifacts = latestRunId ? await authenticatedRequest(`/api/mr-review/review-runs/${latestRunId}/artifacts`) : null;
+  const runDetail = latestRunId ? await authenticatedRequest(`/api/mr-review/review-runs/${latestRunId}`) : null;
+  const compare = await authenticatedRequest(`/api/mr-review/merge-requests/${candidate.id}/review-runs/compare`);
   const manifest = runDetail?.toolchain_manifest ? JSON.parse(runDetail.toolchain_manifest) : {};
   const artifactNames = artifacts?.items?.map((artifact) => artifact.name) ?? [];
   detailSummary = {
@@ -111,7 +93,7 @@ if (detailSummary) {
   if (!reviewedEvidence.artifacts || reviewedEvidence.artifacts.items.length === 0) {
     throw new Error("reviewed MR has no review artifacts");
   }
-  const runDetail = await request(`/api/mr-review/review-runs/${reviewedEvidence.detail.runs[0].id}`);
+  const runDetail = await authenticatedRequest(`/api/mr-review/review-runs/${reviewedEvidence.detail.runs[0].id}`);
   const manifest = JSON.parse(runDetail.toolchain_manifest || "{}");
   if (!manifest.static?.external?.tools?.length) {
     throw new Error("reviewed MR has no external static toolchain manifest");
@@ -153,7 +135,7 @@ console.log(JSON.stringify({
   health,
   auth: {
     user: session.user?.username,
-    token: `****${login.token.slice(-4)}`
+    token: "authenticated"
   },
   repositories: repos.map((repo) => ({
     provider: repo.provider,

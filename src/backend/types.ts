@@ -13,11 +13,13 @@ export interface AppConfig {
   };
   github?: {
     default_token_env?: string;
+    default_token?: string | null;
     default_endpoint?: string;
     webhook_secret?: string;
   };
   codehub?: {
     default_token_env?: string;
+    default_token?: string | null;
     default_endpoint?: string;
     webhook_secret?: string;
   };
@@ -25,6 +27,11 @@ export interface AppConfig {
     host?: string;
     port?: number;
     database_path?: string;
+    database_driver?: "sqlite" | "postgres";
+    postgres_url?: string;
+    postgres_user?: string;
+    postgres_password?: string;
+    postgres_query_timeout_seconds?: number;
   };
   logging?: {
     enabled?: boolean;

@@ -9,7 +9,7 @@ Jolt CodeReview 是一个项目级 AI 代码检视平台，面向生产环境的
 - MiniMax-M2.7 本机 LLM 配置。
 - LangGraph 确定性流程编排 + 受控 DeepAgents 专家节点。
 - Security / Backend / Test / Performance / DDD / Frontend / Redis / Dependency / Database 等专家 Agent 检视流。
-- Agent trace、LLM 调用记录、finding 确认、dry-run/真实发布到 GitHub comment。
+- Agent trace、LLM 调用记录、finding 确认、dry-run/真实提交检视意见到代码平台。
 - macOS / Windows 跨平台启动脚本。
 
 ## Windows 快速运行
@@ -28,6 +28,20 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 
 - API: `http://127.0.0.1:8011`
 - Frontend: `http://127.0.0.1:5173`
+
+首次本机登录：
+
+- 用户名：`local-admin`
+- 密码：`admin123`
+- 角色：`root`
+
+生产环境建议先创建正式管理员账号，并通过组织密钥管理或环境变量维护 LLM/API Token。
+
+权限模型：
+
+- 普通用户可以维护个人 CodeHub Token，该 Token 只用于提交已确认的检视意见；MR 同步、diff 读取和 AI 检视统一使用项目管理员维护的项目级配置。
+- 项目管理员可以维护项目代码仓、静态工具策略、专家 Agent、规范文档、Skill、成员和加入申请。
+- root 管理员可以访问系统设置，包括 PostgreSQL 连接测试和 PG 表结构初始化。
 
 如果机器不能访问 GitHub release、npm registry 或 PyPI，可以先跳过静态工具和规则下载：
 
@@ -331,6 +345,24 @@ cp config.example.json config.json
 ```
 
 生产或团队共享环境建议改用 `default_api_key_env` 或 secret store，避免在团队仓库中长期保存明文 key。
+
+### PostgreSQL 存储切换
+
+默认本机模式使用 SQLite。生产或多人共享环境可以在 root 用户的「系统设置 -> 数据库存储」中测试 PG、初始化表结构、保存切换配置；保存动作会同步写入 `config.json`，重启 API 和 Worker 后生效。也可以直接编辑：
+
+```json
+{
+  "server": {
+    "database_driver": "postgres",
+    "postgres_url": "postgresql://pg-host:5432/jolt_codereview",
+    "postgres_user": "jolt",
+    "postgres_password": "<PASSWORD>",
+    "postgres_query_timeout_seconds": 120
+  }
+}
+```
+
+PG 模式下 Node API 和 Python Worker 都会走同一套 PG 运行时适配层，覆盖项目、用户、仓库、MR 队列、检视任务、工具结果、LLM 记录、finding 和 token 上报等主链路表。Python 依赖需要包含 `psycopg[binary]>=3.2.0`，一键安装脚本会从 `requirements.txt` 安装。
 
 ### 检视预算与熔断
 

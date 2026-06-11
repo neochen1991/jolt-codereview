@@ -31,7 +31,10 @@ if (!health.ok) throw new Error("health check failed");
 
 const login = await request("/api/auth/login", {
   method: "POST",
-  body: JSON.stringify({ username: "local-admin" })
+  body: JSON.stringify({
+    username: process.env.JOLT_TEST_USERNAME || "local-admin",
+    password: process.env.JOLT_TEST_PASSWORD || process.env.JOLT_LOCAL_ADMIN_PASSWORD || "admin123"
+  })
 });
 if (!login.token) throw new Error("login did not return token");
 

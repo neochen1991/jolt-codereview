@@ -3,6 +3,7 @@ import type { AppConfig } from "../types.js";
 
 const SETTINGS_KEYS = [
   "llm_policy",
+  "vcs_policy",
   "review_policy",
   "budget_policy",
   "agent_policy",
@@ -76,8 +77,23 @@ export class ProjectConfigService {
         ...settings.llm_policy
       };
     }
+    if (settings.vcs_policy && Object.keys(settings.vcs_policy).length > 0) {
+      const vcsPolicy = settings.vcs_policy;
+      effective.github = {
+        ...(effective.github ?? {}),
+        ...(vcsPolicy.github_token ? { default_token: vcsPolicy.github_token as string } : {}),
+        ...(vcsPolicy.github_token_env ? { default_token_env: vcsPolicy.github_token_env as string } : {}),
+        ...(vcsPolicy.github_endpoint ? { default_endpoint: vcsPolicy.github_endpoint as string } : {})
+      };
+      effective.codehub = {
+        ...(effective.codehub ?? {}),
+        ...(vcsPolicy.codehub_token ? { default_token: vcsPolicy.codehub_token as string } : {}),
+        ...(vcsPolicy.codehub_token_env ? { default_token_env: vcsPolicy.codehub_token_env as string } : {}),
+        ...(vcsPolicy.codehub_endpoint ? { default_endpoint: vcsPolicy.codehub_endpoint as string } : {})
+      };
+    }
     for (const key of SETTINGS_KEYS) {
-      if (key === "llm_policy") continue;
+      if (key === "llm_policy" || key === "vcs_policy") continue;
       const value = settings[key];
       if (value && Object.keys(value).length > 0) {
         const configKey = key === "token_usage" ? "token_usage" : key;

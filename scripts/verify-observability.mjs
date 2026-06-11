@@ -1,17 +1,11 @@
-const API = process.env.API_BASE || "http://127.0.0.1:8011";
+import { authenticatedRequest } from "./api-auth.mjs";
+
 const PROJECT_ID = process.env.PROJECT_ID || "project_default";
 
-async function request(path) {
-  const response = await fetch(`${API}${path}`);
-  const json = await response.json();
-  if (!response.ok) throw new Error(`${path} failed: ${JSON.stringify(json)}`);
-  return json;
-}
-
-const queue = await request(`/api/projects/${PROJECT_ID}/queue/summary`);
-const toolchain = await request(`/api/projects/${PROJECT_ID}/toolchain/status`);
-const agents = await request(`/api/projects/${PROJECT_ID}/agents/quality`);
-const quality = await request(`/api/projects/${PROJECT_ID}/review-quality/summary`);
+const queue = await authenticatedRequest(`/api/projects/${PROJECT_ID}/queue/summary`);
+const toolchain = await authenticatedRequest(`/api/projects/${PROJECT_ID}/toolchain/status`);
+const agents = await authenticatedRequest(`/api/projects/${PROJECT_ID}/agents/quality`);
+const quality = await authenticatedRequest(`/api/projects/${PROJECT_ID}/review-quality/summary`);
 
 if (!Array.isArray(queue.by_status)) throw new Error("queue summary missing by_status");
 if (!Array.isArray(queue.running)) throw new Error("queue summary missing running");

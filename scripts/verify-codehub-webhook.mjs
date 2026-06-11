@@ -2,23 +2,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
+import { authenticatedRequest, request } from "./api-auth.mjs";
 import { loadConfig, root } from "./config-utils.mjs";
 
-const API = process.env.API_BASE || "http://127.0.0.1:8011";
 const PROJECT_ID = process.env.PROJECT_ID || "project_default";
-
-async function request(route, init) {
-  const response = await fetch(`${API}${route}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {})
-    }
-  });
-  const json = await response.json();
-  if (!response.ok) throw new Error(`${route} failed: ${JSON.stringify(json)}`);
-  return json;
-}
 
 function dbPath() {
   const config = loadConfig();
@@ -59,7 +46,7 @@ function createFixtureFile() {
 
 await request("/api/health");
 const fixturePath = createFixtureFile();
-await request(`/api/projects/${PROJECT_ID}/repositories`, {
+await authenticatedRequest(`/api/projects/${PROJECT_ID}/repositories`, {
   method: "POST",
   body: JSON.stringify({
     provider: "codehub",
@@ -74,7 +61,7 @@ await request(`/api/projects/${PROJECT_ID}/repositories`, {
 });
 
 const headSha = `codehub_fixture_${Date.now()}`;
-const webhook = await request(`/api/webhooks/codehub/${PROJECT_ID}`, {
+const webhook = await authenticatedRequest(`/api/webhooks/codehub/${PROJECT_ID}`, {
   method: "POST",
   body: JSON.stringify({
     action: "opened",

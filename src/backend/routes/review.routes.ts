@@ -318,7 +318,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const actorId = currentUserId(req);
       const denied = ensureProjectRole(params.projectId, actorId, "reviewer");
       if (denied) return denied;
-      const result = await syncProject(params.projectId);
+      const result = await syncProject(params.projectId, actorId);
       auditLog({
         userId: actorId,
         projectId: params.projectId,

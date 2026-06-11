@@ -80,6 +80,7 @@ export interface BackendRouteContext {
   currentUserId(req: { headers: Record<string, any> }): string;
   ensureProjectRole(projectId: string, userId: string, minRole: string): { statusCode: number; error: string; message: string } | null;
   ensureProjectWrite(projectId: string, userId?: string): { statusCode: number; error: string; message: string } | null;
+  ensureRoot(userId: string): { statusCode: number; error: string; message: string } | null;
   auditLog(input: {
     userId?: string;
     projectId?: string;
@@ -89,7 +90,7 @@ export interface BackendRouteContext {
     summary?: string;
     metadata?: Record<string, unknown>;
   }): void;
-  syncProject(projectId: string): Promise<MrSyncProjectResult>;
+  syncProject(projectId: string, requestedBy?: string | null): Promise<MrSyncProjectResult>;
   publishFindings(
     mrId: string,
     findingIds: string[],

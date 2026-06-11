@@ -26,9 +26,12 @@ function endpoint(config: AppConfig, repoConfig: RepositoryConfig): string {
 }
 
 function token(config: AppConfig, repoConfig: RepositoryConfig): string | null {
-  const envName = repoConfig.token_env || config.codehub?.default_token_env || "CODEHUB_TOKEN";
+  if (repoConfig.token_env && process.env[repoConfig.token_env]) return process.env[repoConfig.token_env] ?? null;
+  if (repoConfig.token) return repoConfig.token;
+  if (config.codehub?.default_token) return config.codehub.default_token;
+  const envName = config.codehub?.default_token_env || "CODEHUB_TOKEN";
   if (envName && process.env[envName]) return process.env[envName] ?? null;
-  return repoConfig.token ?? null;
+  return null;
 }
 
 function headers(config: AppConfig, repoConfig: RepositoryConfig): Record<string, string> {

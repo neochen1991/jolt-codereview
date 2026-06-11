@@ -21,6 +21,7 @@ from typing import Any
 from uuid import uuid4
 
 from config import db_path, effective_project_config, load_config
+from db_compat import open_app_database
 from file_logger import clear_worker_logs, write_review_run_log, write_worker_log
 from agents.registry import load_expert_profiles
 from context.repo_index import build_repo_index
@@ -67,11 +68,7 @@ BUILTIN_PMD_RULESETS = [
 
 
 def connect(config: dict[str, Any]) -> sqlite3.Connection:
-    path = db_path(config)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout = 5000")
+    conn = open_app_database(config)
     ensure_worker_schema(conn)
     return conn
 
@@ -4289,7 +4286,7 @@ def choose_job(conn: sqlite3.Connection) -> sqlite3.Row | None:
         conn.execute("UPDATE merge_requests SET review_status = 'fetching' WHERE id = ?", (job["merge_request_id"],))
         conn.commit()
         return job
-    except sqlite3.OperationalError:
+    except Exception:
         conn.rollback()
         return None
 
@@ -4322,7 +4319,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
     if not job:
         write_worker_log(config, "worker_idle", {"reason": "no_queued_review_job"})
         return False
-    start_heartbeat(db_path(config), job["id"])
+    start_heartbeat(db_path(config), job["id"], config=config)
     write_worker_log(
         config,
         "review_job_claimed",
@@ -4374,7 +4371,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
     repo = conn.execute("SELECT * FROM repositories WHERE id = ?", (mr["repository_id"],)).fetchone()
     project_id = repo["project_id"]
     project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-    project_config = effective_project_config(config, conn, project_id)
+    project_config = effective_project_config(config, conn, project_id, job["requested_by"])
     tool_gateway = ToolGateway(conn, project_id, project_config)
     conn.execute(
         "UPDATE review_runs SET toolchain_manifest = ? WHERE id = ?",

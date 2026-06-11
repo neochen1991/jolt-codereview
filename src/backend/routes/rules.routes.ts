@@ -131,9 +131,12 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
     auditRepository
   } = ctx;
   const routes: Route[] = [
-    route("GET", "/api/projects/:projectId/rule-sets", ({ params }) =>
-      ruleDocumentRepository.listRuleSets(params.projectId)
-    ),
+    route("GET", "/api/projects/:projectId/rule-sets", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return ruleDocumentRepository.listRuleSets(params.projectId);
+    }),
     route("POST", "/api/projects/:projectId/rule-sets", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectWrite(params.projectId, actorId);
@@ -152,10 +155,16 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       auditLog({ userId: actorId, projectId: params.projectId, action: "rules.create", resourceType: "rule_set", resourceId: ruleSetId, summary: String(input.name ?? "项目规则") });
       return ruleSet;
     }),
-    route("GET", "/api/projects/:projectId/rule-documents", ({ params }) =>
-      ruleDocumentRepository.listRuleDocuments(params.projectId)
-    ),
-    route("GET", "/api/projects/:projectId/rule-details", ({ params, url }) => {
+    route("GET", "/api/projects/:projectId/rule-documents", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return ruleDocumentRepository.listRuleDocuments(params.projectId);
+    }),
+    route("GET", "/api/projects/:projectId/rule-details", ({ params, url, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
       const ruleIds = requestedRuleIds(url);
       if (!ruleIds.length) return { items: [] };
       const wanted = new Set(ruleIds);
@@ -206,9 +215,12 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       auditLog({ userId: actorId, projectId: params.projectId, action: "rule_documents.create", resourceType: "rule_document", resourceId: ruleDocumentId, summary: String(input.name ?? "专家规则文档") });
       return document;
     }),
-    route("GET", "/api/projects/:projectId/expert-rule-bindings", ({ params }) =>
-      ruleDocumentRepository.listExpertRuleBindings(params.projectId)
-    ),
+    route("GET", "/api/projects/:projectId/expert-rule-bindings", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return ruleDocumentRepository.listExpertRuleBindings(params.projectId);
+    }),
     route("POST", "/api/projects/:projectId/expert-rule-bindings", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectWrite(params.projectId, actorId);
@@ -228,9 +240,12 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       auditLog({ userId: actorId, projectId: params.projectId, action: "expert_rule_bindings.upsert", resourceType: "expert_rule_binding", resourceId: `${agentKey}:${ruleDocumentId}`, summary: `bind ${ruleDocumentId} to ${agentKey}` });
       return { items: bindings };
     }),
-    route("GET", "/api/projects/:projectId/custom-skills", ({ params }) =>
-      ruleDocumentRepository.listCustomSkills(params.projectId)
-    ),
+    route("GET", "/api/projects/:projectId/custom-skills", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return ruleDocumentRepository.listCustomSkills(params.projectId);
+    }),
     route("POST", "/api/projects/:projectId/custom-skills", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectWrite(params.projectId, actorId);
@@ -253,9 +268,12 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       auditLog({ userId: actorId, projectId: params.projectId, action: "custom_skills.upsert", resourceType: "custom_skill", resourceId: skillKey, summary: `upsert custom skill ${skillKey}` });
       return skill;
     }),
-    route("GET", "/api/projects/:projectId/expert-skill-bindings", ({ params }) =>
-      ruleDocumentRepository.listExpertSkillBindings(params.projectId)
-    ),
+    route("GET", "/api/projects/:projectId/expert-skill-bindings", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return ruleDocumentRepository.listExpertSkillBindings(params.projectId);
+    }),
     route("POST", "/api/projects/:projectId/expert-skill-bindings", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectWrite(params.projectId, actorId);
@@ -276,9 +294,12 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       auditLog({ userId: actorId, projectId: params.projectId, action: "expert_skill_bindings.upsert", resourceType: "expert_skill_binding", resourceId: `${agentKey}:${skillKey}`, summary: `bind ${skillKey} to ${agentKey}` });
       return { items: bindings };
     }),
-    route("GET", "/api/projects/:projectId/custom-skill-assets", ({ params, url }) =>
-      ruleDocumentRepository.listCustomSkillAssets(params.projectId, url.searchParams.get("skill_key") ?? undefined)
-    ),
+    route("GET", "/api/projects/:projectId/custom-skill-assets", ({ params, url, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return ruleDocumentRepository.listCustomSkillAssets(params.projectId, url.searchParams.get("skill_key") ?? undefined);
+    }),
     route("POST", "/api/projects/:projectId/custom-skill-assets", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectWrite(params.projectId, actorId);
@@ -304,9 +325,12 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       auditLog({ userId: actorId, projectId: params.projectId, action: "custom_skill_assets.upsert", resourceType: "custom_skill_asset", resourceId: `${skillKey}:${assetPath}`, summary: `upsert custom skill asset ${skillKey}/${assetPath}` });
       return asset;
     }),
-    route("GET", "/api/projects/:projectId/review-policy", ({ params }) =>
-      ruleDocumentRepository.findReviewPolicy(params.projectId) ?? notFound()
-    ),
+    route("GET", "/api/projects/:projectId/review-policy", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return ruleDocumentRepository.findReviewPolicy(params.projectId) ?? notFound();
+    }),
     route("PATCH", "/api/projects/:projectId/review-policy", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectWrite(params.projectId, actorId);

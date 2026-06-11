@@ -24,7 +24,12 @@ const DEFAULT_CONFIG: AppConfig = {
   server: {
     host: "127.0.0.1",
     port: 8011,
-    database_path: "data/jolt-codereview.sqlite"
+    database_path: "data/jolt-codereview.sqlite",
+    database_driver: "sqlite",
+    postgres_url: "",
+    postgres_user: "",
+    postgres_password: "",
+    postgres_query_timeout_seconds: 120
   },
   logging: {
     enabled: true,
@@ -98,6 +103,7 @@ export function loadConfig(): AppConfig {
 export function resolveGithubToken(config: AppConfig, tokenEnv?: string | null, token?: string | null): string | null {
   if (tokenEnv && process.env[tokenEnv]) return process.env[tokenEnv] ?? null;
   if (token) return token;
+  if (config.github?.default_token) return config.github.default_token;
   const defaultEnv = config.github?.default_token_env;
   if (defaultEnv && process.env[defaultEnv]) return process.env[defaultEnv] ?? null;
   return null;

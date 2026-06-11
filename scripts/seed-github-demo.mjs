@@ -1,24 +1,10 @@
-const API = process.env.API_BASE || "http://127.0.0.1:8011";
+import { authenticatedRequest } from "./api-auth.mjs";
+
 const PROJECT_ID = process.env.PROJECT_ID || "project_default";
 const REPO = process.env.GITHUB_REPO || "https://github.com/microsoft/vscode.git";
 
-async function request(path, init) {
-  const response = await fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {})
-    }
-  });
-  const json = await response.json();
-  if (!response.ok) {
-    throw new Error(`${path} failed: ${JSON.stringify(json)}`);
-  }
-  return json;
-}
-
 const repoName = REPO.replace(/\.git$/i, "").split("/").pop() || REPO;
-const repository = await request(`/api/projects/${PROJECT_ID}/repositories`, {
+const repository = await authenticatedRequest(`/api/projects/${PROJECT_ID}/repositories`, {
   method: "POST",
   body: JSON.stringify({
     provider: "github",
@@ -28,12 +14,12 @@ const repository = await request(`/api/projects/${PROJECT_ID}/repositories`, {
   })
 });
 
-const sync = await request(`/api/mr-review/projects/${PROJECT_ID}/sync`, {
+const sync = await authenticatedRequest(`/api/mr-review/projects/${PROJECT_ID}/sync`, {
   method: "POST",
   body: "{}"
 });
 
-const list = await request(`/api/mr-review/projects/${PROJECT_ID}/merge-requests`);
+const list = await authenticatedRequest(`/api/mr-review/projects/${PROJECT_ID}/merge-requests`);
 
 console.log(JSON.stringify({
   repository: {

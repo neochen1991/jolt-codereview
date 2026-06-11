@@ -1,21 +1,7 @@
-const API = process.env.API_BASE || "http://127.0.0.1:8011";
+import { authenticatedRequest, request } from "./api-auth.mjs";
+
 const PROJECT_ID = process.env.PROJECT_ID || "project_default";
 const INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 5 * 60 * 1000);
-
-async function request(path, init) {
-  const response = await fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {})
-    }
-  });
-  const json = await response.json();
-  if (!response.ok) {
-    throw new Error(`${path} failed: ${JSON.stringify(json)}`);
-  }
-  return json;
-}
 
 async function waitForApi() {
   for (let attempt = 1; attempt <= 60; attempt += 1) {
@@ -30,7 +16,7 @@ async function waitForApi() {
 }
 
 async function syncOnce() {
-  const result = await request(`/api/mr-review/projects/${PROJECT_ID}/sync`, {
+  const result = await authenticatedRequest(`/api/mr-review/projects/${PROJECT_ID}/sync`, {
     method: "POST",
     body: "{}"
   });
@@ -44,4 +30,3 @@ await syncOnce().catch((error) => console.error("initial poll sync failed:", err
 setInterval(() => {
   syncOnce().catch((error) => console.error("poll sync failed:", error.message));
 }, INTERVAL_MS);
-

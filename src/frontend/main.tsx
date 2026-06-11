@@ -37,7 +37,8 @@ import "./styles.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8011";
 const DEFAULT_PROJECT_ID = "project_default";
-type ViewKey = "mr" | "full" | "issues" | "rules" | "agents" | "repos" | "policy" | "users" | "tools" | "queue" | "settings";
+const DEFAULT_WORKSPACE_MESSAGE = "请选择项目进入 MR 工作台";
+type ViewKey = "mr" | "full" | "issues" | "rules" | "agents" | "repos" | "policy" | "users" | "tools" | "queue" | "personal" | "settings" | "system";
 
 let authToken = typeof window !== "undefined" ? window.localStorage.getItem("jolt_auth_token") : null;
 
@@ -52,6 +53,9 @@ type User = {
   id: string;
   username: string;
   display_name: string;
+  email?: string | null;
+  global_role?: string;
+  status?: string;
 };
 
 type Project = {
@@ -59,6 +63,8 @@ type Project = {
   name: string;
   description?: string;
   role?: string;
+  join_request_status?: string | null;
+  requested_role?: string | null;
 };
 
 type Repo = {
@@ -206,6 +212,30 @@ type LlmSettingsForm = {
   request_timeout_seconds: string;
   max_output_tokens: string;
   enable_stream: boolean;
+};
+
+type VcsTokenForm = {
+  codehub_token: string;
+  codehub_token_has_value?: boolean;
+  codehub_token_masked?: string;
+};
+
+type ProjectVcsSettingsForm = {
+  codehub_token: string;
+  codehub_token_env: string;
+  codehub_endpoint: string;
+  github_token: string;
+  github_token_env: string;
+  github_endpoint: string;
+};
+
+type StorageSettingsForm = {
+  driver: string;
+  postgres_url: string;
+  postgres_user: string;
+  postgres_password: string;
+  postgres_password_has_value?: boolean;
+  postgres_password_masked?: string;
 };
 
 type ReviewSettingsForm = {
@@ -713,6 +743,18 @@ function providerLabel(provider: string) {
   return provider || "--";
 }
 
+function isRootUser(user: User | null) {
+  return user?.global_role === "root";
+}
+
+function isProjectAdminRole(role: string, user: User | null) {
+  return isRootUser(user) || ["project_admin", "system_admin"].includes(role);
+}
+
+function canAccessProjectAdminView(view: ViewKey) {
+  return ["agents", "rules", "tools", "queue", "users", "settings", "policy", "repos"].includes(view);
+}
+
 function textCodeLines(value: string, startLine = 1): ParsedDiffLine[] {
   const lines = String(value || "").split(/\r?\n/);
   return lines.map((content, index) => ({
@@ -883,15 +925,30 @@ function App() {
   const [pendingMrActions, setPendingMrActions] = useState<Record<string, MrActionState>>({});
   const [selectedMrIds, setSelectedMrIds] = useState<string[]>([]);
   const [repoInput, setRepoInput] = useState("");
-  const [message, setMessage] = useState("CodeHub 已同步 · 2 分钟前");
+  const [message, setMessage] = useState(DEFAULT_WORKSPACE_MESSAGE);
+  const [authMessage, setAuthMessage] = useState("");
   const [publishNotice, setPublishNotice] = useState<PublishResultNotice | null>(null);
   const [activeView, setActiveView] = useState<ViewKey>("mr");
   const [ready, setReady] = useState(false);
+  const [authLanding, setAuthLanding] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState(DEFAULT_PROJECT_ID);
   const [projectChosen, setProjectChosen] = useState(false);
   const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
+
+  async function loadCurrentUser() {
+    const me = await api<{ user: User | null; projects: Project[] }>("/api/me");
+    if (!me.user) {
+      setApiToken(null);
+      setUser(null);
+      setProjects([]);
+      return;
+    }
+    setUser(me.user);
+    setProjects(me.projects || []);
+    if (me.projects?.[0]?.id) setActiveProjectId(me.projects[0].id);
+  }
 
   async function loadAll(nextActiveId?: string | null) {
     const [repoData, mrData] = await Promise.all([
@@ -918,24 +975,22 @@ function App() {
     async function bootstrapSession() {
       try {
         if (authToken) {
-          const session = await api<{ authenticated: boolean; user: User }>("/api/auth/session");
-          if (!session.authenticated) setApiToken(null);
+          const session = await api<{ authenticated: boolean; user: User | null }>("/api/auth/session");
+          if (!session.authenticated || !session.user) {
+            setApiToken(null);
+            setUser(null);
+            setProjects([]);
+          } else {
+            await loadCurrentUser();
+          }
         }
-        if (!authToken) {
-          const login = await api<{ token: string; user: User }>("/api/auth/login", {
-            method: "POST",
-            body: JSON.stringify({ username: "local-admin" })
-          });
-          setApiToken(login.token);
-          setUser(login.user);
-        }
-        const me = await api<{ user: User; projects: Project[] }>("/api/me");
-        setUser(me.user);
-        setProjects(me.projects);
-        if (me.projects[0]?.id) setActiveProjectId(me.projects[0].id);
         setReady(true);
       } catch (error) {
-        setMessage((error as Error).message);
+        setApiToken(null);
+        setUser(null);
+        setProjects([]);
+        setAuthMessage((error as Error).message);
+        setReady(true);
       }
     }
     bootstrapSession();
@@ -1395,13 +1450,60 @@ function App() {
 
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
   const activeProjectRole = String(activeProject?.role || "");
+  const canManageProject = isProjectAdminRole(activeProjectRole, user);
+  const canManageSystem = isRootUser(user);
+
+  useEffect(() => {
+    if (!user) return;
+    if (activeView === "system" && !canManageSystem) setActiveView("personal");
+    if (canAccessProjectAdminView(activeView) && !canManageProject) setActiveView("mr");
+  }, [activeView, canManageProject, canManageSystem, user]);
+
+  async function login(username: string, password: string) {
+    const result = await api<{ token: string; user: User }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password })
+    });
+    setApiToken(result.token);
+    await loadCurrentUser();
+    setProjectChosen(false);
+    setAuthLanding(false);
+    setAuthMessage("");
+    setMessage("登录成功");
+  }
+
+  async function register(input: { username: string; password: string; display_name: string; email: string }) {
+    await api<{ user: User }>("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(input)
+    });
+    setAuthMessage("注册成功，请使用新账号登录");
+  }
+
+  async function changePassword(input: { current_password: string; new_password: string; confirm_password: string }) {
+    await api<{ ok: boolean }>("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify(input)
+    });
+    setAuthMessage("密码已修改，下次登录请使用新密码");
+  }
 
   async function logout() {
     await api("/api/auth/logout", { method: "POST", body: "{}" }).catch(() => undefined);
     setApiToken(null);
     setUser(null);
-    setReady(false);
-    window.location.reload();
+    setProjects([]);
+    setRepos([]);
+    setMrs([]);
+    setDetail(null);
+    activeMrIdRef.current = null;
+    setActiveMrId(null);
+    setSelectedMrIds([]);
+    setProjectChosen(false);
+    setAuthLanding(true);
+    setActiveView("mr");
+    setMessage(DEFAULT_WORKSPACE_MESSAGE);
+    setAuthMessage("已退出登录");
   }
 
   function handleWorkspaceWheel(event: React.WheelEvent<HTMLDivElement>) {
@@ -1448,6 +1550,34 @@ function App() {
     setDetail(null);
   }
 
+  if (!ready) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card compact">
+          <Loader2 className="spin" size={24} />
+          <strong>正在加载会话</strong>
+        </section>
+      </main>
+    );
+  }
+
+  if (authLanding || !user) {
+    return (
+      <AuthPage
+        currentUser={user}
+        onContinue={() => {
+          setAuthLanding(false);
+          setAuthMessage("");
+        }}
+        onLogin={login}
+        onRegister={register}
+        onChangePassword={changePassword}
+        onLogout={logout}
+        message={authMessage}
+      />
+    );
+  }
+
   if (ready && !projectChosen) {
     return (
       <ProjectSelectionPage
@@ -1474,6 +1604,8 @@ function App() {
         activeView={activeView}
         setActiveView={setActiveView}
         backToProjects={() => setProjectChosen(false)}
+        user={user}
+        activeProjectRole={activeProjectRole}
       />
       <main className="workspace">
         <header className="topbar">
@@ -1558,14 +1690,20 @@ function App() {
             </section>
           </div>
         ) : (
-          <ConfigWorkspace
-            view={activeView}
-            projectId={activeProjectId}
-            repos={repos}
-            reload={loadAll}
-            setMessage={setMessage}
-            canEdit={["project_admin", "system_admin"].includes(activeProjectRole)}
-          />
+          activeView === "personal" ? (
+            <PersonalSettingsWorkspace user={user} setMessage={setMessage} />
+          ) : activeView === "system" ? (
+            <SystemSettingsWorkspace setMessage={setMessage} canEdit={canManageSystem} />
+          ) : (
+            <ConfigWorkspace
+              view={activeView}
+              projectId={activeProjectId}
+              repos={repos}
+              reload={loadAll}
+              setMessage={setMessage}
+              canEdit={canManageProject}
+            />
+          )
         )}
         {mrPreview && (
           <MrPreviewModal
@@ -1581,6 +1719,171 @@ function App() {
         {publishNotice && <PublishResultModal notice={publishNotice} onClose={() => setPublishNotice(null)} />}
       </main>
     </div>
+  );
+}
+
+function AuthPage({
+  currentUser,
+  onContinue,
+  onLogin,
+  onRegister,
+  onChangePassword,
+  onLogout,
+  message
+}: {
+  currentUser: User | null;
+  onContinue: () => void;
+  onLogin: (username: string, password: string) => Promise<void>;
+  onRegister: (input: { username: string; password: string; display_name: string; email: string }) => Promise<void>;
+  onChangePassword: (input: { current_password: string; new_password: string; confirm_password: string }) => Promise<void>;
+  onLogout: () => Promise<void>;
+  message: string;
+}) {
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [username, setUsername] = useState("local-admin");
+  const [password, setPassword] = useState("");
+  const [passwordPanelOpen, setPasswordPanelOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [passwordBusy, setPasswordBusy] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      if (mode === "login") {
+        await onLogin(username.trim(), password);
+      } else {
+        await onRegister({
+          username: username.trim(),
+          password,
+          display_name: displayName.trim() || username.trim(),
+          email: email.trim()
+        });
+        setMode("login");
+        setPassword("");
+      }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitPasswordChange(event: React.FormEvent) {
+    event.preventDefault();
+    setPasswordBusy(true);
+    setError("");
+    try {
+      await onChangePassword({
+        current_password: currentPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword
+      });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordPanelOpen(false);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setPasswordBusy(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-card">
+        <div className="auth-brand">
+          <Zap className="brand-icon" size={30} fill="currentColor" />
+          <div>
+            <strong>Jolt CodeReview</strong>
+            <span>登录后进入你的项目空间</span>
+          </div>
+        </div>
+        <div className="auth-tabs" role="tablist">
+          <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>登录</button>
+          <button type="button" className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}>注册</button>
+        </div>
+        {currentUser && (
+          <div className="auth-current-user">
+            <div>
+              <span>当前已登录</span>
+              <strong>{currentUser.display_name || currentUser.username}</strong>
+              <em>{currentUser.username}</em>
+            </div>
+            <button type="button" onClick={onContinue}>进入项目空间</button>
+            <button type="button" className="ghost" onClick={onLogout}>切换账号</button>
+          </div>
+        )}
+        <form className="auth-form" onSubmit={submit}>
+          <label>
+            <span>用户名</span>
+            <input value={username} onChange={(event) => setUsername(event.target.value)} autoFocus />
+          </label>
+          {mode === "register" && (
+            <>
+              <label>
+                <span>显示名</span>
+                <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="默认使用用户名" />
+              </label>
+              <label>
+                <span>邮箱</span>
+                <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="可选" />
+              </label>
+            </>
+          )}
+          <label>
+            <span>密码</span>
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "login" ? "本地默认 admin123" : "至少 6 位"} />
+          </label>
+          {(error || message) && <p className={error ? "form-error" : "auth-message"}>{error || message}</p>}
+          <button type="submit" disabled={busy}>
+            {busy ? "处理中..." : mode === "login" ? "登录" : "注册账号"}
+          </button>
+          {mode === "login" && (
+            <button
+              type="button"
+              className="auth-link-button"
+              onClick={() => {
+                if (!currentUser) {
+                  setError("请先登录后再修改密码");
+                  return;
+                }
+                setError("");
+                setPasswordPanelOpen((value) => !value);
+              }}
+            >
+              修改密码
+            </button>
+          )}
+        </form>
+        {mode === "login" && passwordPanelOpen && currentUser && (
+          <form className="auth-password-form" onSubmit={submitPasswordChange}>
+            <label>
+              <span>当前密码</span>
+              <input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+            </label>
+            <label>
+              <span>新密码</span>
+              <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="至少 6 位" />
+            </label>
+            <label>
+              <span>确认新密码</span>
+              <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
+            </label>
+            <button type="submit" disabled={passwordBusy}>{passwordBusy ? "保存中..." : "保存新密码"}</button>
+          </form>
+        )}
+        <p className="auth-hint">本机默认 root 账号：local-admin / admin123。生产部署时请先修改密码策略和初始化账号。</p>
+      </section>
+    </main>
   );
 }
 
@@ -1619,7 +1922,9 @@ function viewTitle(view: ViewKey) {
     users: "用户权限",
     tools: "工具链",
     queue: "队列运维",
-    settings: "系统设置"
+    personal: "个人设置",
+    settings: "项目设置",
+    system: "系统设置"
   };
   return map[view];
 }
@@ -1635,7 +1940,9 @@ function Sidebar({
   busy,
   activeView,
   setActiveView,
-  backToProjects
+  backToProjects,
+  user,
+  activeProjectRole
 }: {
   projects: Project[];
   activeProjectId: string;
@@ -1648,7 +1955,11 @@ function Sidebar({
   activeView: ViewKey;
   setActiveView: (view: ViewKey) => void;
   backToProjects: () => void;
+  user: User | null;
+  activeProjectRole: string;
 }) {
+  const canManageProject = isProjectAdminRole(activeProjectRole, user);
+  const canManageSystem = isRootUser(user);
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -1666,10 +1977,12 @@ function Sidebar({
       </label>
       <nav className="nav">
         <NavItem icon={<GitBranch />} label="MR 队列" active={activeView === "mr"} onClick={() => setActiveView("mr")} />
-        <NavItem icon={<Bot />} label="专家与规则" active={activeView === "agents"} onClick={() => setActiveView("agents")} />
-        <NavItem icon={<Clock3 />} label="队列运维" active={activeView === "queue"} onClick={() => setActiveView("queue")} />
-        <NavItem icon={<LockKeyhole />} label="用户权限" active={activeView === "users"} onClick={() => setActiveView("users")} />
-        <NavItem icon={<Settings />} label="系统设置" active={activeView === "settings"} onClick={() => setActiveView("settings")} />
+        <NavItem icon={<UserRound />} label="个人设置" active={activeView === "personal"} onClick={() => setActiveView("personal")} />
+        {canManageProject && <NavItem icon={<Bot />} label="专家与规则" active={activeView === "agents"} onClick={() => setActiveView("agents")} />}
+        {canManageProject && <NavItem icon={<Clock3 />} label="队列运维" active={activeView === "queue"} onClick={() => setActiveView("queue")} />}
+        {canManageProject && <NavItem icon={<LockKeyhole />} label="用户权限" active={activeView === "users"} onClick={() => setActiveView("users")} />}
+        {canManageProject && <NavItem icon={<Settings />} label="项目设置" active={activeView === "settings"} onClick={() => setActiveView("settings")} />}
+        {canManageSystem && <NavItem icon={<Database />} label="系统设置" active={activeView === "system"} onClick={() => setActiveView("system")} />}
       </nav>
       <button className="collapse-button" type="button" onClick={backToProjects}>
         <ChevronLeft size={16} />
@@ -1709,6 +2022,20 @@ function ProjectSelectionPage({
   const [createRepoUrl, setCreateRepoUrl] = useState("");
   const [createRepoName, setCreateRepoName] = useState("");
   const [createError, setCreateError] = useState("");
+  const [discoverProjects, setDiscoverProjects] = useState<Project[]>([]);
+  const [joinReason, setJoinReason] = useState("");
+  const [joiningProjectId, setJoiningProjectId] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const canCreateProject = isRootUser(user);
+
+  async function loadDiscoverProjects() {
+    const result = await api<{ items: Project[] }>("/api/projects/discover");
+    setDiscoverProjects(result.items || []);
+  }
+
+  useEffect(() => {
+    loadDiscoverProjects().catch(() => undefined);
+  }, [projects.length]);
 
   async function createProject() {
     const name = createName.trim();
@@ -1740,6 +2067,7 @@ function ProjectSelectionPage({
         })
       });
       await refreshProjects();
+      await loadDiscoverProjects();
       setCreateOpen(false);
       setCreateName("");
       setCreateDescription("");
@@ -1751,6 +2079,32 @@ function ProjectSelectionPage({
     } finally {
       setCreating(false);
     }
+  }
+
+  async function requestJoin(projectId: string) {
+    setJoiningProjectId(projectId);
+    try {
+      await api(`/api/projects/${projectId}/join-requests`, {
+        method: "POST",
+        body: JSON.stringify({ requested_role: "developer", reason: joinReason.trim() })
+      });
+      setJoinReason("");
+      await loadDiscoverProjects();
+    } finally {
+      setJoiningProjectId("");
+    }
+  }
+
+  async function redeemInvite() {
+    const code = inviteCode.trim();
+    if (!code) return;
+    await api("/api/projects/join-by-invite", {
+      method: "POST",
+      body: JSON.stringify({ invite_code: code })
+    });
+    setInviteCode("");
+    await refreshProjects();
+    await loadDiscoverProjects();
   }
 
   return (
@@ -1771,16 +2125,47 @@ function ProjectSelectionPage({
       </section>
       <section className="project-card-grid">
         {projects.map((project) => (
-          <ProjectCard key={project.id} project={project} refreshProjects={refreshProjects} enterProject={enterProject} />
+          <ProjectCard key={project.id} project={project} user={user} refreshProjects={refreshProjects} enterProject={enterProject} />
         ))}
-        <button className="project-create-card" type="button" onClick={() => setCreateOpen(true)}>
-          <span><Plus size={22} /></span>
-          <strong>新建项目</strong>
-          <em>创建项目后可立即绑定 Git 仓库，并进入独立 MR 工作台。</em>
-        </button>
+        {canCreateProject && (
+          <button className="project-create-card" type="button" onClick={() => setCreateOpen(true)}>
+            <span><Plus size={22} /></span>
+            <strong>新建项目</strong>
+            <em>创建项目后可立即绑定 Git 仓库，并进入独立 MR 工作台。</em>
+          </button>
+        )}
         {!projects.length && <div className="config-table-empty">暂无可访问项目</div>}
       </section>
-      {createOpen && (
+      {!isRootUser(user) && <section className="project-join-panel">
+        <div>
+          <strong>申请加入项目</strong>
+          <span>提交申请后，由项目管理员在“用户权限”中审批。</span>
+        </div>
+        <div className="invite-redeem-row">
+          <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} placeholder="输入项目邀请码" />
+          <button type="button" onClick={redeemInvite}>使用邀请码加入</button>
+        </div>
+        <textarea value={joinReason} onChange={(event) => setJoinReason(event.target.value)} placeholder="可选：说明加入原因或团队归属" />
+        <div className="project-join-list">
+          {discoverProjects.filter((project) => !project.role).map((project) => (
+            <article key={project.id}>
+              <div>
+                <strong>{project.name}</strong>
+                <span>{project.description || "未填写项目描述"}</span>
+              </div>
+              {project.join_request_status === "pending" ? (
+                <em>申请待审批</em>
+              ) : (
+                <button type="button" onClick={() => requestJoin(project.id)} disabled={joiningProjectId === project.id}>
+                  {joiningProjectId === project.id ? "提交中..." : "申请加入"}
+                </button>
+              )}
+            </article>
+          ))}
+          {!discoverProjects.filter((project) => !project.role).length && <div className="config-table-empty">暂无可申请项目</div>}
+        </div>
+      </section>}
+      {canCreateProject && createOpen && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setCreateOpen(false)}>
           <section className="project-maintenance-modal project-create-modal" onClick={(event) => event.stopPropagation()}>
             <header>
@@ -1828,14 +2213,17 @@ function ProjectSelectionPage({
 
 function ProjectCard({
   project,
+  user,
   refreshProjects,
   enterProject
 }: {
   project: Project;
+  user: User | null;
   refreshProjects: () => Promise<void>;
   enterProject: (projectId: string) => void;
 }) {
-  const canEdit = ["project_admin", "system_admin"].includes(String(project.role || ""));
+  const canEdit = isProjectAdminRole(String(project.role || ""), user);
+  const roleLabel = isRootUser(user) ? "root" : project.role || "observer";
   const [repos, setRepos] = useState<Repo[]>([]);
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description || "");
@@ -1912,7 +2300,7 @@ function ProjectCard({
           <span>{project.description || "未填写项目描述"}</span>
         </div>
         <div className="project-card-tools">
-          <span className="state-pill on">{project.role || "observer"}</span>
+          <span className="state-pill on">{roleLabel}</span>
           <button
             className="project-settings-button"
             type="button"
@@ -1950,7 +2338,7 @@ function ProjectCard({
               <div className="project-maintenance-summary">
                 <article>
                   <span>角色</span>
-                  <strong>{project.role || "observer"}</strong>
+                  <strong>{roleLabel}</strong>
                 </article>
                 <article>
                   <span>代码仓</span>
@@ -2083,6 +2471,15 @@ function ConfigWorkspace({
     enable_stream: true
   });
   const [llmStoredApiKey, setLlmStoredApiKey] = useState("");
+  const [projectVcsForm, setProjectVcsForm] = useState<ProjectVcsSettingsForm>({
+    codehub_token: "",
+    codehub_token_env: "",
+    codehub_endpoint: "",
+    github_token: "",
+    github_token_env: "",
+    github_endpoint: ""
+  });
+  const [projectVcsStoredTokens, setProjectVcsStoredTokens] = useState({ codehub_token: "", github_token: "" });
   const [reviewForm, setReviewForm] = useState<ReviewSettingsForm>({ effort: "standard", max_findings_per_mr: "40", min_confidence: "0.75", enable_full_repo_context: true });
   const [budgetForm, setBudgetForm] = useState<BudgetSettingsForm>({
     standard: { max_llm_calls: "80", max_wall_seconds: "1800", max_output_tokens: "16000", max_findings: "80" },
@@ -2113,6 +2510,14 @@ function ConfigWorkspace({
   const [skillAssets, setSkillAssets] = useState<Record<string, unknown>[]>([]);
   const [skillBindings, setSkillBindings] = useState<Record<string, unknown>[]>([]);
   const [toolBindings, setToolBindings] = useState<Record<string, unknown>[]>([]);
+  const [userPermissionTab, setUserPermissionTab] = useState<"requests" | "members">("requests");
+  const [joinRequests, setJoinRequests] = useState<Record<string, unknown>[]>([]);
+  const [reviewingJoinRequestId, setReviewingJoinRequestId] = useState("");
+  const [reviewingJoinRequestAction, setReviewingJoinRequestAction] = useState<"approved" | "rejected" | "">("");
+  const [removingMemberId, setRemovingMemberId] = useState("");
+  const [invitations, setInvitations] = useState<Record<string, unknown>[]>([]);
+  const [inviteRole, setInviteRole] = useState("developer");
+  const [inviteMaxUses, setInviteMaxUses] = useState("1");
   const [agentTab, setAgentTab] = useState<"create" | "list">("create");
   const [ruleContent, setRuleContent] = useState("只报告有证据、有行号、可修复的高置信问题。");
   const [ruleDocName, setRuleDocName] = useState("项目代码规范.md");
@@ -2182,7 +2587,16 @@ function ConfigWorkspace({
         setSkillBindings(listItems(expertSkillBindings));
         setAgentQuality(listItems(qualityData));
       }
-      else if (view === "users") setRows(await api<Record<string, unknown>[]>(`/api/projects/${projectId}/members`));
+      else if (view === "users") {
+        const [members, requests, invitationData] = await Promise.all([
+          api<Record<string, unknown>[]>(`/api/projects/${projectId}/members`),
+          api<{ items: Record<string, unknown>[] }>(`/api/projects/${projectId}/join-requests`),
+          api<{ items: Record<string, unknown>[] }>(`/api/projects/${projectId}/invitations`)
+        ]);
+        setRows(members);
+        setJoinRequests(requests.items || []);
+        setInvitations(invitationData.items || []);
+      }
       else if (view === "policy") setRows([await api<Record<string, unknown>>(`/api/projects/${projectId}/review-policy`)]);
       else if (view === "tools") {
         const [data, availability] = await Promise.all([
@@ -2212,6 +2626,7 @@ function ConfigWorkspace({
       const settingsMap = recordValue((settings as Record<string, unknown>).settings);
       const effectiveRoot = recordValue((effective as Record<string, unknown>).effective_config);
       const llm = { ...recordValue(effectiveRoot.llm), ...recordValue(settingsMap.llm_policy) };
+      const vcsPolicy = { ...recordValue(settingsMap.vcs_policy) };
       const reviewPolicy = { ...recordValue(effectiveRoot.review_policy), ...recordValue(settingsMap.review_policy) };
       const budgetPolicy = { ...recordValue(effectiveRoot.budget_policy), ...recordValue(settingsMap.budget_policy) };
       const agentPolicy = { ...recordValue(effectiveRoot.agent_policy), ...recordValue(settingsMap.agent_policy) };
@@ -2239,6 +2654,18 @@ function ConfigWorkspace({
         enable_stream: llm.enable_stream !== false
       });
       setLlmStoredApiKey(String(llm.default_api_key ?? ""));
+      setProjectVcsForm({
+        codehub_token: "",
+        codehub_token_env: String(vcsPolicy.codehub_token_env ?? recordValue(effectiveRoot.codehub).default_token_env ?? ""),
+        codehub_endpoint: String(vcsPolicy.codehub_endpoint ?? recordValue(effectiveRoot.codehub).default_endpoint ?? ""),
+        github_token: "",
+        github_token_env: String(vcsPolicy.github_token_env ?? recordValue(effectiveRoot.github).default_token_env ?? ""),
+        github_endpoint: String(vcsPolicy.github_endpoint ?? recordValue(effectiveRoot.github).default_endpoint ?? "")
+      });
+      setProjectVcsStoredTokens({
+        codehub_token: String(vcsPolicy.codehub_token ?? ""),
+        github_token: String(vcsPolicy.github_token ?? "")
+      });
       setReviewForm({
         effort: String(reviewPolicy.effort ?? "standard"),
         max_findings_per_mr: String(reviewPolicy.max_findings_per_mr ?? reviewPolicy.max_findings ?? "40"),
@@ -2443,6 +2870,70 @@ function ConfigWorkspace({
     await loadConfigView();
   }
 
+  async function removeMember(row: Record<string, unknown>) {
+    const memberId = String(row.id || "");
+    if (!memberId) return;
+    const displayName = String(row.display_name || row.username || row.user_id || "该用户");
+    const confirmed = window.confirm(`确认移除 ${displayName} 在当前项目中的权限吗？`);
+    if (!confirmed) return;
+    setRemovingMemberId(memberId);
+    try {
+      await api(`/api/projects/${projectId}/members/${memberId}`, { method: "DELETE" });
+      setMessage(`已移除 ${displayName} 的项目权限`);
+      setSuccessNotice({
+        title: "项目权限已移除",
+        message: `${displayName} 已不再拥有当前项目访问权限。`,
+        detail: "成员列表已刷新。"
+      });
+      await loadConfigView();
+      await reload();
+    } finally {
+      setRemovingMemberId("");
+    }
+  }
+
+  async function reviewJoinRequest(row: Record<string, unknown>, status: "approved" | "rejected") {
+    const requestId = String(row.id || "");
+    if (!requestId) return;
+    const applicant = String(row.display_name || row.username || row.user_id || "该用户");
+    setReviewingJoinRequestId(requestId);
+    setReviewingJoinRequestAction(status);
+    try {
+      const result = await api<Record<string, unknown>>(`/api/projects/${projectId}/join-requests/${requestId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status })
+      });
+      const approved = status === "approved";
+      const message = approved ? `${applicant} 已加入项目` : `已拒绝 ${applicant} 的加入申请`;
+      setMessage(message);
+      setSuccessNotice({
+        title: approved ? "加入申请已批准" : "加入申请已拒绝",
+        message,
+        detail: approved
+          ? `授权角色：${String(result.requested_role || row.requested_role || "developer")}。成员列表和申请状态已刷新。`
+          : "申请状态已更新为 rejected，用户可在项目选择页看到最新状态。"
+      });
+      await loadConfigView();
+      await reload();
+    } finally {
+      setReviewingJoinRequestId("");
+      setReviewingJoinRequestAction("");
+    }
+  }
+
+  async function createInvitation() {
+    const result = await api<{ invite_code: string }>(`/api/projects/${projectId}/invitations`, {
+      method: "POST",
+      body: JSON.stringify({ role: inviteRole, max_uses: positiveNumber(inviteMaxUses, 1, 500) })
+    });
+    setSuccessNotice({
+      title: "邀请码已创建",
+      message: result.invite_code,
+      detail: "邀请码只展示一次，请发送给需要加入项目的用户。"
+    });
+    await loadConfigView();
+  }
+
   async function saveStructuredSetting(key: string, label: string, value: Record<string, unknown>) {
     await api(`/api/projects/${projectId}/settings/${key}`, {
       method: "PATCH",
@@ -2466,6 +2957,17 @@ function ConfigWorkspace({
       request_timeout_seconds: clampLlmTimeout(llmForm.request_timeout_seconds),
       max_output_tokens: clampLlmOutputTokens(llmForm.max_output_tokens),
       enable_stream: llmForm.enable_stream
+    });
+  }
+
+  async function saveProjectVcsSettings() {
+    await saveStructuredSetting("vcs_policy", "代码平台访问配置", {
+      codehub_token: projectVcsForm.codehub_token.trim() || projectVcsStoredTokens.codehub_token || null,
+      codehub_token_env: projectVcsForm.codehub_token_env.trim() || null,
+      codehub_endpoint: projectVcsForm.codehub_endpoint.trim() || null,
+      github_token: projectVcsForm.github_token.trim() || projectVcsStoredTokens.github_token || null,
+      github_token_env: projectVcsForm.github_token_env.trim() || null,
+      github_endpoint: projectVcsForm.github_endpoint.trim() || null
     });
   }
 
@@ -2933,11 +3435,91 @@ function ConfigWorkspace({
       )}
       {view === "users" && (
         <>
-          <div className="config-editor inline">
-            <input value={memberName} onChange={(event) => setMemberName(event.target.value)} placeholder="username" disabled={!canEdit} />
-            <button type="button" onClick={addMember} disabled={!canEdit}>添加开发者</button>
+          <div className="user-permission-tabs" role="tablist" aria-label="用户权限管理页签">
+            <button type="button" className={userPermissionTab === "requests" ? "active" : ""} onClick={() => setUserPermissionTab("requests")}>
+              用户权限审批
+            </button>
+            <button type="button" className={userPermissionTab === "members" ? "active" : ""} onClick={() => setUserPermissionTab("members")}>
+              已加入用户管理
+            </button>
           </div>
-          <ConfigTable rows={rows} columns={["username", "display_name", "role", "status"]} />
+          {userPermissionTab === "requests" && (
+            <>
+              <div className="join-request-section">
+                <div className="setting-form-head">
+                  <strong>加入申请</strong>
+                  <span>普通用户提交加入项目申请后，项目管理员在这里审批。</span>
+                </div>
+                {joinRequests.map((row) => (
+                  <article key={String(row.id)}>
+                    <div>
+                      <strong>{String(row.display_name || row.username || row.user_id)}</strong>
+                      <span>{String(row.reason || "未填写申请原因")}</span>
+                      <em>{String(row.status || "pending")} · {String(row.requested_role || "developer")}</em>
+                    </div>
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => reviewJoinRequest(row, "approved")}
+                        disabled={!canEdit || Boolean(reviewingJoinRequestId) || String(row.status) !== "pending"}
+                      >
+                        {reviewingJoinRequestId === String(row.id) && reviewingJoinRequestAction === "approved" ? "批准中..." : "批准"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => reviewJoinRequest(row, "rejected")}
+                        disabled={!canEdit || Boolean(reviewingJoinRequestId) || String(row.status) !== "pending"}
+                      >
+                        {reviewingJoinRequestId === String(row.id) && reviewingJoinRequestAction === "rejected" ? "拒绝中..." : "拒绝"}
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                {!joinRequests.length && <div className="config-table-empty">暂无加入申请</div>}
+              </div>
+              <div className="join-request-section">
+                <div className="setting-form-head">
+                  <strong>项目邀请码</strong>
+                  <span>创建一次性或多次使用的邀请码，用户可在项目选择页直接加入。</span>
+                </div>
+                <div className="invite-create-row">
+                  <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)} disabled={!canEdit}>
+                    <option value="developer">developer</option>
+                    <option value="reviewer">reviewer</option>
+                    <option value="observer">observer</option>
+                    <option value="project_admin">project_admin</option>
+                  </select>
+                  <input type="number" min="1" max="500" value={inviteMaxUses} onChange={(event) => setInviteMaxUses(event.target.value)} disabled={!canEdit} />
+                  <button type="button" onClick={createInvitation} disabled={!canEdit}>创建邀请码</button>
+                </div>
+                <ConfigTable rows={invitations} columns={["role", "status", "used_count", "max_uses", "created_by_username", "created_at"]} />
+              </div>
+            </>
+          )}
+          {userPermissionTab === "members" && (
+            <div className="joined-user-management">
+              <div className="config-editor inline">
+                <input value={memberName} onChange={(event) => setMemberName(event.target.value)} placeholder="username" disabled={!canEdit} />
+                <button type="button" onClick={addMember} disabled={!canEdit}>添加开发者</button>
+              </div>
+              <div className="joined-user-list">
+                {rows.map((row) => (
+                  <article key={String(row.id)}>
+                    <div>
+                      <strong>{String(row.display_name || row.username || row.user_id)}</strong>
+                      <span>{String(row.username || "--")} · {String(row.email || "未配置邮箱")}</span>
+                      <em>{String(row.role || "developer")} · {String(row.status || "active")}</em>
+                    </div>
+                    <button type="button" onClick={() => removeMember(row)} disabled={!canEdit || removingMemberId === String(row.id)}>
+                      <Trash2 size={15} />
+                      {removingMemberId === String(row.id) ? "移除中..." : "移除权限"}
+                    </button>
+                  </article>
+                ))}
+                {!rows.length && <div className="config-table-empty">暂无已加入用户</div>}
+              </div>
+            </div>
+          )}
         </>
       )}
       {view === "policy" && <ConfigTable rows={rows.map((row) => ({ ...row, policy_json: JSON.stringify(safeJson(String(row.policy_json || "{}")), null, 2) }))} columns={["project_id", "policy_json", "updated_at"]} />}
@@ -2987,6 +3569,36 @@ function ConfigWorkspace({
                 <button type="button" onClick={saveLlmSettings} disabled={!canEdit}>保存模型配置</button>
               </div>
               {llmTest.message && <p className={`llm-test-result ${llmTest.status}`}>{llmTest.message}</p>}
+            </article>
+
+            <article className="setting-form-card">
+              <div className="setting-form-head">
+                <strong>代码平台访问配置</strong>
+                <span>项目管理员按项目配置。同步 MR、读取 diff、获取 MR 文件信息统一使用这里的凭据，保证同项目所有用户看到同一批 MR 和同一套状态。</span>
+              </div>
+              <div className="setting-form-grid">
+                <SettingField label="CodeHub Endpoint">
+                  <input value={projectVcsForm.codehub_endpoint} onChange={(event) => setProjectVcsForm({ ...projectVcsForm, codehub_endpoint: event.target.value })} placeholder="https://codehub.example.com" disabled={!canEdit} />
+                </SettingField>
+                <SettingField label="CodeHub Token 环境变量">
+                  <input value={projectVcsForm.codehub_token_env} onChange={(event) => setProjectVcsForm({ ...projectVcsForm, codehub_token_env: event.target.value })} placeholder="CODEHUB_TOKEN" disabled={!canEdit} />
+                </SettingField>
+                <SettingField label="CodeHub Token">
+                  <input type="password" value={projectVcsForm.codehub_token} onChange={(event) => setProjectVcsForm({ ...projectVcsForm, codehub_token: event.target.value })} placeholder={projectVcsStoredTokens.codehub_token ? "已配置，留空不修改" : "用于拉取 MR 和读取 diff"} disabled={!canEdit} />
+                </SettingField>
+                <SettingField label="GitHub Endpoint">
+                  <input value={projectVcsForm.github_endpoint} onChange={(event) => setProjectVcsForm({ ...projectVcsForm, github_endpoint: event.target.value })} placeholder="https://api.github.com" disabled={!canEdit} />
+                </SettingField>
+                <SettingField label="GitHub Token 环境变量">
+                  <input value={projectVcsForm.github_token_env} onChange={(event) => setProjectVcsForm({ ...projectVcsForm, github_token_env: event.target.value })} placeholder="GITHUB_TOKEN" disabled={!canEdit} />
+                </SettingField>
+                <SettingField label="GitHub Token">
+                  <input type="password" value={projectVcsForm.github_token} onChange={(event) => setProjectVcsForm({ ...projectVcsForm, github_token: event.target.value })} placeholder={projectVcsStoredTokens.github_token ? "已配置，留空不修改" : "用于拉取 PR 和读取 diff"} disabled={!canEdit} />
+                </SettingField>
+              </div>
+              <div className="setting-actions">
+                <button type="button" onClick={saveProjectVcsSettings} disabled={!canEdit}>保存代码平台配置</button>
+              </div>
             </article>
 
             <article className="setting-form-card wide">
@@ -3225,6 +3837,225 @@ function ConfigWorkspace({
         </>
       )}
       {successNotice && <SuccessNoticeModal notice={successNotice} onClose={() => setSuccessNotice(null)} />}
+    </section>
+  );
+}
+
+function PersonalSettingsWorkspace({ user, setMessage }: { user: User | null; setMessage: (value: string) => void }) {
+  const [vcsForm, setVcsForm] = useState<VcsTokenForm>({ codehub_token: "" });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState("");
+  const [successNotice, setSuccessNotice] = useState<SuccessNotice | null>(null);
+
+  async function loadPersonalSettings() {
+    setLoading(true);
+    try {
+      const result = await api<{ items: Array<{ key: string; value: Record<string, unknown> }> }>("/api/me/settings");
+      const map = new Map(result.items.map((item) => [item.key, item.value]));
+      const tokens = map.get("vcs_tokens") || {};
+      setVcsForm({
+        codehub_token: "",
+        codehub_token_has_value: Boolean(tokens.codehub_token_has_value),
+        codehub_token_masked: String(tokens.codehub_token_masked || "")
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadPersonalSettings().catch((error) => setMessage(error instanceof Error ? error.message : String(error)));
+  }, []);
+
+  async function saveVcsTokens() {
+    setSaving("tokens");
+    try {
+      await api("/api/me/settings/vcs_tokens", {
+        method: "PATCH",
+        body: JSON.stringify({
+          value: {
+            codehub_token: vcsForm.codehub_token.trim()
+          }
+        })
+      });
+      setMessage("个人 CodeHub Token 已保存");
+      setSuccessNotice({ title: "CodeHub Token 已保存", message: "个人 CodeHub Token 只用于你手动提交已确认的检视意见，不参与 MR 同步、diff 读取和 AI 检视。" });
+      await loadPersonalSettings();
+    } finally {
+      setSaving("");
+    }
+  }
+
+  return (
+    <section className="config-workspace">
+      <ConfigHeader title="个人设置" subtitle="个人配置只用于当前用户的交互动作；项目同步和 AI 检视统一使用项目管理员配置。" />
+      {loading ? (
+        <SettingsConfigLoadingPanel loading error="" onRetry={loadPersonalSettings} />
+      ) : (
+        <div className="settings-grid">
+          <article className="setting-form-card">
+            <div className="setting-form-head">
+              <strong>账号信息</strong>
+              <span>{user?.display_name || user?.username} · {user?.global_role === "root" ? "root 管理员" : "普通用户"}</span>
+            </div>
+            <ConfigCard title="当前用户" rows={[`用户名 ${user?.username || "--"}`, `邮箱 ${user?.email || "--"}`, `角色 ${user?.global_role || "user"}`]} />
+          </article>
+          <article className="setting-form-card">
+            <div className="setting-form-head">
+              <strong>个人 CodeHub Token</strong>
+              <span>仅用于以你的身份提交已确认的检视意见。MR 同步、diff 读取和 AI 检视统一使用项目级凭据。</span>
+            </div>
+            <div className="setting-form-grid">
+              <SettingField label="CodeHub Token">
+                <input type="password" value={vcsForm.codehub_token} onChange={(event) => setVcsForm({ ...vcsForm, codehub_token: event.target.value })} placeholder={vcsForm.codehub_token_has_value ? `已配置 ${vcsForm.codehub_token_masked}` : "输入 CodeHub Token"} />
+              </SettingField>
+            </div>
+            <div className="setting-actions">
+              <button type="button" onClick={saveVcsTokens} disabled={saving === "tokens"}>{saving === "tokens" ? "保存中..." : "保存 Token"}</button>
+            </div>
+          </article>
+        </div>
+      )}
+      {successNotice && <SuccessNoticeModal notice={successNotice} onClose={() => setSuccessNotice(null)} />}
+    </section>
+  );
+}
+
+function SystemSettingsWorkspace({ setMessage, canEdit }: { setMessage: (value: string) => void; canEdit: boolean }) {
+  const [storage, setStorage] = useState<Record<string, unknown> | null>(null);
+  const [form, setForm] = useState<StorageSettingsForm>({ driver: "sqlite", postgres_url: "", postgres_user: "", postgres_password: "" });
+  const [loading, setLoading] = useState(true);
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [initializing, setInitializing] = useState(false);
+  const [notice, setNotice] = useState<SuccessNotice | null>(null);
+
+  async function loadStorage() {
+    setLoading(true);
+    try {
+      const result = await api<Record<string, unknown>>("/api/system/storage");
+      const value = recordValue(result.value);
+      setStorage(result);
+      setForm({
+        driver: String(value.driver || "sqlite"),
+        postgres_url: String(value.postgres_url || ""),
+        postgres_user: String(value.postgres_user || ""),
+        postgres_password: "",
+        postgres_password_has_value: Boolean(value.postgres_password_has_value),
+        postgres_password_masked: String(value.postgres_password_masked || "")
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadStorage().catch((error) => setMessage(error instanceof Error ? error.message : String(error)));
+  }, []);
+
+  async function testStorage() {
+    setTesting(true);
+    try {
+      const result = await api<Record<string, unknown>>("/api/system/storage/test", {
+        method: "POST",
+        body: JSON.stringify(form)
+      });
+      const msg = String(result.message || result.status || "测试完成");
+      setMessage(msg);
+      setNotice({ title: Boolean(result.ok) ? "数据库配置可用" : "数据库配置未启用", message: msg });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function saveStorage() {
+    setSaving(true);
+    try {
+      const result = await api<Record<string, unknown>>("/api/system/storage/switch", {
+        method: "POST",
+        body: JSON.stringify(form)
+      });
+      setStorage(result);
+      const msg = form.driver === "postgres"
+        ? "PostgreSQL 运行配置已保存到 config.json，重启 API 和 Worker 后会使用 PG。"
+        : "SQLite 运行配置已保存到 config.json，重启 API 和 Worker 后会使用 SQLite。";
+      setMessage(msg);
+      setNotice({ title: "系统存储配置已保存", message: msg });
+      await loadStorage();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function initializePostgres() {
+    setInitializing(true);
+    try {
+      const result = await api<Record<string, unknown>>("/api/system/storage/init-postgres", {
+        method: "POST",
+        body: JSON.stringify(form)
+      });
+      const msg = Boolean(result.ok)
+        ? `PostgreSQL 初始化完成：${String(result.initialized_tables ?? 0)} 张表，${String(result.initialized_indexes ?? 0)} 个索引。`
+        : String(result.message || "PostgreSQL 初始化失败");
+      setMessage(msg);
+      setNotice({ title: Boolean(result.ok) ? "PostgreSQL 初始化完成" : "PostgreSQL 初始化失败", message: msg });
+    } finally {
+      setInitializing(false);
+    }
+  }
+
+  return (
+    <section className="config-workspace">
+      <ConfigHeader title="系统设置" subtitle="仅 root 管理员可维护。这里放全局运行时和数据库目标配置。" />
+      {loading ? (
+        <SettingsConfigLoadingPanel loading error="" onRetry={loadStorage} />
+      ) : (
+        <div className="settings-grid">
+          <article className="setting-form-card">
+            <div className="setting-form-head">
+              <strong>数据库存储</strong>
+              <span>当前实际运行：{String(storage?.current_driver || "sqlite")} · {String(storage?.active_database_path || "--")}</span>
+            </div>
+            <div className="setting-form-grid">
+              <SettingField label="目标数据库">
+                <select value={form.driver} onChange={(event) => setForm({ ...form, driver: event.target.value })} disabled={!canEdit}>
+                  <option value="sqlite">SQLite</option>
+                  <option value="postgres">PostgreSQL</option>
+                </select>
+              </SettingField>
+              <SettingField label="PG 连接串">
+                <input value={form.postgres_url} onChange={(event) => setForm({ ...form, postgres_url: event.target.value })} placeholder="postgresql://host:5432/db" disabled={!canEdit || form.driver !== "postgres"} />
+              </SettingField>
+              <SettingField label="PG 用户名">
+                <input value={form.postgres_user} onChange={(event) => setForm({ ...form, postgres_user: event.target.value })} disabled={!canEdit || form.driver !== "postgres"} />
+              </SettingField>
+              <SettingField label="PG 密码">
+                <input type="password" value={form.postgres_password} onChange={(event) => setForm({ ...form, postgres_password: event.target.value })} placeholder={form.postgres_password_has_value ? `已配置 ${form.postgres_password_masked}` : ""} disabled={!canEdit || form.driver !== "postgres"} />
+              </SettingField>
+            </div>
+            <div className="system-storage-note">
+              PostgreSQL 表结构初始化会真实连接目标 PG 并创建当前系统表/索引。保存配置会同步写入 config.json；当前进程不会热切断连接，重启 API 和 Worker 后生效。
+            </div>
+            <div className="setting-actions">
+              <button type="button" onClick={testStorage} disabled={!canEdit || testing}>{testing ? "测试中..." : "测试配置"}</button>
+              <button type="button" onClick={initializePostgres} disabled={!canEdit || initializing || form.driver !== "postgres"}>{initializing ? "初始化中..." : "初始化 PG 表"}</button>
+              <button type="button" onClick={saveStorage} disabled={!canEdit || saving}>{saving ? "保存中..." : "保存配置"}</button>
+            </div>
+          </article>
+          <article className="setting-form-card">
+            <div className="setting-form-head">
+              <strong>权限边界</strong>
+              <span>系统级数据库配置只允许 root 修改；项目工具、规则和专家由项目管理员维护。</span>
+            </div>
+            <ConfigCard title="当前状态" rows={[
+              `PG runtime ${storage?.pg_runtime_enabled ? "enabled" : "not enabled"}`,
+              `切换状态 ${String(storage?.switch_status || "not_enabled")}`,
+              `更新时间 ${String(storage?.updated_at || "--")}`
+            ]} />
+          </article>
+        </div>
+      )}
+      {notice && <SuccessNoticeModal notice={notice} onClose={() => setNotice(null)} />}
     </section>
   );
 }

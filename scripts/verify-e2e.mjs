@@ -3,9 +3,9 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
+import { authenticatedRequest, request } from "./api-auth.mjs";
 import { loadConfig, root } from "./config-utils.mjs";
 
-const API = process.env.API_BASE || "http://127.0.0.1:8011";
 const PROJECT_ID = process.env.PROJECT_ID || "project_default";
 
 function id(prefix) {
@@ -15,19 +15,6 @@ function id(prefix) {
 function dbPath() {
   const config = loadConfig();
   return path.resolve(root, config.server?.database_path || "data/jolt-codereview.sqlite");
-}
-
-async function request(route, init) {
-  const response = await fetch(`${API}${route}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {})
-    }
-  });
-  const json = await response.json();
-  if (!response.ok) throw new Error(`${route} failed: ${JSON.stringify(json)}`);
-  return json;
 }
 
 function createFixtureReview() {
@@ -127,7 +114,7 @@ if (worker.status !== 0) {
   throw new Error(`worker failed:\n${worker.stdout}\n${worker.stderr}`);
 }
 
-const detail = await request(`/api/mr-review/merge-requests/${fixture.mrId}`);
+const detail = await authenticatedRequest(`/api/mr-review/merge-requests/${fixture.mrId}`);
 const latestRun = detail.runs[0];
 if (!latestRun) throw new Error("fixture MR has no review run");
 if (detail.findings.length < 2) {
@@ -136,9 +123,9 @@ if (detail.findings.length < 2) {
 const selectedFindingIds = detail.findings.filter((finding) => finding.selected).map((finding) => finding.id);
 if (selectedFindingIds.length < 2) throw new Error("fixture findings were not selected for publish");
 
-const logs = await request(`/api/mr-review/review-runs/${latestRun.id}/session-logs`);
-const artifacts = await request(`/api/mr-review/review-runs/${latestRun.id}/artifacts`);
-const runDetail = await request(`/api/mr-review/review-runs/${latestRun.id}`);
+const logs = await authenticatedRequest(`/api/mr-review/review-runs/${latestRun.id}/session-logs`);
+const artifacts = await authenticatedRequest(`/api/mr-review/review-runs/${latestRun.id}/artifacts`);
+const runDetail = await authenticatedRequest(`/api/mr-review/review-runs/${latestRun.id}`);
 if (!logs.tool_calls.length || !logs.llm_calls.length || !logs.messages.length) {
   throw new Error("fixture run does not have complete session logs");
 }
@@ -170,7 +157,7 @@ if (!artifactNames.includes("static_tool_results.json")) {
   throw new Error("fixture run has no static_tool_results artifact");
 }
 
-const publish = await request(`/api/mr-review/merge-requests/${fixture.mrId}/publish`, {
+const publish = await authenticatedRequest(`/api/mr-review/merge-requests/${fixture.mrId}/publish`, {
   method: "POST",
   body: JSON.stringify({ finding_ids: selectedFindingIds, dry_run: true })
 });
@@ -178,13 +165,13 @@ if (publish.published_count !== selectedFindingIds.length || !publish.dry_run) {
   throw new Error("dry-run publish did not record all selected findings");
 }
 
-const feedback = await request(`/api/mr-review/review-findings/${selectedFindingIds[0]}/feedback`, {
+const feedback = await authenticatedRequest(`/api/mr-review/review-findings/${selectedFindingIds[0]}/feedback`, {
   method: "POST",
   body: JSON.stringify({ feedback_type: "false_positive", scope: "project", reason: "e2e verification feedback" })
 });
 if (feedback.lifecycle_state !== "false_positive") throw new Error("false-positive feedback was not persisted");
 
-const afterPublish = await request(`/api/mr-review/merge-requests/${fixture.mrId}`);
+const afterPublish = await authenticatedRequest(`/api/mr-review/merge-requests/${fixture.mrId}`);
 const accepted = afterPublish.findings.filter((finding) => finding.publish_state === "dry_run").length;
 if (accepted < selectedFindingIds.length - 1) {
   throw new Error("publish states were not persisted after dry-run publish");

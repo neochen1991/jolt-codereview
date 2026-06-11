@@ -32,6 +32,7 @@ import { createQualityRoutes } from "./quality.routes.js";
 import { createRepositoryRoutes } from "./repositories.routes.js";
 import { createReviewRoutes } from "./review.routes.js";
 import { createRuleRoutes } from "./rules.routes.js";
+import { createSystemRoutes } from "./system.routes.js";
 import { createVcsProxyRoutes } from "./vcs-proxy.routes.js";
 import { createWebhookRoutes } from "./webhooks.routes.js";
 export function createRoutes(config: AppConfig, db: Db): Route[] {
@@ -47,7 +48,7 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
   const feedbackLearningService = new FeedbackLearningService(db);
   const projectConfigService = new ProjectConfigService(db);
   const reviewQueueService = new ReviewQueueService(reviewJobRepository);
-  const mrSyncService = new MrSyncService(config, repositoryRepository, mergeRequestRepository, reviewQueueService, runWorkerOnce);
+  const mrSyncService = new MrSyncService(config, repositoryRepository, mergeRequestRepository, reviewQueueService, runWorkerOnce, projectConfigService);
   const observabilityService = new ObservabilityService(db);
   const staticToolAvailabilityService = new StaticToolAvailabilityService();
 
@@ -191,6 +192,28 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
     );
     return Boolean(repoFullName && candidates.has(repoFullName));
   }
+
+  function effectiveConfigForUser(userId?: string | null): AppConfig {
+    if (!userId) return config;
+    const rows = projectRepository.listUserSettings(userId) as Array<{ settings_key: string; settings_json: string }>;
+    const tokenSettings = rows.find((row) => row.settings_key === "vcs_tokens");
+    if (!tokenSettings) return config;
+    const tokens = JSON.parse(tokenSettings.settings_json || "{}") as Record<string, unknown>;
+    const githubToken = String(tokens.github_token || "").trim();
+    const codehubToken = String(tokens.codehub_token || "").trim();
+    if (!githubToken && !codehubToken) return config;
+    return {
+      ...config,
+      github: {
+        ...config.github,
+        ...(githubToken ? { default_token: githubToken } : {})
+      },
+      codehub: {
+        ...config.codehub,
+        ...(codehubToken ? { default_token: codehubToken } : {})
+      }
+    };
+  }
   
   function projectRoleRank(role: string): number {
     return { system_admin: 5, project_admin: 4, reviewer: 3, developer: 2, observer: 1 }[role] ?? 0;
@@ -208,11 +231,16 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
       const session = projectRepository.findSessionUserId(sha1(token)) as { user_id: string } | undefined;
       if (session) return session.user_id;
     }
-    const headerUser = Array.isArray(req.headers["x-user-id"]) ? req.headers["x-user-id"][0] : req.headers["x-user-id"];
-    return headerUser ? String(headerUser) : "user_local_admin";
+    if (process.env.JOLT_TRUST_X_USER_ID === "1" || process.env.JOLT_TRUST_X_USER_ID === "true") {
+      const headerUser = Array.isArray(req.headers["x-user-id"]) ? req.headers["x-user-id"][0] : req.headers["x-user-id"];
+      return headerUser ? String(headerUser) : "";
+    }
+    return "";
   }
   
   function ensureProjectRole(projectId: string, userId: string, minRole: string) {
+    if (!userId) return { statusCode: 401, error: "unauthorized", message: "login is required" };
+    if (projectRepository.isRoot(userId)) return null;
     const member = projectRepository.findMemberRole(projectId, userId) as { role: string } | undefined;
     if (!member || projectRoleRank(member.role) < projectRoleRank(minRole)) {
       return { statusCode: 403, error: "forbidden", message: `${minRole} permission is required` };
@@ -220,8 +248,16 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
     return null;
   }
   
-  function ensureProjectWrite(projectId: string, userId = "user_local_admin") {
+  function ensureProjectWrite(projectId: string, userId = "") {
     return ensureProjectRole(projectId, userId, "project_admin");
+  }
+
+  function ensureRoot(userId: string) {
+    if (!userId) return { statusCode: 401, error: "unauthorized", message: "login is required" };
+    if (!projectRepository.isRoot(userId)) {
+      return { statusCode: 403, error: "forbidden", message: "root permission is required" };
+    }
+    return null;
   }
   
   function auditLog(input: {
@@ -245,8 +281,8 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
     });
   }
   
-  async function syncProject(projectId: string) {
-    return mrSyncService.syncProject(projectId);
+  async function syncProject(projectId: string, requestedBy?: string | null) {
+    return mrSyncService.syncProject(projectId, requestedBy);
   }
   
   function canUseGithubSuggestion(finding: FindingRow) {
@@ -315,9 +351,10 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
     let commentRef = `dry_run_${sha1(body).slice(0, 10)}`;
   
     if (!dryRun) {
+      const publishConfig = effectiveConfigForUser(userId);
       const ref = repo.provider === "github"
-        ? await postIssueComment(config, repoConfig(repo), mr.number, body)
-        : await postCodeHubSummaryComment(config, repoConfig(repo), mr.number, body);
+        ? await postIssueComment(publishConfig, repoConfig(repo), mr.number, body)
+        : await postCodeHubSummaryComment(publishConfig, repoConfig(repo), mr.number, body);
       commentRef = ref.id;
     }
   
@@ -383,6 +420,7 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
     currentUserId,
     ensureProjectRole,
     ensureProjectWrite,
+    ensureRoot,
     auditLog,
     syncProject,
     publishFindings,
@@ -396,6 +434,7 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
     ...createRuleRoutes(ctx),
     ...createAgentRoutes(ctx),
     ...createRepositoryRoutes(ctx),
+    ...createSystemRoutes(ctx),
     ...createObservabilityRoutes(ctx),
     ...createWebhookRoutes(ctx),
     ...createReviewRoutes(ctx),

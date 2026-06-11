@@ -1,9 +1,9 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { authenticatedRequest } from "./api-auth.mjs";
 import { loadConfig, root } from "./config-utils.mjs";
 
-const API = process.env.API_BASE || "http://127.0.0.1:8011";
 const PROJECT_ID = process.env.PROJECT_ID || "project_default";
 
 function id(prefix) {
@@ -13,22 +13,6 @@ function id(prefix) {
 function dbPath() {
   const config = loadConfig();
   return path.resolve(root, config.server?.database_path || "data/jolt-codereview.sqlite");
-}
-
-async function request(pathname, init) {
-  const response = await fetch(`${API}${pathname}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {})
-    }
-  });
-  const text = await response.text();
-  const json = text ? JSON.parse(text) : {};
-  if (!response.ok) {
-    throw new Error(`${pathname} failed: ${response.status} ${text}`);
-  }
-  return json;
 }
 
 function ensureSuggestionFinding() {
@@ -129,7 +113,7 @@ try {
   finding = seedSuggestionPublishFixture();
 }
 
-const publish = await request(`/api/mr-review/merge-requests/${finding.mr_id}/publish`, {
+const publish = await authenticatedRequest(`/api/mr-review/merge-requests/${finding.mr_id}/publish`, {
   method: "POST",
   body: JSON.stringify({ finding_ids: [finding.id], dry_run: true })
 });

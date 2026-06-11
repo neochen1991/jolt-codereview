@@ -37,7 +37,7 @@ const mergeRequestRepository = new MergeRequestRepository(db);
 const reviewJobRepository = new ReviewJobRepository(db);
 const projectConfigService = new ProjectConfigService(db);
 const reviewQueueService = new ReviewQueueService(reviewJobRepository);
-const mrSyncService = new MrSyncService(config, repositoryRepository, mergeRequestRepository, reviewQueueService, runWorkerOnce);
+const mrSyncService = new MrSyncService(config, repositoryRepository, mergeRequestRepository, reviewQueueService, runWorkerOnce, projectConfigService);
 const autoSyncScheduler = new MrAutoSyncScheduler(config, projectRepository, projectConfigService, mrSyncService, {
   logger: {
     log: (line: string) => logger.log("auto_sync", { message: line }),

@@ -7,6 +7,42 @@ export class ProjectRepository {
     return this.db.prepare("SELECT * FROM users WHERE username = ? AND status = 'active'").get(username);
   }
 
+  createUser(input: {
+    id: string;
+    username: string;
+    displayName: string;
+    email?: string | null;
+    passwordHash: string;
+    passwordSalt: string;
+    globalRole?: string;
+  }) {
+    this.db.prepare(`
+      INSERT INTO users (id, username, display_name, email, password_hash, password_salt, global_role, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
+    `).run(
+      input.id,
+      input.username,
+      input.displayName,
+      input.email ?? null,
+      input.passwordHash,
+      input.passwordSalt,
+      input.globalRole ?? "user"
+    );
+    return this.findUserById(input.id);
+  }
+
+  markLogin(userId: string) {
+    this.db.prepare("UPDATE users SET last_login_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(userId);
+  }
+
+  updateUserPassword(userId: string, passwordHash: string, passwordSalt: string) {
+    this.db.prepare(`
+      UPDATE users
+      SET password_hash = ?, password_salt = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(passwordHash, passwordSalt, userId);
+  }
+
   createAuthSession(id: string, userId: string, tokenHash: string) {
     this.db.prepare(`
       INSERT INTO auth_sessions (id, user_id, token_hash, status, expires_at)
@@ -26,6 +62,11 @@ export class ProjectRepository {
 
   findUserById(userId: string) {
     return this.db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
+  }
+
+  isRoot(userId: string) {
+    const user = this.findUserById(userId) as { global_role?: string } | undefined;
+    return user?.global_role === "root";
   }
 
   listProjects() {
@@ -171,7 +212,24 @@ export class ProjectRepository {
       FROM projects p
       JOIN project_members pm ON pm.project_id = p.id
       WHERE pm.user_id = ?
+      ORDER BY p.created_at
     `).all(userId);
+  }
+
+  listDiscoverableProjects(userId: string) {
+    return this.db.prepare(`
+      SELECT
+        p.*,
+        pm.role,
+        r.status AS join_request_status,
+        r.requested_role AS requested_role
+      FROM projects p
+      LEFT JOIN project_members pm
+        ON pm.project_id = p.id AND pm.user_id = ?
+      LEFT JOIN project_join_requests r
+        ON r.project_id = p.id AND r.user_id = ? AND r.status = 'pending'
+      ORDER BY p.created_at
+    `).all(userId, userId);
   }
 
   findMemberRole(projectId: string, userId: string) {
@@ -197,16 +255,23 @@ export class ProjectRepository {
     projectId: string;
     role: string;
   }) {
+    const existingUser = this.findActiveUserByUsername(input.username) as { id: string } | undefined;
+    const actualUserId = existingUser?.id ?? input.userId;
+    const actualMemberId = existingUser
+      ? `member_${input.projectId}_${actualUserId}`.replace(/[^a-zA-Z0-9_]+/g, "_").slice(0, 80)
+      : input.memberId;
     this.db.prepare(`
       INSERT OR IGNORE INTO users (id, username, display_name, email, status)
       VALUES (?, ?, ?, ?, 'active')
-    `).run(input.userId, input.username, input.displayName, input.email ?? null);
+    `).run(actualUserId, input.username, input.displayName, input.email ?? null);
+    this.db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND id <> ?")
+      .run(input.projectId, actualUserId, actualMemberId);
     this.db.prepare(`
       INSERT INTO project_members (id, project_id, user_id, role)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET role = excluded.role
-    `).run(input.memberId, input.projectId, input.userId, input.role);
-    return this.db.prepare("SELECT * FROM project_members WHERE id = ?").get(input.memberId);
+    `).run(actualMemberId, input.projectId, actualUserId, input.role);
+    return this.db.prepare("SELECT * FROM project_members WHERE id = ?").get(actualMemberId);
   }
 
   updateMemberRole(projectId: string, memberId: string, role: string) {
@@ -219,5 +284,154 @@ export class ProjectRepository {
 
   deleteMember(projectId: string, memberId: string) {
     this.db.prepare("DELETE FROM project_members WHERE id = ? AND project_id = ?").run(memberId, projectId);
+  }
+
+  listUserSettings(userId: string) {
+    return this.db.prepare(`
+      SELECT settings_key, settings_json, updated_at
+      FROM user_settings
+      WHERE user_id = ?
+      ORDER BY settings_key
+    `).all(userId);
+  }
+
+  upsertUserSetting(input: {
+    id: string;
+    userId: string;
+    key: string;
+    value: Record<string, unknown>;
+  }) {
+    this.db.prepare(`
+      INSERT INTO user_settings (id, user_id, settings_key, settings_json, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id, settings_key) DO UPDATE SET
+        settings_json = excluded.settings_json,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(input.id, input.userId, input.key, JSON.stringify(input.value));
+    return this.db.prepare(`
+      SELECT settings_key AS key, settings_json, updated_at
+      FROM user_settings
+      WHERE user_id = ? AND settings_key = ?
+    `).get(input.userId, input.key);
+  }
+
+  createJoinRequest(input: {
+    id: string;
+    projectId: string;
+    userId: string;
+    requestedRole: string;
+    reason: string;
+  }) {
+    this.db.prepare(`
+      INSERT INTO project_join_requests (id, project_id, user_id, requested_role, reason, status)
+      VALUES (?, ?, ?, ?, ?, 'pending')
+      ON CONFLICT(project_id, user_id, status) DO UPDATE SET
+        requested_role = excluded.requested_role,
+        reason = excluded.reason,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(input.id, input.projectId, input.userId, input.requestedRole, input.reason);
+    return this.db.prepare("SELECT * FROM project_join_requests WHERE project_id = ? AND user_id = ? AND status = 'pending'")
+      .get(input.projectId, input.userId);
+  }
+
+  listJoinRequests(projectId: string) {
+    return this.db.prepare(`
+      SELECT r.*, u.username, u.display_name, u.email
+      FROM project_join_requests r
+      JOIN users u ON u.id = r.user_id
+      WHERE r.project_id = ?
+      ORDER BY r.created_at DESC
+    `).all(projectId);
+  }
+
+  reviewJoinRequest(input: {
+    projectId: string;
+    requestId: string;
+    reviewerId: string;
+    status: "approved" | "rejected";
+  }) {
+    const request = this.db.prepare("SELECT * FROM project_join_requests WHERE id = ? AND project_id = ?")
+      .get(input.requestId, input.projectId) as { user_id: string; requested_role: string } | undefined;
+    if (!request) return null;
+    this.db.prepare(`
+      UPDATE project_join_requests
+      SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND project_id = ?
+    `).run(input.status, input.reviewerId, input.requestId, input.projectId);
+    if (input.status === "approved") {
+      const memberId = `member_${input.projectId}_${request.user_id}`.replace(/[^a-zA-Z0-9_]+/g, "_").slice(0, 80);
+      this.db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND id <> ?")
+        .run(input.projectId, request.user_id, memberId);
+      this.db.prepare(`
+        INSERT INTO project_members (id, project_id, user_id, role)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET role = excluded.role
+      `).run(memberId, input.projectId, request.user_id, request.requested_role || "developer");
+    }
+    return this.db.prepare("SELECT * FROM project_join_requests WHERE id = ?").get(input.requestId);
+  }
+
+  createInvitation(input: {
+    id: string;
+    projectId: string;
+    inviteCodeHash: string;
+    role: string;
+    createdBy: string;
+    expiresAt?: string | null;
+    maxUses?: number;
+  }) {
+    this.db.prepare(`
+      INSERT INTO project_invitations (id, project_id, invite_code_hash, role, created_by, expires_at, max_uses, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
+    `).run(
+      input.id,
+      input.projectId,
+      input.inviteCodeHash,
+      input.role,
+      input.createdBy,
+      input.expiresAt ?? null,
+      input.maxUses ?? 1
+    );
+    return this.db.prepare("SELECT * FROM project_invitations WHERE id = ?").get(input.id);
+  }
+
+  listInvitations(projectId: string) {
+    return this.db.prepare(`
+      SELECT i.*, u.username AS created_by_username
+      FROM project_invitations i
+      LEFT JOIN users u ON u.id = i.created_by
+      WHERE i.project_id = ?
+      ORDER BY i.created_at DESC
+    `).all(projectId);
+  }
+
+  redeemInvitation(input: {
+    inviteCodeHash: string;
+    userId: string;
+  }) {
+    const invitation = this.db.prepare(`
+      SELECT *
+      FROM project_invitations
+      WHERE invite_code_hash = ?
+        AND status = 'active'
+        AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+        AND used_count < max_uses
+    `).get(input.inviteCodeHash) as { id: string; project_id: string; role: string; used_count: number } | undefined;
+    if (!invitation) return null;
+    const memberId = `member_${invitation.project_id}_${input.userId}`.replace(/[^a-zA-Z0-9_]+/g, "_").slice(0, 80);
+    this.db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND id <> ?")
+      .run(invitation.project_id, input.userId, memberId);
+    this.db.prepare(`
+      INSERT INTO project_members (id, project_id, user_id, role)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET role = excluded.role
+    `).run(memberId, invitation.project_id, input.userId, invitation.role || "developer");
+    this.db.prepare(`
+      UPDATE project_invitations
+      SET used_count = used_count + 1,
+          status = CASE WHEN used_count + 1 >= max_uses THEN 'used' ELSE status END
+      WHERE id = ?
+    `).run(invitation.id);
+    return this.findProjectById(invitation.project_id);
   }
 }

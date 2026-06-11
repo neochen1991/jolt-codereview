@@ -4,6 +4,9 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from typing import Any
+
+from db_compat import open_app_database
 
 HEARTBEAT_SECONDS = 10
 RECLAIM_AFTER_SECONDS = 60
@@ -17,9 +20,9 @@ def backoff_seconds(attempt: int) -> int:
     return min(MAX_BACKOFF_SECONDS, 5 * (2 ** (normalized_attempt - 1)))
 
 
-def start_heartbeat(db_file: Path, job_id: str, interval_seconds: int = HEARTBEAT_SECONDS) -> threading.Thread:
+def start_heartbeat(db_file: Path, job_id: str, interval_seconds: int = HEARTBEAT_SECONDS, config: dict[str, Any] | None = None) -> threading.Thread:
     def run() -> None:
-        conn = sqlite3.connect(db_file, timeout=15)
+        conn = open_app_database(config) if config else sqlite3.connect(db_file, timeout=15)
         try:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA busy_timeout = 5000")
@@ -36,7 +39,7 @@ def start_heartbeat(db_file: Path, job_id: str, interval_seconds: int = HEARTBEA
                         (job_id, *ACTIVE_STATUSES),
                     )
                     conn.commit()
-                except sqlite3.OperationalError as exc:
+                except Exception as exc:
                     if "locked" not in str(exc).lower():
                         raise
                     conn.rollback()

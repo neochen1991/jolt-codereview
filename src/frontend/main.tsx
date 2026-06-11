@@ -4825,23 +4825,26 @@ function MrQueue({
                   />
                 </span>
                 <span className="mr-title">
-                  {mr.html_url ? (
-                    <a
-                      href={mr.html_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={`打开远程 MR：${mr.title}`}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <strong>!{mr.number}</strong>
-                      <span>{mr.title}</span>
-                    </a>
-                  ) : (
-                    <span>
-                      <strong>!{mr.number}</strong>
-                      <span>{mr.title}</span>
-                    </span>
-                  )}
+                  <span>
+                    {mr.html_url ? (
+                      <a
+                        className="mr-title-link"
+                        href={mr.html_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`打开远程 MR：${mr.title}`}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <strong>!{mr.number}</strong>
+                        <span>{mr.title}</span>
+                      </a>
+                    ) : (
+                      <>
+                        <strong>!{mr.number}</strong>
+                        <span>{mr.title}</span>
+                      </>
+                    )}
+                  </span>
                   {queueBlocked && <small>{queueBlockedReason}</small>}
                 </span>
                 <span>{mr.repository_name}</span>

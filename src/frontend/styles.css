@@ -2958,8 +2958,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   gap: 4px;
   line-height: 1.35;
 }
-.mr-title > span,
-.mr-title > a {
+.mr-title > span {
   min-width: 0;
   overflow: hidden;
   display: -webkit-box;
@@ -2967,18 +2966,17 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   -webkit-box-orient: vertical;
 }
 
-.mr-title > a {
+.mr-title-link {
   color: var(--blue);
   text-decoration: none;
 }
 
-.mr-title > a:hover {
+.mr-title-link:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 
-.mr-title > span span,
-.mr-title > a span {
+.mr-title > span span {
   min-width: 0;
 }
 .mr-title small {

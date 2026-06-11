@@ -1841,7 +1841,7 @@ function AuthPage({
           )}
           <label>
             <span>密码</span>
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "login" ? "本地默认 admin123" : "至少 6 位"} />
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "login" ? "请输入密码" : "至少 6 位"} />
           </label>
           {(error || message) && <p className={error ? "form-error" : "auth-message"}>{error || message}</p>}
           <button type="submit" disabled={busy}>
@@ -1881,7 +1881,7 @@ function AuthPage({
             <button type="submit" disabled={passwordBusy}>{passwordBusy ? "保存中..." : "保存新密码"}</button>
           </form>
         )}
-        <p className="auth-hint">本机默认 root 账号：local-admin / admin123。生产部署时请先修改密码策略和初始化账号。</p>
+        <p className="auth-hint">本机默认 root 账号：local-admin。生产部署时请先修改初始化密码和密码策略。</p>
       </section>
     </main>
   );

@@ -253,9 +253,7 @@ def cast_text_timestamp_comparisons(sql: str) -> str:
     def cast_operand(value: str) -> str:
         if re.search(r"::timestamptz\b", value, re.I):
             return value
-        if re.match(r"^COALESCE\s*\(", value, re.I):
-            return f"({value})::timestamptz"
-        return f"{value}::timestamptz"
+        return f"NULLIF({value}, '')::timestamptz"
 
     translated = re.sub(
         rf"\b({timestamp_coalesce})\s*(<=|>=|<|>)\s*({timestamp_expression})",

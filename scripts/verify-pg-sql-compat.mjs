@@ -41,7 +41,7 @@ const sessionLookup = translateSqliteToPostgres(`
     AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
 `);
 assertContains(sessionLookup, "token_hash = $1");
-assertContains(sessionLookup, "expires_at::timestamptz > CURRENT_TIMESTAMP");
+assertContains(sessionLookup, "NULLIF(expires_at, '')::timestamptz > CURRENT_TIMESTAMP");
 
 const reclaimQueue = translateSqliteToPostgres(`
   UPDATE review_jobs
@@ -49,7 +49,7 @@ const reclaimQueue = translateSqliteToPostgres(`
   WHERE status = 'reviewing'
     AND (heartbeat_at IS NULL OR heartbeat_at < datetime('now', ?))
 `);
-assertContains(reclaimQueue, "heartbeat_at::timestamptz < (CURRENT_TIMESTAMP + $1::interval)");
+assertContains(reclaimQueue, "NULLIF(heartbeat_at, '')::timestamptz < (CURRENT_TIMESTAMP + $1::interval)");
 
 const healthQuery = translateSqliteToPostgres(`
   SELECT COUNT(*) AS active
@@ -58,7 +58,7 @@ const healthQuery = translateSqliteToPostgres(`
 `);
 assertContains(
   healthQuery,
-  "(COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at))::timestamptz >= (CURRENT_TIMESTAMP + INTERVAL '-60 seconds')"
+  "NULLIF(COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at), '')::timestamptz >= (CURRENT_TIMESTAMP + INTERVAL '-60 seconds')"
 );
 
 const feedbackQuery = translateSqliteToPostgres(`
@@ -66,6 +66,13 @@ const feedbackQuery = translateSqliteToPostgres(`
   FROM user_feedback uf
   WHERE uf.created_at >= datetime('now', '-90 days')
 `);
-assertContains(feedbackQuery, "uf.created_at::timestamptz >= (CURRENT_TIMESTAMP + INTERVAL '-90 days')");
+assertContains(feedbackQuery, "NULLIF(uf.created_at, '')::timestamptz >= (CURRENT_TIMESTAMP + INTERVAL '-90 days')");
+
+const emptyTimestampGuard = translateSqliteToPostgres(`
+  SELECT *
+  FROM review_baseline_suppressions
+  WHERE expires_at = '' OR expires_at > CURRENT_TIMESTAMP
+`);
+assertContains(emptyTimestampGuard, "NULLIF(expires_at, '')::timestamptz > CURRENT_TIMESTAMP");
 
 console.log("PG SQL compatibility translation checks passed.");

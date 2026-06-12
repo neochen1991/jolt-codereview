@@ -49,7 +49,7 @@ session_lookup = translate_sqlite_to_postgres(
     """
 )
 assert_contains(session_lookup, "token_hash = %s")
-assert_contains(session_lookup, "expires_at::timestamptz > CURRENT_TIMESTAMP")
+assert_contains(session_lookup, "NULLIF(expires_at, '')::timestamptz > CURRENT_TIMESTAMP")
 
 reclaim_queue = translate_sqlite_to_postgres(
     """
@@ -59,7 +59,7 @@ reclaim_queue = translate_sqlite_to_postgres(
       AND (heartbeat_at IS NULL OR heartbeat_at < datetime('now', ?))
     """
 )
-assert_contains(reclaim_queue, "heartbeat_at::timestamptz < (CURRENT_TIMESTAMP + %s::interval)")
+assert_contains(reclaim_queue, "NULLIF(heartbeat_at, '')::timestamptz < (CURRENT_TIMESTAMP + %s::interval)")
 
 health_query = translate_sqlite_to_postgres(
     """
@@ -70,7 +70,7 @@ health_query = translate_sqlite_to_postgres(
 )
 assert_contains(
     health_query,
-    "(COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at))::timestamptz >= (CURRENT_TIMESTAMP + INTERVAL '-60 seconds')",
+    "NULLIF(COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at), '')::timestamptz >= (CURRENT_TIMESTAMP + INTERVAL '-60 seconds')",
 )
 
 feedback_query = translate_sqlite_to_postgres(
@@ -80,7 +80,16 @@ feedback_query = translate_sqlite_to_postgres(
     WHERE uf.created_at >= datetime('now', '-90 days')
     """
 )
-assert_contains(feedback_query, "uf.created_at::timestamptz >= (CURRENT_TIMESTAMP + INTERVAL '-90 days')")
+assert_contains(feedback_query, "NULLIF(uf.created_at, '')::timestamptz >= (CURRENT_TIMESTAMP + INTERVAL '-90 days')")
+
+empty_timestamp_guard = translate_sqlite_to_postgres(
+    """
+    SELECT *
+    FROM review_baseline_suppressions
+    WHERE expires_at = '' OR expires_at > CURRENT_TIMESTAMP
+    """
+)
+assert_contains(empty_timestamp_guard, "NULLIF(expires_at, '')::timestamptz > CURRENT_TIMESTAMP")
 
 rows = _wrap_rows([{"created_at": datetime(2026, 6, 12, 10, 30, 45)}])
 if rows[0]["created_at"] != "2026-06-12 10:30:45":

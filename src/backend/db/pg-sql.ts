@@ -96,8 +96,8 @@ export function castTextTimestampComparisons(sql: string) {
 
 function castTimestampOperand(operand: string) {
   if (/::timestamptz\b/i.test(operand)) return operand;
-  if (/^COALESCE\s*\(/i.test(operand)) return `(${operand})::timestamptz`;
-  return `${operand}::timestamptz`;
+  if (/^COALESCE\s*\(/i.test(operand)) return `NULLIF(${operand}, '')::timestamptz`;
+  return `NULLIF(${operand}, '')::timestamptz`;
 }
 
 function replacePlaceholders(sql: string) {

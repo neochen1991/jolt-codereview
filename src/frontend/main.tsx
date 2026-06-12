@@ -312,6 +312,7 @@ type StorageSettingsForm = {
 type ReviewSettingsForm = {
   effort: string;
   max_findings_per_mr: string;
+  max_added_lines_per_mr: string;
   min_confidence: string;
   enable_full_repo_context: boolean;
 };
@@ -576,6 +577,7 @@ function statusLabel(status: string) {
     waiting_confirmation: "待确认",
     submitted: "已提交",
     no_issue: "无问题",
+    too_large: "MR 过大",
     paused: "已暂停",
     cancelled: "已停止",
     failed: "失败"
@@ -1290,9 +1292,9 @@ function App() {
     const workflowStatus = workflowStatusForMr(mr, pendingMrActions[mr.id]);
     const queueBlocked = mr.queue_blocked_by_project && mr.review_status === "queued";
     if (pendingMrActions[mr.id]) return false;
-    if (action === "start") return !queueBlocked && !ACTIVE_REVIEW_STATUSES.includes(workflowStatus);
+    if (action === "start") return !queueBlocked && !["too_large", ...ACTIVE_REVIEW_STATUSES].includes(workflowStatus);
     if (action === "pause") return ["queued", ...ACTIVE_REVIEW_STATUSES].includes(workflowStatus);
-    if (action === "stop") return !["waiting_confirmation", "submitted", "no_issue", "cancelled"].includes(workflowStatus);
+    if (action === "stop") return !["waiting_confirmation", "submitted", "no_issue", "too_large", "cancelled"].includes(workflowStatus);
     if (action === "delete") return !ACTIVE_REVIEW_STATUSES.includes(workflowStatus);
     return false;
   }
@@ -1552,7 +1554,8 @@ function App() {
     const waiting = mrs.filter((mr) => mr.review_status === "waiting_confirmation").length;
     const highRisk = mrs.filter((mr) => mr.risk_score >= 70).length;
     const submitted = mrs.filter((mr) => mr.review_status === "submitted").length;
-    return { all: mrs.length, queued, reviewing, waiting, highRisk, submitted };
+    const tooLarge = mrs.filter((mr) => mr.review_status === "too_large").length;
+    return { all: mrs.length, queued, reviewing, waiting, highRisk, submitted, tooLarge };
   }, [mrs]);
 
   const filteredMrs = useMemo(() => {
@@ -2616,7 +2619,13 @@ function ConfigWorkspace({
     github_endpoint: ""
   });
   const [projectVcsStoredTokens, setProjectVcsStoredTokens] = useState({ codehub_token: "", github_token: "" });
-  const [reviewForm, setReviewForm] = useState<ReviewSettingsForm>({ effort: "standard", max_findings_per_mr: "40", min_confidence: "0.75", enable_full_repo_context: true });
+  const [reviewForm, setReviewForm] = useState<ReviewSettingsForm>({
+    effort: "standard",
+    max_findings_per_mr: "40",
+    max_added_lines_per_mr: "2000",
+    min_confidence: "0.75",
+    enable_full_repo_context: true
+  });
   const [budgetForm, setBudgetForm] = useState<BudgetSettingsForm>({
     standard: { max_llm_calls: "80", max_wall_seconds: "1800", max_output_tokens: "16000", max_findings: "80" },
     deep: { max_llm_calls: "120", max_wall_seconds: "2400", max_output_tokens: "24000", max_findings: "120" }
@@ -2633,7 +2642,7 @@ function ConfigWorkspace({
     enable_mcp: false,
     enable_builtin_java_heuristics: false
   });
-  const [queueForm, setQueueForm] = useState<QueueSettingsForm>({ poll_interval_seconds: "300", max_concurrency: "2", max_attempts: "3", heartbeat_timeout_seconds: "600" });
+  const [queueForm, setQueueForm] = useState<QueueSettingsForm>({ poll_interval_seconds: "300", max_concurrency: "1", max_attempts: "3", heartbeat_timeout_seconds: "600" });
   const [publishForm, setPublishForm] = useState<PublishSettingsForm>({ require_manual_confirmation: true, dry_run: false, allowed_severities: "critical, high, medium, low" });
   const [dataForm, setDataForm] = useState<DataSettingsForm>({ prompt_retention: "hash_only", diff_max_lines_to_llm: "4000", sensitive_paths: "infra/secrets/**, config/prod/**, **/*.pem, **/*.p12", fallback_on_violation: "skip_file" });
   const [llmTest, setLlmTest] = useState<LlmTestState>({ status: "idle", message: "" });
@@ -2807,6 +2816,7 @@ function ConfigWorkspace({
       setReviewForm({
         effort: String(reviewPolicy.effort ?? "standard"),
         max_findings_per_mr: String(reviewPolicy.max_findings_per_mr ?? reviewPolicy.max_findings ?? "40"),
+        max_added_lines_per_mr: String(reviewPolicy.max_added_lines_per_mr ?? "2000"),
         min_confidence: String(reviewPolicy.min_confidence ?? "0.75"),
         enable_full_repo_context: boolValue(reviewPolicy.enable_full_repo_context, true)
       });
@@ -2846,7 +2856,7 @@ function ConfigWorkspace({
       });
       setQueueForm({
         poll_interval_seconds: String(queuePolicy.poll_interval_seconds ?? "300"),
-        max_concurrency: String(queuePolicy.max_concurrency ?? "2"),
+        max_concurrency: String(queuePolicy.max_concurrency ?? "1"),
         max_attempts: String(queuePolicy.max_attempts ?? "3"),
         heartbeat_timeout_seconds: String(queuePolicy.heartbeat_timeout_seconds ?? "600")
       });
@@ -3178,6 +3188,7 @@ function ConfigWorkspace({
     await saveStructuredSetting("review_policy", "检视策略", {
       effort: reviewForm.effort,
       max_findings_per_mr: Number(reviewForm.max_findings_per_mr),
+      max_added_lines_per_mr: positiveNumber(reviewForm.max_added_lines_per_mr, 2000, 1000000),
       min_confidence: Number(reviewForm.min_confidence),
       enable_full_repo_context: reviewForm.enable_full_repo_context
     });
@@ -3860,6 +3871,9 @@ function ConfigWorkspace({
                 <SettingField label="最大问题数">
                   <input value={reviewForm.max_findings_per_mr} onChange={(event) => setReviewForm({ ...reviewForm, max_findings_per_mr: event.target.value })} disabled={!canEdit} />
                 </SettingField>
+                <SettingField label="新增行数上限">
+                  <input value={reviewForm.max_added_lines_per_mr} onChange={(event) => setReviewForm({ ...reviewForm, max_added_lines_per_mr: event.target.value })} disabled={!canEdit} />
+                </SettingField>
                 <SettingField label="最低置信度">
                   <input value={reviewForm.min_confidence} onChange={(event) => setReviewForm({ ...reviewForm, min_confidence: event.target.value })} disabled={!canEdit} />
                 </SettingField>
@@ -3940,7 +3954,7 @@ function ConfigWorkspace({
                 <SettingField label="同步间隔秒">
                   <input value={queueForm.poll_interval_seconds} onChange={(event) => setQueueForm({ ...queueForm, poll_interval_seconds: event.target.value })} disabled={!canEdit} />
                 </SettingField>
-                <SettingField label="最大并发">
+                <SettingField label="项目内 MR 并发">
                   <input value={queueForm.max_concurrency} onChange={(event) => setQueueForm({ ...queueForm, max_concurrency: event.target.value })} disabled={!canEdit} />
                 </SettingField>
                 <SettingField label="最大重试">
@@ -4671,7 +4685,7 @@ function MrQueue({
   setTimeFilter: (value: string) => void;
   repos: Repo[];
   authors: string[];
-  stats: { all: number; queued: number; reviewing: number; waiting: number; highRisk: number; submitted: number };
+  stats: { all: number; queued: number; reviewing: number; waiting: number; highRisk: number; submitted: number; tooLarge: number };
   sync: () => void;
   syncing: boolean;
   busy: boolean;
@@ -4691,7 +4705,8 @@ function MrQueue({
     ["queued", "待检视", stats.queued],
     ["reviewing", "检视中", stats.reviewing],
     ["waiting_confirmation", "待确认", stats.waiting],
-    ["submitted", "已提交", stats.submitted]
+    ["submitted", "已提交", stats.submitted],
+    ["too_large", "MR 过大", stats.tooLarge]
   ] as const;
   const visibleIds = items.map((mr) => mr.id);
   const selectedVisibleCount = visibleIds.filter((id) => selectedMrIds.includes(id)).length;
@@ -4722,7 +4737,8 @@ function MrQueue({
             ["queued", "待检视"],
             ["reviewing", "检视中"],
             ["waiting_confirmation", "待确认"],
-            ["submitted", "已提交"]
+            ["submitted", "已提交"],
+            ["too_large", "MR 过大"]
           ]}
         />
         <FilterSelect
@@ -4861,7 +4877,7 @@ function MrQueue({
                       event.stopPropagation();
                       startReview(mr.id);
                     }}
-                    disabled={busy || rowBusy || queueBlocked || ACTIVE_REVIEW_STATUSES.includes(workflowStatus)}
+                    disabled={busy || rowBusy || queueBlocked || workflowStatus === "too_large" || ACTIVE_REVIEW_STATUSES.includes(workflowStatus)}
                     title={queueBlocked ? queueBlockedReason : undefined}
                   >
                     {action === "start" ? "启动中" : "开始"}
@@ -4884,7 +4900,7 @@ function MrQueue({
                       event.stopPropagation();
                       stopReview(mr.id);
                     }}
-                    disabled={busy || rowBusy || ["waiting_confirmation", "submitted", "no_issue", "cancelled"].includes(workflowStatus)}
+                    disabled={busy || rowBusy || ["waiting_confirmation", "submitted", "no_issue", "too_large", "cancelled"].includes(workflowStatus)}
                   >
                     {action === "stop" ? "停止中" : "停止"}
                   </button>
@@ -4895,7 +4911,7 @@ function MrQueue({
                       event.stopPropagation();
                       rerunReview(mr.id);
                     }}
-                    disabled={busy || rowBusy || ACTIVE_REVIEW_STATUSES.includes(workflowStatus)}
+                    disabled={busy || rowBusy || workflowStatus === "too_large" || ACTIVE_REVIEW_STATUSES.includes(workflowStatus)}
                   >
                     {action === "rerun" ? "提交中" : "重检"}
                   </button>

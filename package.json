@@ -32,7 +32,7 @@
     "verify:pg-sql-compat": "npm run build:api && node scripts/verify-pg-sql-compat.mjs && node scripts/verify-pg-storage-config.mjs && node scripts/run-python.mjs scripts/verify_pg_sql_compat.py",
     "verify:pg-runtime": "npm run build:api && node scripts/verify-pg-runtime.mjs && node scripts/run-python.mjs scripts/verify_pg_worker_runtime.py",
     "verify:multi-repo-mr-sync": "npm run build:api && node scripts/verify-multi-repo-mr-sync.mjs",
-    "verify:queue-reliability": "npm run build:api && node scripts/verify-queue-reliability.mjs",
+    "verify:queue-reliability": "npm run build:api && node scripts/verify-queue-reliability.mjs && node scripts/verify-mr-size-policy.mjs && node scripts/run-python.mjs scripts/verify_worker_project_concurrency.py",
     "verify:auto-sync": "npm run build:api && node scripts/verify-auto-sync-scheduler.mjs",
     "verify:budget-policy": "node scripts/run-python.mjs scripts/verify_budget_policy.py",
     "verify:no-db-foreign-keys": "npm run build:api && node scripts/verify-no-db-foreign-keys.mjs",

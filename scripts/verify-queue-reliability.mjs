@@ -19,6 +19,7 @@ db.exec(`
     locked_at TEXT,
     locked_by TEXT,
     heartbeat_at TEXT,
+    requested_by TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(merge_request_id, head_sha)

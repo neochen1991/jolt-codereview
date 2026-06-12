@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
 import { formatMrReviewMarkdown, markdownFilename } from "../reviewMarkdown.js";
+import { evaluateMrSizePolicy, mrSizeBlockedMessage } from "../services/MrSizePolicy.js";
+import { projectMrConcurrency } from "../services/QueuePolicy.js";
 import type { FindingRow } from "../types.js";
 import type { BackendRouteContext } from "./context.js";
 
@@ -32,6 +34,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     ruleDocumentRepository,
     auditRepository,
     reviewQueueService,
+    projectConfigService,
     feedbackLearningService
   } = ctx;
   function compareRunsForMr(mrId: string) {
@@ -287,7 +290,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     route("GET", "/api/mr-review/projects/:projectId/merge-requests", ({ params, url }) => {
       const status = url.searchParams.get("status");
       const activeJobStatuses = new Set(["fetching", "pre_scanning", "reviewing", "judging", "running"]);
-      const activeProjectJob = get<Record<string, any>>(`
+      const activeProjectJobs = all<Record<string, any>>(`
         SELECT rj.id AS job_id, rj.status, mr.id AS merge_request_id, mr.number, mr.title
         FROM review_jobs rj
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
@@ -296,19 +299,20 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
           AND rj.status IN ('fetching', 'pre_scanning', 'reviewing', 'judging', 'running')
           AND COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at) >= datetime('now', '-60 seconds')
         ORDER BY rj.locked_at DESC, rj.updated_at DESC
-        LIMIT 1
       `, [params.projectId]);
+      const projectConcurrency = projectMrConcurrency(projectConfigService.effectiveConfig(params.projectId, config).effective_config);
+      const activeProjectJobIds = new Set(activeProjectJobs.map((job) => String(job.merge_request_id)));
       const rows = mergeRequestRepository.listByProject(params.projectId, null).map((row: any) => {
         const effectiveStatus = activeJobStatuses.has(String(row.latest_job_status)) ? String(row.latest_job_status) : String(row.review_status);
-        const blockedByProject = effectiveStatus === "queued" && activeProjectJob && activeProjectJob.merge_request_id !== row.id;
+        const blockedByProject = effectiveStatus === "queued" && activeProjectJobs.length >= projectConcurrency && !activeProjectJobIds.has(String(row.id));
         return {
           ...row,
           review_status: effectiveStatus,
           queue_blocked_by_project: Boolean(blockedByProject),
           queue_blocked_reason: blockedByProject
-            ? `项目内 !${activeProjectJob.number} 正在检视，当前 MR 将排队等待`
+            ? `项目内已有 ${activeProjectJobs.length}/${projectConcurrency} 个 MR 正在检视，当前 MR 将排队等待`
             : "",
-          active_project_review: blockedByProject ? activeProjectJob : null
+          active_project_review: blockedByProject ? activeProjectJobs[0] : null
         };
       });
       const filtered = status ? rows.filter((row: any) => row.review_status === status) : rows;
@@ -477,6 +481,29 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const denied = ensureProjectRole(repo.project_id, actorId, "reviewer");
       if (denied) return denied;
       const input = body as Record<string, unknown> | undefined;
+      const effectiveConfig = projectConfigService.effectiveConfig(repo.project_id, config).effective_config;
+      const sizeDecision = evaluateMrSizePolicy(mr as unknown as Record<string, unknown>, effectiveConfig);
+      if (!sizeDecision.allowed) {
+        reviewQueueService.cancelQueued(params.mrId);
+        mergeRequestRepository.updateReviewStatus(params.mrId, "too_large");
+        const message = mrSizeBlockedMessage(sizeDecision);
+        auditLog({
+          userId: actorId,
+          projectId: repo.project_id,
+          action: "mr_review.too_large",
+          resourceType: "merge_request",
+          resourceId: params.mrId,
+          summary: message,
+          metadata: { added_lines: sizeDecision.addedLines, max_added_lines_per_mr: sizeDecision.maxAddedLines }
+        });
+        return {
+          statusCode: 400,
+          error: "mr_too_large",
+          message,
+          added_lines: sizeDecision.addedLines,
+          max_added_lines_per_mr: sizeDecision.maxAddedLines
+        };
+      }
       const job = reviewQueueService.enqueueOrReset({
         mergeRequestId: params.mrId,
         headSha: mr.latest_head_sha,
@@ -522,6 +549,31 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       if (!job) return notFound();
       const denied = ensureProjectRole(job.project_id, actorId, "reviewer");
       if (denied) return denied;
+      const mr = mergeRequestRepository.findById(job.merge_request_id);
+      if (!mr) return notFound();
+      const effectiveConfig = projectConfigService.effectiveConfig(job.project_id, config).effective_config;
+      const sizeDecision = evaluateMrSizePolicy(mr as unknown as Record<string, unknown>, effectiveConfig);
+      if (!sizeDecision.allowed) {
+        reviewQueueService.cancelQueued(job.merge_request_id);
+        mergeRequestRepository.updateReviewStatus(job.merge_request_id, "too_large");
+        const message = mrSizeBlockedMessage(sizeDecision);
+        auditLog({
+          userId: actorId,
+          projectId: job.project_id,
+          action: "mr_review.retry.too_large",
+          resourceType: "review_job",
+          resourceId: params.jobId,
+          summary: message,
+          metadata: { merge_request_id: job.merge_request_id, added_lines: sizeDecision.addedLines, max_added_lines_per_mr: sizeDecision.maxAddedLines }
+        });
+        return {
+          statusCode: 400,
+          error: "mr_too_large",
+          message,
+          added_lines: sizeDecision.addedLines,
+          max_added_lines_per_mr: sizeDecision.maxAddedLines
+        };
+      }
       const updated = reviewQueueService.retry(params.jobId, String(input?.effort_level ?? job.requested_effort_level ?? "standard"), actorId);
       mergeRequestRepository.updateReviewStatus(job.merge_request_id, "queued");
       auditLog({ userId: actorId, projectId: job.project_id, action: "mr_review.retry", resourceType: "review_job", resourceId: params.jobId, summary: `retry as ${input?.effort_level ?? job.requested_effort_level ?? "standard"}` });

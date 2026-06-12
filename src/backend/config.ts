@@ -54,6 +54,15 @@ const DEFAULT_CONFIG: AppConfig = {
       }
     }
   },
+  review_policy: {
+    max_added_lines_per_mr: 2000
+  },
+  queue_policy: {
+    poll_interval_seconds: 300,
+    max_concurrency: 1,
+    max_attempts: 3,
+    heartbeat_timeout_seconds: 600
+  },
   token_usage: {
     enabled: false,
     endpoint: "",
@@ -81,6 +90,12 @@ function mergeConfig(base: AppConfig, override: AppConfig): AppConfig {
     server: { ...base.server, ...override.server },
     logging: { ...base.logging, ...override.logging },
     budget_policy: { ...base.budget_policy, ...override.budget_policy },
+    review_policy: { ...base.review_policy, ...override.review_policy },
+    agent_policy: { ...base.agent_policy, ...override.agent_policy },
+    tool_policy: { ...base.tool_policy, ...override.tool_policy },
+    queue_policy: { ...base.queue_policy, ...override.queue_policy },
+    publish_policy: { ...base.publish_policy, ...override.publish_policy },
+    data_policy: { ...base.data_policy, ...override.data_policy },
     token_usage: { ...base.token_usage, ...override.token_usage },
     runtime: { ...base.runtime, ...override.runtime }
   };

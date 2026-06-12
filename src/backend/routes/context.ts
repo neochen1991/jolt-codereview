@@ -23,6 +23,7 @@ export interface MrSyncRepositoryResult {
   external_repo_id: string;
   merge_requests: number;
   jobs_created: number;
+  skipped_too_large?: number;
   error?: string;
 }
 
@@ -30,6 +31,7 @@ export interface MrSyncProjectResult {
   repositories: number;
   merge_requests: number;
   jobs_created: number;
+  skipped_too_large?: number;
   errors: string[];
   repository_results: MrSyncRepositoryResult[];
 }

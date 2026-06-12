@@ -59,6 +59,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
             },
         },
     },
+    "review_policy": {
+        "max_added_lines_per_mr": 2000,
+    },
+    "queue_policy": {
+        "poll_interval_seconds": 300,
+        "max_concurrency": 1,
+        "max_attempts": 3,
+        "heartbeat_timeout_seconds": 600,
+    },
     "token_usage": {
         "enabled": False,
         "endpoint": "",

@@ -4230,7 +4230,21 @@ def verify_findings(
     return accepted
 
 
-def choose_job(conn: sqlite3.Connection) -> sqlite3.Row | None:
+def positive_int(value: Any, default: int, minimum: int = 1, maximum: int = 20) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(maximum, number))
+
+
+def project_mr_concurrency(config: dict[str, Any], conn: sqlite3.Connection, project_id: str) -> int:
+    project_config = effective_project_config(config, conn, project_id)
+    queue_policy = project_config.get("queue_policy") or {}
+    return positive_int(queue_policy.get("max_concurrency"), 1)
+
+
+def choose_job(conn: sqlite3.Connection, config: dict[str, Any]) -> sqlite3.Row | None:
     table = conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'review_jobs'"
     ).fetchone()
@@ -4248,40 +4262,45 @@ def choose_job(conn: sqlite3.Connection) -> sqlite3.Row | None:
             (f"-{RECLAIM_AFTER_SECONDS} seconds",),
         )
         active_placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
-        job = conn.execute(
+        candidates = conn.execute(
             f"""
-            SELECT queued.*
+            SELECT queued.*, queued_repo.project_id AS project_id
             FROM review_jobs queued
             JOIN merge_requests queued_mr ON queued_mr.id = queued.merge_request_id
             JOIN repositories queued_repo ON queued_repo.id = queued_mr.repository_id
             WHERE queued.status = 'queued'
               AND queued.attempt < ?
-              AND NOT EXISTS (
-                SELECT 1
-                FROM review_jobs active
-                JOIN merge_requests active_mr ON active_mr.id = active.merge_request_id
-                JOIN repositories active_repo ON active_repo.id = active_mr.repository_id
-                WHERE active_repo.project_id = queued_repo.project_id
-                  AND active.status IN ({active_placeholders})
-              )
             ORDER BY queued.priority DESC, queued.created_at ASC
-            LIMIT 1
+            LIMIT 100
             """,
-            (MAX_ATTEMPTS, *ACTIVE_STATUSES),
-        ).fetchone()
+            (MAX_ATTEMPTS,),
+        ).fetchall()
+        job = None
+        for candidate in candidates:
+            project_id = str(candidate["project_id"])
+            max_concurrency = project_mr_concurrency(config, conn, project_id)
+            changed = conn.execute(
+                f"""
+                UPDATE review_jobs
+                SET status = 'fetching', locked_at = CURRENT_TIMESTAMP, locked_by = 'python-worker', heartbeat_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                  AND status = 'queued'
+                  AND (
+                    SELECT COUNT(*)
+                    FROM review_jobs active
+                    JOIN merge_requests active_mr ON active_mr.id = active.merge_request_id
+                    JOIN repositories active_repo ON active_repo.id = active_mr.repository_id
+                    WHERE active_repo.project_id = ?
+                      AND active.status IN ({active_placeholders})
+                  ) < ?
+                """,
+                (candidate["id"], project_id, *ACTIVE_STATUSES, max_concurrency),
+            ).rowcount
+            if changed == 1:
+                job = conn.execute("SELECT * FROM review_jobs WHERE id = ?", (candidate["id"],)).fetchone()
+                break
         if not job:
             conn.commit()
-            return None
-        changed = conn.execute(
-            """
-            UPDATE review_jobs
-            SET status = 'fetching', locked_at = CURRENT_TIMESTAMP, locked_by = 'python-worker', heartbeat_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND status = 'queued'
-            """,
-            (job["id"],),
-        ).rowcount
-        if changed != 1:
-            conn.rollback()
             return None
         conn.execute("UPDATE merge_requests SET review_status = 'fetching' WHERE id = ?", (job["merge_request_id"],))
         conn.commit()
@@ -4315,7 +4334,7 @@ def load_incremental_context(conn: sqlite3.Connection, merge_request_id: str, he
 
 
 def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
-    job = choose_job(conn)
+    job = choose_job(conn, config)
     if not job:
         write_worker_log(config, "worker_idle", {"reason": "no_queued_review_job"})
         return False

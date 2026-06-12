@@ -6,6 +6,8 @@ import type { ReviewQueueService } from "./ReviewQueueService.js";
 import { CodeHubProvider } from "../vcs/CodeHubProvider.js";
 import { GithubProvider } from "../vcs/GithubProvider.js";
 import type { NormalizedMergeRequest, VcsProvider } from "../vcs/VcsProvider.js";
+import { evaluateMrSizePolicy, mrSizeBlockedMessage } from "./MrSizePolicy.js";
+import { projectMrConcurrency } from "./QueuePolicy.js";
 
 function riskScore(input: { additions?: number; deletions?: number; changedFiles?: number; changed_files?: number }): number {
   const churn = (input.additions ?? 0) + (input.deletions ?? 0);
@@ -55,6 +57,7 @@ export class MrSyncService {
       external_repo_id: string;
       merge_requests: number;
       jobs_created: number;
+      skipped_too_large: number;
       error?: string;
     }> = [];
 
@@ -70,6 +73,7 @@ export class MrSyncService {
           external_repo_id: repo.external_repo_id,
           merge_requests: 0,
           jobs_created: 0,
+          skipped_too_large: 0,
           error
         });
         continue;
@@ -77,11 +81,15 @@ export class MrSyncService {
       try {
         const mergeRequests = await provider.listOpenMergeRequests(repo);
         let repoJobs = 0;
+        let repoSkippedTooLarge = 0;
         for (const mergeRequest of mergeRequests) {
           const result = this.upsertAndEnqueue(repo, mergeRequest, requestedBy);
           if (result.jobCreated) {
             jobs += 1;
             repoJobs += 1;
+          }
+          if (result.skippedTooLarge) {
+            repoSkippedTooLarge += 1;
           }
           merged += 1;
         }
@@ -91,7 +99,8 @@ export class MrSyncService {
           provider: repo.provider,
           external_repo_id: repo.external_repo_id,
           merge_requests: mergeRequests.length,
-          jobs_created: repoJobs
+          jobs_created: repoJobs,
+          skipped_too_large: repoSkippedTooLarge
         });
       } catch (error) {
         const message = (error as Error).message;
@@ -103,13 +112,20 @@ export class MrSyncService {
           external_repo_id: repo.external_repo_id,
           merge_requests: 0,
           jobs_created: 0,
+          skipped_too_large: 0,
           error: message
         });
       }
     }
 
-    if (jobs > 0) this.runWorkerOnce();
-    return { repositories: repos.length, merge_requests: merged, jobs_created: jobs, errors, repository_results: repositoryResults };
+    if (jobs > 0) {
+      const concurrency = projectMrConcurrency(this.effectiveConfigForProject(projectId));
+      for (let index = 0; index < Math.min(jobs, concurrency); index += 1) {
+        this.runWorkerOnce();
+      }
+    }
+    const skippedTooLarge = repositoryResults.reduce((total, item) => total + item.skipped_too_large, 0);
+    return { repositories: repos.length, merge_requests: merged, jobs_created: jobs, skipped_too_large: skippedTooLarge, errors, repository_results: repositoryResults };
   }
 
   upsertAndEnqueue(repository: RepositoryRow, mergeRequest: NormalizedMergeRequest, requestedBy?: string | null) {
@@ -130,8 +146,25 @@ export class MrSyncService {
       htmlUrl: mergeRequest.htmlUrl,
       metadata: mergeRequest.metadata
     });
+    const effectiveConfig = this.effectiveConfigForProject(repository.project_id);
+    const sizeDecision = evaluateMrSizePolicy(mergeRequest as unknown as Record<string, unknown>, effectiveConfig);
+    if (!sizeDecision.allowed) {
+      const mergeRequestId = existing?.id ?? mrId;
+      this.reviewQueueService.cancelQueued(mergeRequestId);
+      this.mergeRequestRepository.updateReviewStatus(mergeRequestId, "too_large");
+      return {
+        mergeRequestId,
+        riskScore: score,
+        jobCreated: false,
+        skippedTooLarge: true,
+        message: mrSizeBlockedMessage(sizeDecision)
+      };
+    }
     if (existing && existing.latest_head_sha !== mergeRequest.headSha) {
       this.reviewQueueService.supersedeQueued(existing.id);
+    }
+    if (existing?.review_status === "too_large") {
+      this.mergeRequestRepository.updateReviewStatus(existing.id, "queued");
     }
     const jobResult = this.reviewQueueService.enqueueIdempotent({
       mergeRequestId: existing?.id ?? mrId,
@@ -143,7 +176,8 @@ export class MrSyncService {
     return {
       mergeRequestId: existing?.id ?? mrId,
       riskScore: score,
-      jobCreated: jobResult.created
+      jobCreated: jobResult.created,
+      skippedTooLarge: false
     };
   }
 }

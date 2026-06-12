@@ -39,6 +39,9 @@ export function splitSqlStatements(sql: string): string[] {
 export function translateSqliteToPostgres(sql: string) {
   let translated = sql.trim().replace(/;+\s*$/g, "");
   translated = translated.replace(/BEGIN\s+IMMEDIATE/gi, "BEGIN");
+  if (/^(CREATE|ALTER)\b/i.test(translated)) {
+    translated = translateSqliteSchemaToPostgres(translated);
+  }
   translated = translated.replace(/datetime\(\s*'now'\s*,\s*\?\s*\)/gi, "(CURRENT_TIMESTAMP + ?::interval)");
   translated = translated.replace(/datetime\(\s*'now'\s*,\s*'([^']+)'\s*\)/gi, "(CURRENT_TIMESTAMP + INTERVAL '$1')");
   translated = translated.replace(/datetime\(\s*'now'\s*\)/gi, "CURRENT_TIMESTAMP");
@@ -51,7 +54,50 @@ export function translateSqliteToPostgres(sql: string) {
     translated = `${translated} ON CONFLICT DO NOTHING`;
   }
   translated = replacePlaceholders(translated);
+  translated = castTextTimestampComparisons(translated);
   return translated;
+}
+
+export function translateSqliteSchemaToPostgres(sql: string) {
+  return sql
+    .replace(/"([^"]+)"/g, '"$1"')
+    .replace(/\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/gi, "SERIAL PRIMARY KEY")
+    .replace(/\bDATETIME\b(?!\s*\()/gi, "TEXT")
+    .replace(/\bBOOLEAN\b/gi, "INTEGER")
+    .replace(/\b(TEXT(?:\s+NOT\s+NULL)?\s+DEFAULT\s+)CURRENT_TIMESTAMP\b/gi, "$1(CURRENT_TIMESTAMP::text)");
+}
+
+export function castTextTimestampComparisons(sql: string) {
+  const timestampColumn = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*_at`;
+  const timestampCoalesce = String.raw`COALESCE\s*\(\s*(?:${timestampColumn}\s*,\s*)+${timestampColumn}\s*\)`;
+  const timestampExpression = String.raw`(?:CURRENT_TIMESTAMP|\(CURRENT_TIMESTAMP\s*\+\s*(?:INTERVAL\s+'[^']+'|\$\d+::interval|%s::interval)\))`;
+  let translated = sql.replace(
+    new RegExp(`\\b(${timestampCoalesce})\\s*(<=|>=|<|>)\\s*(${timestampExpression})`, "gi"),
+    (_match, columnExpression: string, operator: string, rightExpression: string) =>
+      `${castTimestampOperand(columnExpression)} ${operator} ${rightExpression}`
+  );
+  translated = translated.replace(
+    new RegExp(`\\b(${timestampColumn})\\s*(<=|>=|<|>)\\s*(${timestampExpression})`, "gi"),
+    (_match, columnExpression: string, operator: string, rightExpression: string) =>
+      `${castTimestampOperand(columnExpression)} ${operator} ${rightExpression}`
+  );
+  translated = translated.replace(
+    new RegExp(`(${timestampExpression})\\s*(<=|>=|<|>)\\s*\\b(${timestampCoalesce})`, "gi"),
+    (_match, leftExpression: string, operator: string, columnExpression: string) =>
+      `${leftExpression} ${operator} ${castTimestampOperand(columnExpression)}`
+  );
+  translated = translated.replace(
+    new RegExp(`(${timestampExpression})\\s*(<=|>=|<|>)\\s*\\b(${timestampColumn})`, "gi"),
+    (_match, leftExpression: string, operator: string, columnExpression: string) =>
+      `${leftExpression} ${operator} ${castTimestampOperand(columnExpression)}`
+  );
+  return translated;
+}
+
+function castTimestampOperand(operand: string) {
+  if (/::timestamptz\b/i.test(operand)) return operand;
+  if (/^COALESCE\s*\(/i.test(operand)) return `(${operand})::timestamptz`;
+  return `${operand}::timestamptz`;
 }
 
 function replacePlaceholders(sql: string) {

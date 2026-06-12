@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections.abc import Iterable, Iterator
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -157,7 +158,19 @@ class PostgresCompatConnection:
 
 
 def _wrap_rows(rows: list[dict[str, Any]]) -> list[CompatRow]:
-    return [CompatRow(dict(row), list(row.keys())) for row in rows]
+    wrapped: list[CompatRow] = []
+    for row in rows:
+        values = {key: _normalize_db_value(value) for key, value in dict(row).items()}
+        wrapped.append(CompatRow(values, list(row.keys())))
+    return wrapped
+
+
+def _normalize_db_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ")
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
 
 
 def split_sql_statements(sql: str) -> list[str]:
@@ -201,6 +214,8 @@ def split_sql_statements(sql: str) -> list[str]:
 def translate_sqlite_to_postgres(sql: str) -> str:
     translated = sql.strip().rstrip(";")
     translated = re.sub(r"BEGIN\s+IMMEDIATE", "BEGIN", translated, flags=re.I)
+    if re.match(r"^(CREATE|ALTER)\b", translated, re.I):
+        translated = translate_sqlite_schema_to_postgres(translated)
     translated = re.sub(r"datetime\(\s*'now'\s*,\s*\?\s*\)", "(CURRENT_TIMESTAMP + %s::interval)", translated, flags=re.I)
     translated = re.sub(
         r"datetime\(\s*'now'\s*,\s*'([^']+)'\s*\)",
@@ -213,6 +228,59 @@ def translate_sqlite_to_postgres(sql: str) -> str:
     if re.match(r"^INSERT\s+INTO\s+", translated, re.I) and not re.search(r"\bON\s+CONFLICT\b", translated, re.I):
         translated = f"{translated} ON CONFLICT DO NOTHING"
     translated = replace_qmark_placeholders(translated)
+    translated = cast_text_timestamp_comparisons(translated)
+    return translated
+
+
+def translate_sqlite_schema_to_postgres(sql: str) -> str:
+    translated = re.sub(r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b", "SERIAL PRIMARY KEY", sql, flags=re.I)
+    translated = re.sub(r"\bDATETIME\b(?!\s*\()", "TEXT", translated, flags=re.I)
+    translated = re.sub(r"\bBOOLEAN\b", "INTEGER", translated, flags=re.I)
+    translated = re.sub(
+        r"\b(TEXT(?:\s+NOT\s+NULL)?\s+DEFAULT\s+)CURRENT_TIMESTAMP\b",
+        r"\1(CURRENT_TIMESTAMP::text)",
+        translated,
+        flags=re.I,
+    )
+    return translated
+
+
+def cast_text_timestamp_comparisons(sql: str) -> str:
+    timestamp_column = r"(?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*_at"
+    timestamp_coalesce = rf"COALESCE\s*\(\s*(?:{timestamp_column}\s*,\s*)+{timestamp_column}\s*\)"
+    timestamp_expression = r"(?:CURRENT_TIMESTAMP|\(CURRENT_TIMESTAMP\s*\+\s*(?:INTERVAL\s+'[^']+'|%s::interval|\$\d+::interval)\))"
+
+    def cast_operand(value: str) -> str:
+        if re.search(r"::timestamptz\b", value, re.I):
+            return value
+        if re.match(r"^COALESCE\s*\(", value, re.I):
+            return f"({value})::timestamptz"
+        return f"{value}::timestamptz"
+
+    translated = re.sub(
+        rf"\b({timestamp_coalesce})\s*(<=|>=|<|>)\s*({timestamp_expression})",
+        lambda match: f"{cast_operand(match.group(1))} {match.group(2)} {match.group(3)}",
+        sql,
+        flags=re.I,
+    )
+    translated = re.sub(
+        rf"\b({timestamp_column})\s*(<=|>=|<|>)\s*({timestamp_expression})",
+        lambda match: f"{cast_operand(match.group(1))} {match.group(2)} {match.group(3)}",
+        translated,
+        flags=re.I,
+    )
+    translated = re.sub(
+        rf"({timestamp_expression})\s*(<=|>=|<|>)\s*\b({timestamp_coalesce})",
+        lambda match: f"{match.group(1)} {match.group(2)} {cast_operand(match.group(3))}",
+        translated,
+        flags=re.I,
+    )
+    translated = re.sub(
+        rf"({timestamp_expression})\s*(<=|>=|<|>)\s*\b({timestamp_column})",
+        lambda match: f"{match.group(1)} {match.group(2)} {cast_operand(match.group(3))}",
+        translated,
+        flags=re.I,
+    )
     return translated
 
 

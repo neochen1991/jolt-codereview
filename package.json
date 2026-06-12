@@ -29,6 +29,7 @@
     "verify:production-baseline": "node scripts/verify-production-baseline.mjs",
     "verify:mr-delete": "npm run build:api && node scripts/verify-mr-delete.mjs",
     "verify:publish-dedup": "npm run build:api && node scripts/verify-publish-dedup.mjs",
+    "verify:pg-sql-compat": "npm run build:api && node scripts/verify-pg-sql-compat.mjs && node scripts/run-python.mjs scripts/verify_pg_sql_compat.py",
     "verify:multi-repo-mr-sync": "npm run build:api && node scripts/verify-multi-repo-mr-sync.mjs",
     "verify:queue-reliability": "npm run build:api && node scripts/verify-queue-reliability.mjs",
     "verify:auto-sync": "npm run build:api && node scripts/verify-auto-sync-scheduler.mjs",

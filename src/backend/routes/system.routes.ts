@@ -3,6 +3,7 @@ import type { BackendRouteContext } from "./context.js";
 import { Client } from "pg";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { translateSqliteSchemaToPostgres } from "../db/pg-sql.js";
 
 const STORAGE_SETTING_KEY = "storage";
 
@@ -80,14 +81,6 @@ function pgConnectionConfig(input: Record<string, unknown>) {
   };
 }
 
-function postgresCompatibleSql(sql: string) {
-  return sql
-    .replace(/"([^"]+)"/g, '"$1"')
-    .replace(/\bINTEGER PRIMARY KEY AUTOINCREMENT\b/gi, "SERIAL PRIMARY KEY")
-    .replace(/\bDATETIME\b/gi, "TEXT")
-    .replace(/\bBOOLEAN\b/gi, "INTEGER");
-}
-
 function sqliteSchemaStatements(ctx: BackendRouteContext) {
   const tables = ctx.all<{ name: string; sql: string }>(`
     SELECT name, sql
@@ -105,7 +98,7 @@ function sqliteSchemaStatements(ctx: BackendRouteContext) {
       AND sql IS NOT NULL
     ORDER BY name
   `);
-  return [...tables, ...indexes].map((row) => postgresCompatibleSql(row.sql));
+  return [...tables, ...indexes].map((row) => translateSqliteSchemaToPostgres(row.sql));
 }
 
 async function withPgClient<T>(input: Record<string, unknown>, fn: (client: Client) => Promise<T>) {
@@ -129,7 +122,7 @@ async function initializePostgresSchema(ctx: BackendRouteContext, input: Record<
       await client.query(`
         CREATE TABLE IF NOT EXISTS jolt_schema_migrations (
           id TEXT PRIMARY KEY,
-          applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+          applied_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
         )
       `);
       await client.query(

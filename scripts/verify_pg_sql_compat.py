@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+import sys
+from datetime import datetime
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "worker"))
+
+from db_compat import _wrap_rows, translate_sqlite_schema_to_postgres, translate_sqlite_to_postgres  # noqa: E402
+
+
+def assert_contains(actual: str, expected: str) -> None:
+    if expected not in actual:
+        raise AssertionError(f"Expected SQL to contain:\n{expected}\n\nActual SQL:\n{actual}")
+
+
+ddl = translate_sqlite_to_postgres(
+    """
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      expires_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+)
+assert_contains(ddl, "created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)")
+
+schema_only = translate_sqlite_schema_to_postgres(
+    """
+    CREATE TABLE IF NOT EXISTS legacy_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      occurred_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      active BOOLEAN NOT NULL DEFAULT 1
+    );
+    """
+)
+assert_contains(schema_only, "id SERIAL PRIMARY KEY")
+assert_contains(schema_only, "occurred_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)")
+assert_contains(schema_only, "active INTEGER NOT NULL DEFAULT 1")
+
+session_lookup = translate_sqlite_to_postgres(
+    """
+    SELECT user_id
+    FROM auth_sessions
+    WHERE token_hash = ?
+      AND status = 'active'
+      AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+    """
+)
+assert_contains(session_lookup, "token_hash = %s")
+assert_contains(session_lookup, "expires_at::timestamptz > CURRENT_TIMESTAMP")
+
+reclaim_queue = translate_sqlite_to_postgres(
+    """
+    UPDATE review_jobs
+    SET status = 'queued'
+    WHERE status = 'reviewing'
+      AND (heartbeat_at IS NULL OR heartbeat_at < datetime('now', ?))
+    """
+)
+assert_contains(reclaim_queue, "heartbeat_at::timestamptz < (CURRENT_TIMESTAMP + %s::interval)")
+
+health_query = translate_sqlite_to_postgres(
+    """
+    SELECT COUNT(*) AS active
+    FROM review_jobs rj
+    WHERE COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at) >= datetime('now', '-60 seconds')
+    """
+)
+assert_contains(
+    health_query,
+    "(COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at))::timestamptz >= (CURRENT_TIMESTAMP + INTERVAL '-60 seconds')",
+)
+
+feedback_query = translate_sqlite_to_postgres(
+    """
+    SELECT uf.dedupe_hash
+    FROM user_feedback uf
+    WHERE uf.created_at >= datetime('now', '-90 days')
+    """
+)
+assert_contains(feedback_query, "uf.created_at::timestamptz >= (CURRENT_TIMESTAMP + INTERVAL '-90 days')")
+
+rows = _wrap_rows([{"created_at": datetime(2026, 6, 12, 10, 30, 45)}])
+if rows[0]["created_at"] != "2026-06-12 10:30:45":
+    raise AssertionError(f"datetime normalization failed: {rows[0]['created_at']!r}")
+
+print("Python PG SQL compatibility translation checks passed.")

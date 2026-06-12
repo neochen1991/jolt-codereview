@@ -20,6 +20,7 @@ import { ObservabilityService } from "../services/ObservabilityService.js";
 import { ProjectConfigService } from "../services/ProjectConfigService.js";
 import { ReviewQueueService } from "../services/ReviewQueueService.js";
 import { StaticToolAvailabilityService } from "../services/StaticToolAvailabilityService.js";
+import { queuedReviewWorkerCapacity } from "../services/WorkerLaunchPolicy.js";
 
 import type { BackendRouteContext } from "./context.js";
 import { createAgentRoutes } from "./agents.routes.js";
@@ -60,7 +61,7 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
     return db.prepare(sql).get(...params) as T | undefined;
   }
   
-  function runWorkerOnce() {
+  function spawnWorkerOnce() {
     const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
     const child = spawn(npmCommand, ["run", "worker:once"], {
       cwd: process.cwd(),
@@ -69,6 +70,14 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
       detached: true
     });
     child.unref();
+  }
+
+  function runWorkerOnce() {
+    const count = queuedReviewWorkerCapacity({ config, db, projectConfigService });
+    const spawnCount = Math.max(1, count);
+    for (let index = 0; index < spawnCount; index += 1) {
+      spawnWorkerOnce();
+    }
   }
   
   function repoConfig(row: { provider_config_json: string }): RepositoryConfig {

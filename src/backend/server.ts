@@ -12,6 +12,7 @@ import { MrAutoSyncScheduler, shouldStartAutoSync } from "./services/MrAutoSyncS
 import { MrSyncService } from "./services/MrSyncService.js";
 import { ProjectConfigService } from "./services/ProjectConfigService.js";
 import { ReviewQueueService } from "./services/ReviewQueueService.js";
+import { queuedReviewWorkerCapacity } from "./services/WorkerLaunchPolicy.js";
 
 const config = loadConfig();
 clearLogFiles(config);
@@ -19,7 +20,7 @@ const logger = new FileLogger(config);
 const db = openDatabase(config);
 const server = createApp(createRoutes(config, db), logger);
 
-function runWorkerOnce() {
+function spawnWorkerOnce() {
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
   const child = spawn(npmCommand, ["run", "worker:once"], {
     cwd: process.cwd(),
@@ -29,6 +30,21 @@ function runWorkerOnce() {
   });
   logger.log("worker_spawned", { pid: child.pid, command: "npm run worker:once" });
   child.unref();
+}
+
+function runWorkerOnce() {
+  const count = queuedReviewWorkerCapacity({ config, db, projectConfigService });
+  const spawnCount = Math.max(1, count);
+  for (let index = 0; index < spawnCount; index += 1) {
+    spawnWorkerOnce();
+  }
+}
+
+function runQueuedWorkersIfNeeded() {
+  const count = queuedReviewWorkerCapacity({ config, db, projectConfigService });
+  for (let index = 0; index < count; index += 1) {
+    spawnWorkerOnce();
+  }
 }
 
 const projectRepository = new ProjectRepository(db);
@@ -58,6 +74,7 @@ server.listen(port, host, () => {
     console.log("MR auto-sync scheduler disabled");
     logger.log("auto_sync_scheduler_disabled");
   }
+  runQueuedWorkersIfNeeded();
 });
 
 function shutdown() {

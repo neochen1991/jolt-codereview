@@ -7,7 +7,6 @@ import { CodeHubProvider } from "../vcs/CodeHubProvider.js";
 import { GithubProvider } from "../vcs/GithubProvider.js";
 import type { NormalizedMergeRequest, VcsProvider } from "../vcs/VcsProvider.js";
 import { evaluateMrSizePolicy, mrSizeBlockedMessage } from "./MrSizePolicy.js";
-import { projectMrConcurrency } from "./QueuePolicy.js";
 
 function riskScore(input: { additions?: number; deletions?: number; changedFiles?: number; changed_files?: number }): number {
   const churn = (input.additions ?? 0) + (input.deletions ?? 0);
@@ -118,12 +117,7 @@ export class MrSyncService {
       }
     }
 
-    if (jobs > 0) {
-      const concurrency = projectMrConcurrency(this.effectiveConfigForProject(projectId));
-      for (let index = 0; index < Math.min(jobs, concurrency); index += 1) {
-        this.runWorkerOnce();
-      }
-    }
+    if (jobs > 0) this.runWorkerOnce();
     const skippedTooLarge = repositoryResults.reduce((total, item) => total + item.skipped_too_large, 0);
     return { repositories: repos.length, merge_requests: merged, jobs_created: jobs, skipped_too_large: skippedTooLarge, errors, repository_results: repositoryResults };
   }

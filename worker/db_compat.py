@@ -54,6 +54,8 @@ def open_app_database(config: dict[str, Any]):
 
 
 class PostgresCompatConnection:
+    dialect = "postgres"
+
     def __init__(self, config: dict[str, Any]):
         try:
             import psycopg

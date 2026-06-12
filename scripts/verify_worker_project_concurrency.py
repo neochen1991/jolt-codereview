@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "worker"))
 
-from review_runtime import choose_job  # noqa: E402
+from review_runtime import choose_job, lock_project_claim_if_needed  # noqa: E402
 
 
 def connect() -> sqlite3.Connection:
@@ -107,5 +107,23 @@ third = choose_job(conn, base_config)
 assert third and third["id"] == "job_a_2", third
 assert status(conn, "job_a_2") == "fetching", "project a should allow a second active job after raising max_concurrency"
 conn.close()
+
+
+class RecordingPostgresLikeConnection:
+    dialect = "postgres"
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def execute(self, sql: str, params: tuple[str, ...]):
+        self.calls.append((sql, params))
+        return None
+
+
+recording_conn = RecordingPostgresLikeConnection()
+lock_project_claim_if_needed(recording_conn, "project_a")
+assert recording_conn.calls == [
+    ("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)", ("jolt-review-project:project_a",))
+]
 
 print("Worker project concurrency checks passed.")

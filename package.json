@@ -30,7 +30,7 @@
     "verify:mr-delete": "npm run build:api && node scripts/verify-mr-delete.mjs",
     "verify:publish-dedup": "npm run build:api && node scripts/verify-publish-dedup.mjs",
     "verify:pg-sql-compat": "npm run build:api && node scripts/verify-pg-sql-compat.mjs && node scripts/verify-pg-storage-config.mjs && node scripts/run-python.mjs scripts/verify_pg_sql_compat.py",
-    "verify:pg-runtime": "npm run build:api && node scripts/verify-pg-runtime.mjs && node scripts/run-python.mjs scripts/verify_pg_worker_runtime.py",
+    "verify:pg-runtime": "npm run build:api && node scripts/verify-pg-runtime.mjs && node scripts/run-python.mjs scripts/verify_pg_worker_runtime.py && node scripts/run-python.mjs scripts/verify_pg_project_concurrency_lock.py",
     "verify:multi-repo-mr-sync": "npm run build:api && node scripts/verify-multi-repo-mr-sync.mjs",
     "verify:queue-reliability": "npm run build:api && node scripts/verify-queue-reliability.mjs && node scripts/verify-mr-size-policy.mjs && node scripts/verify-worker-launch-policy.mjs && node scripts/run-python.mjs scripts/verify_worker_project_concurrency.py",
     "verify:auto-sync": "npm run build:api && node scripts/verify-auto-sync-scheduler.mjs",

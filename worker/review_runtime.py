@@ -4244,6 +4244,15 @@ def project_mr_concurrency(config: dict[str, Any], conn: sqlite3.Connection, pro
     return positive_int(queue_policy.get("max_concurrency"), 1)
 
 
+def lock_project_claim_if_needed(conn: sqlite3.Connection, project_id: str) -> None:
+    if getattr(conn, "dialect", "sqlite") != "postgres":
+        return
+    conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtext(?)::bigint)",
+        (f"jolt-review-project:{project_id}",),
+    )
+
+
 def choose_job(conn: sqlite3.Connection, config: dict[str, Any]) -> sqlite3.Row | None:
     table = conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'review_jobs'"
@@ -4279,6 +4288,7 @@ def choose_job(conn: sqlite3.Connection, config: dict[str, Any]) -> sqlite3.Row 
         for candidate in candidates:
             project_id = str(candidate["project_id"])
             max_concurrency = project_mr_concurrency(config, conn, project_id)
+            lock_project_claim_if_needed(conn, project_id)
             changed = conn.execute(
                 f"""
                 UPDATE review_jobs

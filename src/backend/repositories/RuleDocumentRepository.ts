@@ -69,6 +69,10 @@ export class RuleDocumentRepository {
     return this.listExpertRuleBindings(input.projectId);
   }
 
+  deleteExpertRuleBinding(projectId: string, bindingId: string) {
+    return this.db.prepare("DELETE FROM expert_rule_bindings WHERE project_id = ? AND id = ?").run(projectId, bindingId);
+  }
+
   listCustomSkills(projectId: string) {
     return this.db.prepare(`
       SELECT *

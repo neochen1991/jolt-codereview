@@ -403,6 +403,15 @@ type AgentBindingDetail = {
   metadata: Array<[string, string]>;
 };
 
+type AgentBindingEditorOptions = {
+  ruleDocs: Record<string, unknown>[];
+  ruleBindings: Record<string, unknown>[];
+  customSkills: Record<string, unknown>[];
+  skillBindings: Record<string, unknown>[];
+  toolBindings: Record<string, unknown>[];
+  staticToolAvailability: StaticToolAvailability | null;
+};
+
 type LlmTestState = {
   status: "idle" | "testing" | "ok" | "failed";
   message: string;
@@ -1631,6 +1640,16 @@ function App() {
     setAuthMessage("已退出登录");
   }
 
+  async function updateMyProfile(input: { display_name: string; email: string }) {
+    const result = await api<{ user: User }>("/api/me/profile", {
+      method: "PATCH",
+      body: JSON.stringify(input)
+    });
+    setUser(result.user);
+    setMessage("个人信息已更新");
+    return result.user;
+  }
+
   function handleWorkspaceWheel(event: React.WheelEvent<HTMLDivElement>) {
     const node = event.currentTarget;
     if (node.scrollWidth <= node.clientWidth) return;
@@ -1720,6 +1739,7 @@ function App() {
         refreshProjects={refreshProjects}
         enterProject={enterProject}
         logout={logout}
+        updateProfile={updateMyProfile}
       />
     );
   }
@@ -2143,13 +2163,15 @@ function ProjectSelectionPage({
   projects,
   refreshProjects,
   enterProject,
-  logout
+  logout,
+  updateProfile
 }: {
   user: User | null;
   projects: Project[];
   refreshProjects: () => Promise<void>;
   enterProject: (projectId: string) => void;
   logout: () => void;
+  updateProfile: (input: { display_name: string; email: string }) => Promise<User>;
 }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -2251,10 +2273,7 @@ function ProjectSelectionPage({
           <Zap className="brand-icon" size={30} fill="currentColor" />
           <strong>Jolt CodeReview</strong>
         </div>
-        <button className="user-chip" type="button" onClick={logout}>
-          <UserRound size={17} />
-          {user?.display_name || user?.username || "local-admin"}
-        </button>
+        <ProjectUserMenu user={user} logout={logout} updateProfile={updateProfile} />
       </header>
       <section className="project-home-heading">
         <h1>选择项目</h1>
@@ -2345,6 +2364,81 @@ function ProjectSelectionPage({
         </div>
       )}
     </main>
+  );
+}
+
+function ProjectUserMenu({
+  user,
+  logout,
+  updateProfile
+}: {
+  user: User | null;
+  logout: () => void;
+  updateProfile: (input: { display_name: string; email: string }) => Promise<User>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [displayName, setDisplayName] = useState(user?.display_name || "");
+  const [email, setEmail] = useState(user?.email || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setDisplayName(user?.display_name || "");
+    setEmail(user?.email || "");
+  }, [user?.display_name, user?.email]);
+
+  async function saveProfile() {
+    const nextDisplayName = displayName.trim();
+    if (!nextDisplayName) {
+      setError("显示名不能为空");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await updateProfile({ display_name: nextDisplayName, email: email.trim() });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="project-user-menu">
+      <button className="user-chip" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        <UserRound size={17} />
+        {user?.display_name || user?.username || "用户"}
+        <ChevronDown size={15} />
+      </button>
+      {open && (
+        <section className="project-user-dropdown">
+          <header>
+            <strong>{user?.display_name || user?.username || "用户"}</strong>
+            <span>{user?.username || "--"}</span>
+          </header>
+          <div className="project-user-profile-grid">
+            <p><span>账号</span><strong>{user?.username || "--"}</strong></p>
+            <p><span>邮箱</span><strong>{user?.email || "未填写"}</strong></p>
+            <p><span>角色</span><strong>{user?.global_role === "root" ? "root 管理员" : "普通用户"}</strong></p>
+            <p><span>状态</span><strong>{user?.status === "active" ? "有效" : user?.status || "--"}</strong></p>
+          </div>
+          <label>
+            <span>显示名</span>
+            <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+          </label>
+          <label>
+            <span>邮箱</span>
+            <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" />
+          </label>
+          {error && <div className="project-user-error">{error}</div>}
+          <div className="project-user-actions">
+            <button type="button" onClick={saveProfile} disabled={saving}>{saving ? "保存中..." : "保存个人信息"}</button>
+            <button type="button" className="danger" onClick={logout}>登出</button>
+          </div>
+        </section>
+      )}
+    </div>
   );
 }
 
@@ -3558,6 +3652,14 @@ function ConfigWorkspace({
                     ruleDetails={agentRuleDetails(String(row.agent_key || row.agent_id))}
                     skillDetails={agentSkillDetails(String(row.agent_key || row.agent_id))}
                     skillAssetDetails={agentSkillAssetDetails(String(row.agent_key || row.agent_id))}
+                    bindingOptions={{
+                      ruleDocs,
+                      ruleBindings,
+                      customSkills,
+                      skillBindings,
+                      toolBindings,
+                      staticToolAvailability
+                    }}
                     quality={agentQualityRow(String(row.agent_key || row.agent_id))}
                     reload={loadConfigView}
                     setMessage={setMessage}
@@ -4456,6 +4558,7 @@ function AgentProfileCard({
   ruleDetails,
   skillDetails,
   skillAssetDetails,
+  bindingOptions,
   quality,
   reload,
   setMessage,
@@ -4471,6 +4574,7 @@ function AgentProfileCard({
   ruleDetails: AgentBindingDetail[];
   skillDetails: AgentBindingDetail[];
   skillAssetDetails: AgentBindingDetail[];
+  bindingOptions: AgentBindingEditorOptions;
   quality: Record<string, unknown>;
   reload: () => Promise<void>;
   setMessage: (value: string) => void;
@@ -4486,6 +4590,7 @@ function AgentProfileCard({
   const [maxLlmCalls, setMaxLlmCalls] = useState(String(row.max_llm_calls ?? "6"));
   const [maxToolCalls, setMaxToolCalls] = useState(String(row.max_tool_calls ?? "12"));
   const [bindingDetail, setBindingDetail] = useState<AgentBindingDetail | null>(null);
+  const [bindingEditorOpen, setBindingEditorOpen] = useState(false);
 
   async function saveProfile() {
     await api(`/api/projects/${projectId}/expert-profiles/${agentKey}`, {
@@ -4605,10 +4710,218 @@ function AgentProfileCard({
       </div>
       <div className="agent-card-actions">
         <button type="button" onClick={() => toggleAgent(row)} disabled={!canEdit}>{Boolean(row.enabled) ? "停用" : "启用"}</button>
+        <button type="button" onClick={() => setBindingEditorOpen(true)} disabled={!canEdit}>编辑绑定</button>
         <button type="button" onClick={saveProfile} disabled={!canEdit}>保存</button>
       </div>
       {bindingDetail && <AgentBindingDetailModal detail={bindingDetail} onClose={() => setBindingDetail(null)} />}
+      {bindingEditorOpen && (
+        <AgentBindingEditorModal
+          projectId={projectId}
+          agentKey={agentKey}
+          agentName={String(row.display_name || agentKey)}
+          row={row}
+          options={bindingOptions}
+          onClose={() => setBindingEditorOpen(false)}
+          onSaved={async () => {
+            setBindingEditorOpen(false);
+            setMessage("专家绑定已保存");
+            await reload();
+          }}
+        />
+      )}
     </article>
+  );
+}
+
+function AgentBindingEditorModal({
+  projectId,
+  agentKey,
+  agentName,
+  row,
+  options,
+  onClose,
+  onSaved
+}: {
+  projectId: string;
+  agentKey: string;
+  agentName: string;
+  row: Record<string, unknown>;
+  options: AgentBindingEditorOptions;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const existingRuleBindings = options.ruleBindings.filter((binding) => String(binding.agent_key) === agentKey);
+  const existingRuleIds = new Set(existingRuleBindings.map((binding) => String(binding.rule_document_id)));
+  const existingSkillBindings = options.skillBindings.filter((binding) => String(binding.agent_key) === agentKey);
+  const existingSkillKeys = new Set(existingSkillBindings.filter((binding) => Boolean(binding.enabled)).map((binding) => String(binding.skill_key)));
+  const existingToolBindings = options.toolBindings.filter((binding) => String(binding.agent_key) === agentKey);
+  const existingToolNames = new Set(existingToolBindings.filter((binding) => Boolean(binding.enabled)).map((binding) => String(binding.tool_name)));
+  const agentTools = parseJsonArray(typeof row.tools_json === "string" ? row.tools_json : undefined);
+  const availabilityTools = (options.staticToolAvailability?.items ?? []).map((item) => item.name);
+  const toolCandidates = Array.from(new Set([
+    ...STATIC_TOOL_SWITCHES.flatMap((tool) => [tool.key, tool.availabilityName]),
+    ...availabilityTools,
+    ...agentTools,
+    ...existingToolBindings.map((binding) => String(binding.tool_name))
+  ].filter(Boolean))).sort((left, right) => left.localeCompare(right));
+  const [selectedRuleIds, setSelectedRuleIds] = useState(() => new Set(existingRuleIds));
+  const [selectedSkillKeys, setSelectedSkillKeys] = useState(() => new Set(existingSkillKeys));
+  const [selectedToolNames, setSelectedToolNames] = useState(() => new Set(existingToolNames));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  function toggleSet(setter: React.Dispatch<React.SetStateAction<Set<string>>>, value: string, checked: boolean) {
+    setter((current) => {
+      const next = new Set(current);
+      if (checked) next.add(value);
+      else next.delete(value);
+      return next;
+    });
+  }
+
+  async function saveBindings() {
+    setSaving(true);
+    setError("");
+    try {
+      for (const rule of options.ruleDocs) {
+        const ruleId = String(rule.id || "");
+        if (!ruleId) continue;
+        const currentlyBound = existingRuleIds.has(ruleId);
+        const shouldBind = selectedRuleIds.has(ruleId);
+        if (shouldBind && !currentlyBound) {
+          await api(`/api/projects/${projectId}/expert-rule-bindings`, {
+            method: "POST",
+            body: JSON.stringify({ agent_key: agentKey, rule_document_id: ruleId, priority: 100 })
+          });
+        }
+        if (!shouldBind && currentlyBound) {
+          const binding = existingRuleBindings.find((item) => String(item.rule_document_id) === ruleId);
+          if (binding?.id) {
+            await api(`/api/projects/${projectId}/expert-rule-bindings/${encodeURIComponent(String(binding.id))}`, { method: "DELETE" });
+          }
+        }
+      }
+      for (const skill of options.customSkills) {
+        const skillKey = String(skill.skill_key || "");
+        if (!skillKey) continue;
+        const currentlyBound = existingSkillBindings.some((binding) => String(binding.skill_key) === skillKey);
+        const shouldBind = selectedSkillKeys.has(skillKey);
+        if (shouldBind || currentlyBound) {
+          await api(`/api/projects/${projectId}/expert-skill-bindings`, {
+            method: "POST",
+            body: JSON.stringify({ agent_key: agentKey, skill_key: skillKey, priority: 100, enabled: shouldBind })
+          });
+        }
+      }
+      for (const toolName of toolCandidates) {
+        const currentlyBound = existingToolBindings.some((binding) => String(binding.tool_name) === toolName);
+        const shouldBind = selectedToolNames.has(toolName);
+        if (shouldBind || currentlyBound) {
+          await api(`/api/projects/${projectId}/expert-tool-bindings`, {
+            method: "POST",
+            body: JSON.stringify({ agent_key: agentKey, tool_name: toolName, permission_level: "read_only", max_calls: 5, enabled: shouldBind })
+          });
+        }
+      }
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="编辑专家绑定" onClick={onClose}>
+      <section className="agent-binding-editor-modal" onClick={(event) => event.stopPropagation()}>
+        <header>
+          <div>
+            <span>专家绑定</span>
+            <strong>{agentName}</strong>
+            <p>{agentKey}</p>
+          </div>
+          <button type="button" className="modal-close-button" onClick={onClose} aria-label="关闭编辑">
+            <X size={18} />
+          </button>
+        </header>
+        {error && <div className="agent-binding-editor-error">{error}</div>}
+        <div className="agent-binding-editor-columns">
+          <AgentBindingChecklist
+            title="规范文档"
+            emptyText="暂无可绑定规范文档"
+            items={options.ruleDocs.map((rule) => ({
+              id: String(rule.id || ""),
+              title: String(rule.name || rule.id || "未命名规范"),
+              description: `${String(rule.version || "v1")} · ${String(rule.status || "draft")}`
+            }))}
+            selected={selectedRuleIds}
+            onToggle={(id, checked) => toggleSet(setSelectedRuleIds, id, checked)}
+          />
+          <AgentBindingChecklist
+            title="静态工具"
+            emptyText="暂无可绑定工具"
+            items={toolCandidates.map((name) => {
+              const tool = STATIC_TOOL_SWITCHES.find((item) => item.key === name || item.availabilityName === name);
+              return {
+                id: name,
+                title: tool?.displayName || name,
+                description: tool ? `${tool.category} · ${tool.requiredFor}` : "项目工具绑定"
+              };
+            })}
+            selected={selectedToolNames}
+            onToggle={(id, checked) => toggleSet(setSelectedToolNames, id, checked)}
+          />
+          <AgentBindingChecklist
+            title="自定义 Skill"
+            emptyText="暂无可绑定 Skill"
+            items={options.customSkills.map((skill) => ({
+              id: String(skill.skill_key || ""),
+              title: String(skill.name || skill.skill_key || "未命名 Skill"),
+              description: String(skill.description || skill.version || "custom skill")
+            }))}
+            selected={selectedSkillKeys}
+            onToggle={(id, checked) => toggleSet(setSelectedSkillKeys, id, checked)}
+          />
+        </div>
+        <footer>
+          <button type="button" className="secondary" onClick={onClose} disabled={saving}>取消</button>
+          <button type="button" onClick={saveBindings} disabled={saving}>{saving ? "保存中..." : "保存绑定"}</button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function AgentBindingChecklist({
+  title,
+  emptyText,
+  items,
+  selected,
+  onToggle
+}: {
+  title: string;
+  emptyText: string;
+  items: Array<{ id: string; title: string; description: string }>;
+  selected: Set<string>;
+  onToggle: (id: string, checked: boolean) => void;
+}) {
+  const validItems = items.filter((item) => item.id);
+  return (
+    <div className="agent-binding-checklist">
+      <strong>{title}</strong>
+      <div>
+        {validItems.map((item) => (
+          <label key={item.id}>
+            <input type="checkbox" checked={selected.has(item.id)} onChange={(event) => onToggle(item.id, event.target.checked)} />
+            <span>
+              <b>{item.title}</b>
+              <em>{item.description}</em>
+            </span>
+          </label>
+        ))}
+        {!validItems.length && <p>{emptyText}</p>}
+      </div>
+    </div>
   );
 }
 

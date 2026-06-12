@@ -242,6 +242,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
+  position: relative;
+  z-index: 5;
 }
 
 .project-home-heading {
@@ -1628,6 +1631,181 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   line-height: 1.65;
 }
 
+.agent-binding-editor-modal {
+  width: min(1080px, 100%);
+  max-height: 88vh;
+  overflow: auto;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(15, 35, 65, 0.22);
+  border: 1px solid var(--line);
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.agent-binding-editor-modal header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+
+.agent-binding-editor-modal header div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.agent-binding-editor-modal header span {
+  width: fit-content;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--blue-line);
+  border-radius: 4px;
+  padding: 0 8px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.agent-binding-editor-modal header strong {
+  color: #14213d;
+  font-size: 20px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.agent-binding-editor-modal header p {
+  margin: 0;
+  color: #60728b;
+  overflow-wrap: anywhere;
+}
+
+.agent-binding-editor-modal .modal-close-button {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  color: #40516a;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.agent-binding-editor-modal .modal-close-button:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.agent-binding-editor-error {
+  border: 1px solid #ffc9c9;
+  border-radius: 5px;
+  background: #fff5f5;
+  color: #b42318;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.agent-binding-editor-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.agent-binding-checklist {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fbfdff;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.agent-binding-checklist > strong {
+  color: #1d2b44;
+  font-size: 14px;
+}
+
+.agent-binding-checklist > div {
+  max-height: 52vh;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  padding-right: 3px;
+}
+
+.agent-binding-checklist label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border: 1px solid #edf2fa;
+  border-radius: 5px;
+  background: #fff;
+  padding: 9px;
+}
+
+.agent-binding-checklist input {
+  margin-top: 3px;
+}
+
+.agent-binding-checklist span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.agent-binding-checklist b {
+  color: #14213d;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.agent-binding-checklist em,
+.agent-binding-checklist p {
+  margin: 0;
+  color: #60728b;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.agent-binding-editor-modal footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.agent-binding-editor-modal footer button {
+  min-height: 38px;
+  border: 1px solid var(--blue);
+  border-radius: 5px;
+  background: var(--blue);
+  color: #fff;
+  font-weight: 800;
+  padding: 0 14px;
+}
+
+.agent-binding-editor-modal footer button.secondary {
+  border-color: var(--line-dark);
+  background: #fff;
+  color: #41536c;
+}
+
 .agent-card-actions {
   display: grid;
   gap: 8px;
@@ -2576,6 +2754,125 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.project-user-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.project-user-menu .user-chip {
+  max-width: 220px;
+}
+
+.project-user-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(360px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 45px rgba(15, 35, 65, 0.18);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.project-user-dropdown header {
+  display: grid;
+  gap: 3px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.project-user-dropdown header strong {
+  color: #14213d;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.project-user-dropdown header span {
+  color: #60728b;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.project-user-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.project-user-profile-grid p {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid #edf2fa;
+  border-radius: 6px;
+  background: #fbfdff;
+  padding: 8px;
+  display: grid;
+  gap: 3px;
+}
+
+.project-user-profile-grid span,
+.project-user-dropdown label span {
+  color: #60728b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.project-user-profile-grid strong {
+  min-width: 0;
+  color: #1d2b44;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.project-user-dropdown label {
+  display: grid;
+  gap: 6px;
+}
+
+.project-user-dropdown input {
+  min-width: 0;
+  height: 38px;
+  border: 1px solid var(--line-dark);
+  border-radius: 6px;
+  padding: 0 10px;
+  color: #243047;
+  font: inherit;
+}
+
+.project-user-error {
+  border: 1px solid #ffc9c9;
+  border-radius: 6px;
+  background: #fff5f5;
+  color: #b42318;
+  padding: 9px 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.project-user-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 8px;
+}
+
+.project-user-actions button {
+  min-height: 38px;
+  border: 1px solid var(--blue);
+  border-radius: 6px;
+  background: var(--blue);
+  color: #fff;
+  font-weight: 800;
+}
+
+.project-user-actions button.danger {
+  border-color: #ffd5d2;
+  background: #fff5f5;
+  color: #b42318;
 }
 
 .square-button {

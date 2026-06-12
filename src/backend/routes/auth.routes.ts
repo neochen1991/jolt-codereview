@@ -180,6 +180,21 @@ export function createAuthRoutes(ctx: BackendRouteContext): Route[] {
       const projects = projectRepository.isRoot(userId) ? projectRepository.listProjects() : projectRepository.listProjectsForUser(userId);
       return { user: publicUser(user), projects };
     }),
+    route("PATCH", "/api/me/profile", ({ body, req }) => {
+      const userId = currentUserId(req);
+      if (!userId) return { statusCode: 401, error: "unauthorized", message: "login is required" };
+      const current = projectRepository.findUserById(userId) as UserRow | undefined;
+      if (!current || current.status !== "active") return { statusCode: 401, error: "unauthorized", message: "login is required" };
+      const input = body as Record<string, unknown>;
+      const displayName = String(input.display_name ?? "").trim();
+      const email = String(input.email ?? "").trim();
+      if (!displayName) return badRequest("display_name is required");
+      if (displayName.length > 80) return badRequest("display_name must be 80 chars or less");
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("email is invalid");
+      const updated = projectRepository.updateUserProfile(userId, { displayName, email: email || null }) as UserRow | undefined;
+      auditLog({ userId, action: "user.profile.update", resourceType: "user", resourceId: userId, summary: "updated user profile" });
+      return { user: publicUser(updated) };
+    }),
     route("GET", "/api/me/settings", ({ req }) => {
       const userId = currentUserId(req);
       if (!userId) return { statusCode: 401, error: "unauthorized", message: "login is required" };

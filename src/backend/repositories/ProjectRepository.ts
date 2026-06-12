@@ -43,6 +43,15 @@ export class ProjectRepository {
     `).run(passwordHash, passwordSalt, userId);
   }
 
+  updateUserProfile(userId: string, input: { displayName: string; email?: string | null }) {
+    this.db.prepare(`
+      UPDATE users
+      SET display_name = ?, email = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(input.displayName, input.email ?? null, userId);
+    return this.findUserById(userId);
+  }
+
   createAuthSession(id: string, userId: string, tokenHash: string) {
     this.db.prepare(`
       INSERT INTO auth_sessions (id, user_id, token_hash, status, expires_at)

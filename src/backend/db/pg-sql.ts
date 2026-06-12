@@ -45,10 +45,19 @@ export function translateSqliteToPostgres(sql: string) {
   translated = translated.replace(/datetime\(\s*'now'\s*,\s*\?\s*\)/gi, "(CURRENT_TIMESTAMP + ?::interval)");
   translated = translated.replace(/datetime\(\s*'now'\s*,\s*'([^']+)'\s*\)/gi, "(CURRENT_TIMESTAMP + INTERVAL '$1')");
   translated = translated.replace(/datetime\(\s*'now'\s*\)/gi, "CURRENT_TIMESTAMP");
+  translated = translated.replace(/strftime\(\s*'%s'\s*,\s*'now'\s*\)/gi, "EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)");
+  translated = translated.replace(/strftime\(\s*'%s'\s*,\s*([^)]+?)\s*\)/gi, (_match, expression: string) => {
+    return `EXTRACT(EPOCH FROM NULLIF(${expression.trim()}, '')::timestamptz)`;
+  });
+  translated = translated.replace(/julianday\(\s*([^)]+?)\s*\)/gi, (_match, expression: string) => {
+    return `(EXTRACT(EPOCH FROM NULLIF(${expression.trim()}, '')::timestamptz) / 86400.0)`;
+  });
   translated = translated.replace(/lower\s*\(\s*hex\s*\(\s*randomblob\s*\(\s*(\d+)\s*\)\s*\)\s*\)/gi, (_match, size) => {
     const hexLength = Math.max(1, Number(size) * 2);
     return `substr(md5(random()::text || clock_timestamp()::text), 1, ${hexLength})`;
   });
+  translated = translated.replace(/\bMAX\s*\(\s*([^(),]+?)\s*,\s*([^(),]+?)\s*\)/gi, "GREATEST($1, $2)");
+  translated = translated.replace(/\bMIN\s*\(\s*([^(),]+?)\s*,\s*([^(),]+?)\s*\)/gi, "LEAST($1, $2)");
   translated = translated.replace(/^INSERT\s+OR\s+IGNORE\s+INTO\s+/i, "INSERT INTO ");
   if (/^INSERT\s+INTO\s+/i.test(translated) && !/\bON\s+CONFLICT\b/i.test(translated)) {
     translated = `${translated} ON CONFLICT DO NOTHING`;

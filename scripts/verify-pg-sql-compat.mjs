@@ -75,4 +75,26 @@ const emptyTimestampGuard = translateSqliteToPostgres(`
 `);
 assertContains(emptyTimestampGuard, "NULLIF(expires_at, '')::timestamptz > CURRENT_TIMESTAMP");
 
+const scalarMinMax = translateSqliteToPostgres(`
+  UPDATE expert_profiles
+  SET max_findings = MAX(expert_profiles.max_findings, excluded.max_findings),
+      max_tool_calls = MIN(expert_profiles.max_tool_calls, excluded.max_tool_calls)
+`);
+assertContains(scalarMinMax, "max_findings = GREATEST(expert_profiles.max_findings, excluded.max_findings)");
+assertContains(scalarMinMax, "max_tool_calls = LEAST(expert_profiles.max_tool_calls, excluded.max_tool_calls)");
+
+const epochDiff = translateSqliteToPostgres(`
+  SELECT strftime('%s', rr.completed_at) - strftime('%s', rr.started_at) AS run_seconds
+  FROM review_runs rr
+`);
+assertContains(epochDiff, "EXTRACT(EPOCH FROM NULLIF(rr.completed_at, '')::timestamptz)");
+assertContains(epochDiff, "EXTRACT(EPOCH FROM NULLIF(rr.started_at, '')::timestamptz)");
+
+const julianDiff = translateSqliteToPostgres(`
+  SELECT (julianday(rr.completed_at) - julianday(rr.started_at)) * 86400 AS duration_seconds
+  FROM review_runs rr
+`);
+assertContains(julianDiff, "EXTRACT(EPOCH FROM NULLIF(rr.completed_at, '')::timestamptz) / 86400.0");
+assertContains(julianDiff, "EXTRACT(EPOCH FROM NULLIF(rr.started_at, '')::timestamptz) / 86400.0");
+
 console.log("PG SQL compatibility translation checks passed.");

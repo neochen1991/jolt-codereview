@@ -224,6 +224,21 @@ def translate_sqlite_to_postgres(sql: str) -> str:
         flags=re.I,
     )
     translated = re.sub(r"datetime\(\s*'now'\s*\)", "CURRENT_TIMESTAMP", translated, flags=re.I)
+    translated = re.sub(r"strftime\(\s*'%s'\s*,\s*'now'\s*\)", "EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)", translated, flags=re.I)
+    translated = re.sub(
+        r"strftime\(\s*'%s'\s*,\s*([^)]+?)\s*\)",
+        lambda match: f"EXTRACT(EPOCH FROM NULLIF({match.group(1).strip()}, '')::timestamptz)",
+        translated,
+        flags=re.I,
+    )
+    translated = re.sub(
+        r"julianday\(\s*([^)]+?)\s*\)",
+        lambda match: f"(EXTRACT(EPOCH FROM NULLIF({match.group(1).strip()}, '')::timestamptz) / 86400.0)",
+        translated,
+        flags=re.I,
+    )
+    translated = re.sub(r"\bMAX\s*\(\s*([^(),]+?)\s*,\s*([^(),]+?)\s*\)", r"GREATEST(\1, \2)", translated, flags=re.I)
+    translated = re.sub(r"\bMIN\s*\(\s*([^(),]+?)\s*,\s*([^(),]+?)\s*\)", r"LEAST(\1, \2)", translated, flags=re.I)
     translated = re.sub(r"^INSERT\s+OR\s+IGNORE\s+INTO\s+", "INSERT INTO ", translated, flags=re.I)
     if re.match(r"^INSERT\s+INTO\s+", translated, re.I) and not re.search(r"\bON\s+CONFLICT\b", translated, re.I):
         translated = f"{translated} ON CONFLICT DO NOTHING"

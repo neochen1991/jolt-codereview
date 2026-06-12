@@ -30,13 +30,13 @@ export class FeedbackLearningService {
         )
         VALUES (?, ?, ?, ?, ?, ?, 0)
         ON CONFLICT(project_id, agent_id, rule_id) DO UPDATE SET
-          accepted_count = accepted_count + excluded.accepted_count,
-          rejected_count = rejected_count + excluded.rejected_count,
+          accepted_count = rule_precision_history.accepted_count + excluded.accepted_count,
+          rejected_count = rule_precision_history.rejected_count + excluded.rejected_count,
           auto_suppress = CASE
-            WHEN accepted_count + excluded.accepted_count + rejected_count + excluded.rejected_count >= 10
-             AND 1.0 * (accepted_count + excluded.accepted_count)
-                 / (accepted_count + excluded.accepted_count + rejected_count + excluded.rejected_count) < 0.4
-            THEN 1 ELSE auto_suppress END,
+            WHEN rule_precision_history.accepted_count + excluded.accepted_count + rule_precision_history.rejected_count + excluded.rejected_count >= 10
+             AND 1.0 * (rule_precision_history.accepted_count + excluded.accepted_count)
+                 / (rule_precision_history.accepted_count + excluded.accepted_count + rule_precision_history.rejected_count + excluded.rejected_count) < 0.4
+            THEN 1 ELSE rule_precision_history.auto_suppress END,
           last_updated = CURRENT_TIMESTAMP
       `).run(historyId, projectId, finding.agent_id, ruleId, acceptedDelta, rejectedDelta);
     }

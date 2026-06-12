@@ -118,7 +118,7 @@ export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
           rf.title AS rule_or_title,
           COUNT(*) AS finding_count,
           SUM(CASE WHEN uf.feedback_type = 'false_positive' THEN 1 ELSE 0 END) AS false_positive_count,
-          ROUND(1.0 * SUM(CASE WHEN uf.feedback_type = 'false_positive' THEN 1 ELSE 0 END) / COUNT(*), 3) AS false_positive_rate
+          ROUND(CAST(1.0 * SUM(CASE WHEN uf.feedback_type = 'false_positive' THEN 1 ELSE 0 END) / COUNT(*) AS NUMERIC), 3) AS false_positive_rate
         FROM review_findings rf
         JOIN review_runs rr ON rr.id = rf.review_run_id
         JOIN review_jobs rj ON rj.id = rr.review_job_id

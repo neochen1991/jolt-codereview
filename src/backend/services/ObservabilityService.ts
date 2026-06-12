@@ -42,7 +42,7 @@ export class ObservabilityService {
     const duration = this.db.prepare(`
       SELECT
         COUNT(*) AS completed_runs,
-        ROUND(AVG((julianday(rr.completed_at) - julianday(rr.started_at)) * 86400), 2) AS avg_duration_seconds
+        ROUND(CAST(AVG((julianday(rr.completed_at) - julianday(rr.started_at)) * 86400) AS NUMERIC), 2) AS avg_duration_seconds
       FROM review_runs rr
       JOIN review_jobs rj ON rj.id = rr.review_job_id
       JOIN merge_requests mr ON mr.id = rj.merge_request_id
@@ -94,10 +94,10 @@ export class ObservabilityService {
       SELECT
         rf.agent_id,
         COUNT(*) AS finding_count,
-        ROUND(AVG(rf.confidence), 3) AS avg_confidence,
+        ROUND(CAST(AVG(rf.confidence) AS NUMERIC), 3) AS avg_confidence,
         SUM(CASE WHEN rf.lifecycle_state = 'accepted' THEN 1 ELSE 0 END) AS accepted_count,
         SUM(CASE WHEN uf.feedback_type = 'false_positive' THEN 1 ELSE 0 END) AS false_positive_count,
-        ROUND(1.0 * SUM(CASE WHEN uf.feedback_type = 'false_positive' THEN 1 ELSE 0 END) / COUNT(*), 3) AS false_positive_rate
+        ROUND(CAST(1.0 * SUM(CASE WHEN uf.feedback_type = 'false_positive' THEN 1 ELSE 0 END) / COUNT(*) AS NUMERIC), 3) AS false_positive_rate
       FROM review_findings rf
       JOIN review_runs rr ON rr.id = rf.review_run_id
       JOIN review_jobs rj ON rj.id = rr.review_job_id

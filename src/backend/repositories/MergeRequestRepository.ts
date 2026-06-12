@@ -22,7 +22,7 @@ export class MergeRequestRepository {
   }
 
   listByProject(projectId: string, status: string | null) {
-    return this.db.prepare(`
+    const baseSql = `
       SELECT
         mr.*,
         r.name AS repository_name,
@@ -63,9 +63,14 @@ export class MergeRequestRepository {
       JOIN repositories r ON r.id = mr.repository_id
       WHERE r.project_id = ?
         AND r.status = 'active'
-        AND (? IS NULL OR mr.review_status = ?)
+    `;
+    const orderSql = `
       ORDER BY mr.risk_score DESC, mr.updated_at DESC
-    `).all(projectId, status, status);
+    `;
+    if (status === null) {
+      return this.db.prepare(`${baseSql}${orderSql}`).all(projectId);
+    }
+    return this.db.prepare(`${baseSql} AND mr.review_status = ? ${orderSql}`).all(projectId, status);
   }
 
   upsert(input: {

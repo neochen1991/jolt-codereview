@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
 import { normalizeRepoConfig, postIssueComment } from "../github.js";
@@ -21,6 +20,7 @@ import { ProjectConfigService } from "../services/ProjectConfigService.js";
 import { ReviewQueueService } from "../services/ReviewQueueService.js";
 import { StaticToolAvailabilityService } from "../services/StaticToolAvailabilityService.js";
 import { queuedReviewWorkerCapacity } from "../services/WorkerLaunchPolicy.js";
+import { spawnWorkerOnce as launchWorkerOnce, type WorkerProcessLogger } from "../services/WorkerProcessLauncher.js";
 
 import type { BackendRouteContext } from "./context.js";
 import { createAgentRoutes } from "./agents.routes.js";
@@ -36,7 +36,7 @@ import { createRuleRoutes } from "./rules.routes.js";
 import { createSystemRoutes } from "./system.routes.js";
 import { createVcsProxyRoutes } from "./vcs-proxy.routes.js";
 import { createWebhookRoutes } from "./webhooks.routes.js";
-export function createRoutes(config: AppConfig, db: Db): Route[] {
+export function createRoutes(config: AppConfig, db: Db, logger?: WorkerProcessLogger): Route[] {
   const projectRepository = new ProjectRepository(db);
   const repositoryRepository = new RepositoryRepository(db);
   const mergeRequestRepository = new MergeRequestRepository(db);
@@ -62,14 +62,7 @@ export function createRoutes(config: AppConfig, db: Db): Route[] {
   }
   
   function spawnWorkerOnce() {
-    const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-    const child = spawn(npmCommand, ["run", "worker:once"], {
-      cwd: process.cwd(),
-      env: { ...process.env },
-      stdio: "ignore",
-      detached: true
-    });
-    child.unref();
+    launchWorkerOnce(logger);
   }
 
   function runWorkerOnce() {

@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { openDatabase } from "./db.js";
@@ -13,37 +12,26 @@ import { MrSyncService } from "./services/MrSyncService.js";
 import { ProjectConfigService } from "./services/ProjectConfigService.js";
 import { ReviewQueueService } from "./services/ReviewQueueService.js";
 import { queuedReviewWorkerCapacity } from "./services/WorkerLaunchPolicy.js";
+import { spawnWorkerOnce } from "./services/WorkerProcessLauncher.js";
 
 const config = loadConfig();
 clearLogFiles(config);
 const logger = new FileLogger(config);
 const db = openDatabase(config);
-const server = createApp(createRoutes(config, db), logger);
-
-function spawnWorkerOnce() {
-  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-  const child = spawn(npmCommand, ["run", "worker:once"], {
-    cwd: process.cwd(),
-    env: { ...process.env, JOLT_SKIP_LOG_CLEANUP: "1" },
-    stdio: "ignore",
-    detached: true
-  });
-  logger.log("worker_spawned", { pid: child.pid, command: "npm run worker:once" });
-  child.unref();
-}
+const server = createApp(createRoutes(config, db, logger), logger);
 
 function runWorkerOnce() {
   const count = queuedReviewWorkerCapacity({ config, db, projectConfigService });
   const spawnCount = Math.max(1, count);
   for (let index = 0; index < spawnCount; index += 1) {
-    spawnWorkerOnce();
+    spawnWorkerOnce(logger);
   }
 }
 
 function runQueuedWorkersIfNeeded() {
   const count = queuedReviewWorkerCapacity({ config, db, projectConfigService });
   for (let index = 0; index < count; index += 1) {
-    spawnWorkerOnce();
+    spawnWorkerOnce(logger);
   }
 }
 

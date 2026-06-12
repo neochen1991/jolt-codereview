@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fnmatch
 import hashlib
 import json
@@ -632,6 +633,8 @@ SOURCE_CONTENT_SUFFIXES = (
     ".js",
     ".jsx",
 )
+GIT_CACHE_LOCK_TIMEOUT_SECONDS = 300
+GIT_CACHE_LOCK_STALE_SECONDS = 900
 
 
 def _repo_provider_config(repo: sqlite3.Row) -> dict[str, Any]:
@@ -644,6 +647,11 @@ def _repo_provider_config(repo: sqlite3.Row) -> dict[str, Any]:
 def _git_cache_dir(git_url: str) -> Path:
     digest = hashlib.sha256(git_url.encode("utf-8")).hexdigest()[:16]
     return ROOT / "data" / "repo-cache" / digest
+
+
+def _git_cache_lock_dir(git_url: str) -> Path:
+    digest = hashlib.sha256(git_url.encode("utf-8")).hexdigest()[:16]
+    return ROOT / "data" / "repo-cache-locks" / f"{digest}.lock"
 
 
 def _git_worktree_dir(git_url: str, head_sha: str) -> Path:
@@ -664,6 +672,38 @@ def _run_git(args: list[str], *, cwd: Path | None = None, timeout: int = 90) -> 
         timeout=timeout,
         check=False,
     )
+
+
+@contextlib.contextmanager
+def git_cache_lock(git_url: str, timeout_seconds: int = GIT_CACHE_LOCK_TIMEOUT_SECONDS):
+    lock_dir = _git_cache_lock_dir(git_url)
+    lock_dir.parent.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    while True:
+        try:
+            lock_dir.mkdir()
+            (lock_dir / "owner.json").write_text(
+                json.dumps({"pid": os.getpid(), "created_at": time.time()}, ensure_ascii=False),
+                "utf-8",
+            )
+            break
+        except FileExistsError:
+            try:
+                age_seconds = time.time() - lock_dir.stat().st_mtime
+                if age_seconds > GIT_CACHE_LOCK_STALE_SECONDS:
+                    shutil.rmtree(lock_dir)
+                    continue
+            except FileNotFoundError:
+                continue
+            except OSError:
+                pass
+            if time.monotonic() - started >= timeout_seconds:
+                raise TimeoutError(f"Timed out waiting for git cache lock: {lock_dir}")
+            time.sleep(0.25)
+    try:
+        yield
+    finally:
+        shutil.rmtree(lock_dir, ignore_errors=True)
 
 
 def _ensure_git_cache(git_url: str) -> tuple[Path | None, str | None]:
@@ -689,35 +729,39 @@ def prepare_source_worktree(config: dict[str, Any], repo: sqlite3.Row, mr: sqlit
     if not git_url or not head_sha:
         return None, []
 
-    cache_dir, cache_error = _ensure_git_cache(git_url)
-    if cache_error or cache_dir is None:
-        return None, [{"source": "git", "error": cache_error or "git cache unavailable"}]
+    try:
+        with git_cache_lock(git_url):
+            cache_dir, cache_error = _ensure_git_cache(git_url)
+            if cache_error or cache_dir is None:
+                return None, [{"source": "git", "error": cache_error or "git cache unavailable"}]
 
-    exists = _run_git(["cat-file", "-e", f"{head_sha}^{{commit}}"], cwd=cache_dir, timeout=30)
-    if exists.returncode != 0:
-        fetch = _run_git(["fetch", "--depth=1", "origin", head_sha], cwd=cache_dir, timeout=180)
-        if fetch.returncode != 0:
-            fetch = _run_git(["fetch", "origin", head_sha], cwd=cache_dir, timeout=180)
-        if fetch.returncode != 0:
-            return None, [{"source": "git", "ref": head_sha, "error": fetch.stderr.strip()[:500] or "git fetch failed"}]
+            exists = _run_git(["cat-file", "-e", f"{head_sha}^{{commit}}"], cwd=cache_dir, timeout=30)
+            if exists.returncode != 0:
+                fetch = _run_git(["fetch", "--depth=1", "origin", head_sha], cwd=cache_dir, timeout=180)
+                if fetch.returncode != 0:
+                    fetch = _run_git(["fetch", "origin", head_sha], cwd=cache_dir, timeout=180)
+                if fetch.returncode != 0:
+                    return None, [{"source": "git", "ref": head_sha, "error": fetch.stderr.strip()[:500] or "git fetch failed"}]
 
-    checkout_dir = _git_worktree_dir(git_url, head_sha)
-    if (checkout_dir / ".git").exists():
-        current = _run_git(["rev-parse", "HEAD"], cwd=checkout_dir, timeout=30)
-        if current.returncode == 0 and current.stdout.strip() == head_sha:
+            checkout_dir = _git_worktree_dir(git_url, head_sha)
+            if (checkout_dir / ".git").exists():
+                current = _run_git(["rev-parse", "HEAD"], cwd=checkout_dir, timeout=30)
+                if current.returncode == 0 and current.stdout.strip() == head_sha:
+                    return str(checkout_dir), []
+                remove = _run_git(["worktree", "remove", "--force", str(checkout_dir)], cwd=cache_dir, timeout=60)
+                if remove.returncode != 0 and checkout_dir.exists():
+                    shutil.rmtree(checkout_dir)
+            elif checkout_dir.exists():
+                shutil.rmtree(checkout_dir)
+
+            checkout_dir.parent.mkdir(parents=True, exist_ok=True)
+            _run_git(["worktree", "prune"], cwd=cache_dir, timeout=60)
+            add = _run_git(["worktree", "add", "--detach", "--force", str(checkout_dir), head_sha], cwd=cache_dir, timeout=240)
+            if add.returncode != 0:
+                return None, [{"source": "git", "ref": head_sha, "error": add.stderr.strip()[:500] or "git worktree add failed"}]
             return str(checkout_dir), []
-        remove = _run_git(["worktree", "remove", "--force", str(checkout_dir)], cwd=cache_dir, timeout=60)
-        if remove.returncode != 0 and checkout_dir.exists():
-            shutil.rmtree(checkout_dir)
-    elif checkout_dir.exists():
-        shutil.rmtree(checkout_dir)
-
-    checkout_dir.parent.mkdir(parents=True, exist_ok=True)
-    _run_git(["worktree", "prune"], cwd=cache_dir, timeout=60)
-    add = _run_git(["worktree", "add", "--detach", "--force", str(checkout_dir), head_sha], cwd=cache_dir, timeout=240)
-    if add.returncode != 0:
-        return None, [{"source": "git", "ref": head_sha, "error": add.stderr.strip()[:500] or "git worktree add failed"}]
-    return str(checkout_dir), []
+    except TimeoutError as exc:
+        return None, [{"source": "git", "ref": head_sha, "error": str(exc)[:500]}]
 
 
 def _fetch_git_file_contents(
@@ -739,26 +783,30 @@ def _fetch_git_file_contents(
     if not candidates:
         return {}, []
 
-    cache_dir, cache_error = _ensure_git_cache(git_url)
-    if cache_error or cache_dir is None:
-        return {}, [{"filename": "*", "source": "git", "error": cache_error or "git cache unavailable"}]
+    try:
+        with git_cache_lock(git_url):
+            cache_dir, cache_error = _ensure_git_cache(git_url)
+            if cache_error or cache_dir is None:
+                return {}, [{"filename": "*", "source": "git", "error": cache_error or "git cache unavailable"}]
 
-    fetch = _run_git(["fetch", "--depth=1", "origin", head_sha], cwd=cache_dir, timeout=180)
-    if fetch.returncode != 0:
-        fetch = _run_git(["fetch", "origin", head_sha], cwd=cache_dir, timeout=180)
-    if fetch.returncode != 0:
-        return {}, [{"filename": "*", "source": "git", "error": fetch.stderr.strip()[:500] or "git fetch failed"}]
+            fetch = _run_git(["fetch", "--depth=1", "origin", head_sha], cwd=cache_dir, timeout=180)
+            if fetch.returncode != 0:
+                fetch = _run_git(["fetch", "origin", head_sha], cwd=cache_dir, timeout=180)
+            if fetch.returncode != 0:
+                return {}, [{"filename": "*", "source": "git", "error": fetch.stderr.strip()[:500] or "git fetch failed"}]
 
-    contents: dict[str, str] = {}
-    errors: list[dict[str, Any]] = []
-    for changed in candidates:
-        filename = changed.filename.replace("\\", "/")
-        show = _run_git(["show", f"{head_sha}:{filename}"], cwd=cache_dir, timeout=60)
-        if show.returncode == 0:
-            contents[filename] = show.stdout
-        else:
-            errors.append({"filename": filename, "source": "git", "error": show.stderr.strip()[:500] or "git show failed"})
-    return contents, errors
+            contents: dict[str, str] = {}
+            errors: list[dict[str, Any]] = []
+            for changed in candidates:
+                filename = changed.filename.replace("\\", "/")
+                show = _run_git(["show", f"{head_sha}:{filename}"], cwd=cache_dir, timeout=60)
+                if show.returncode == 0:
+                    contents[filename] = show.stdout
+                else:
+                    errors.append({"filename": filename, "source": "git", "error": show.stderr.strip()[:500] or "git show failed"})
+            return contents, errors
+    except TimeoutError as exc:
+        return {}, [{"filename": "*", "source": "git", "error": str(exc)[:500]}]
 
 
 def _mr_metadata(mr: sqlite3.Row) -> dict[str, Any]:
@@ -777,24 +825,28 @@ def _fetch_git_changed_files(repo: sqlite3.Row, mr: sqlite3.Row) -> tuple[list[C
     if not git_url or not head_sha or not base_ref:
         return [], []
 
-    cache_dir, cache_error = _ensure_git_cache(git_url)
-    if cache_error or cache_dir is None:
-        return [], [{"source": "git", "error": cache_error or "git cache unavailable"}]
+    try:
+        with git_cache_lock(git_url):
+            cache_dir, cache_error = _ensure_git_cache(git_url)
+            if cache_error or cache_dir is None:
+                return [], [{"source": "git", "error": cache_error or "git cache unavailable"}]
 
-    errors: list[dict[str, Any]] = []
-    for ref_name in (base_ref, head_sha):
-        fetch = _run_git(["fetch", "--depth=1", "origin", ref_name], cwd=cache_dir, timeout=180)
-        if fetch.returncode != 0:
-            fetch = _run_git(["fetch", "origin", ref_name], cwd=cache_dir, timeout=180)
-        if fetch.returncode != 0:
-            errors.append({"source": "git", "ref": ref_name, "error": fetch.stderr.strip()[:500] or "git fetch failed"})
-    if errors:
-        return [], errors
+            errors: list[dict[str, Any]] = []
+            for ref_name in (base_ref, head_sha):
+                fetch = _run_git(["fetch", "--depth=1", "origin", ref_name], cwd=cache_dir, timeout=180)
+                if fetch.returncode != 0:
+                    fetch = _run_git(["fetch", "origin", ref_name], cwd=cache_dir, timeout=180)
+                if fetch.returncode != 0:
+                    errors.append({"source": "git", "ref": ref_name, "error": fetch.stderr.strip()[:500] or "git fetch failed"})
+            if errors:
+                return [], errors
 
-    diff = _run_git(["diff", "--find-renames", "--find-copies", "--unified=80", f"{base_ref}..{head_sha}"], cwd=cache_dir, timeout=120)
-    if diff.returncode != 0:
-        return [], [{"source": "git", "error": diff.stderr.strip()[:500] or "git diff failed"}]
-    return parse_git_patch(diff.stdout), []
+            diff = _run_git(["diff", "--find-renames", "--find-copies", "--unified=80", f"{base_ref}..{head_sha}"], cwd=cache_dir, timeout=120)
+            if diff.returncode != 0:
+                return [], [{"source": "git", "error": diff.stderr.strip()[:500] or "git diff failed"}]
+            return parse_git_patch(diff.stdout), []
+    except TimeoutError as exc:
+        return [], [{"source": "git", "error": str(exc)[:500]}]
 
 
 def fetch_changed_file_contents(

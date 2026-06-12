@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -1789,6 +1790,20 @@ source_worktree_path, source_worktree_errors = prepare_source_worktree({}, fixtu
 assert source_worktree_errors == [], source_worktree_errors
 assert source_worktree_path, "source worktree path should be prepared"
 assert (Path(source_worktree_path) / "src" / "main" / "java" / "demo" / "App.java").exists(), source_worktree_path
+concurrent_worktree_results: list[tuple[str | None, list[dict[str, object]]]] = []
+
+
+def prepare_fixture_worktree_concurrently() -> None:
+    concurrent_worktree_results.append(prepare_source_worktree({}, fixture_repo, fixture_mr))  # type: ignore[arg-type]
+
+
+worktree_threads = [threading.Thread(target=prepare_fixture_worktree_concurrently) for _ in range(2)]
+for thread in worktree_threads:
+    thread.start()
+for thread in worktree_threads:
+    thread.join(timeout=20)
+assert len(concurrent_worktree_results) == 2, concurrent_worktree_results
+assert all(path and not errors for path, errors in concurrent_worktree_results), concurrent_worktree_results
 assert static_tool_enabled({"tool_policy": {"static_runners": {"semgrep": {"enabled": False}}}}, "semgrep") is False
 assert static_tool_enabled({"tool_policy": {"static_runners": {"tree-sitter": {"enabled": False}}}}, "tree_sitter_code_graph") is False
 assert static_tool_enabled({"tool_policy": {"enabled_tools": ["tree-sitter"]}}, "tree_sitter_code_graph") is True
@@ -1797,8 +1812,9 @@ assert static_tool_enabled({"tool_policy": {"disabled_tools": ["tree-sitter"]}},
 for heartbeat_file in [ROOT / "worker" / "review_queue" / "job_consumer.py", ROOT / "worker" / "queue" / "job_consumer.py"]:
     heartbeat_source = heartbeat_file.read_text("utf-8")
     assert "PRAGMA journal_mode = WAL" in heartbeat_source, heartbeat_file
-    assert "sqlite3.OperationalError" in heartbeat_source, heartbeat_file
     assert "locked" in heartbeat_source, heartbeat_file
+    assert "conn.rollback()" in heartbeat_source, heartbeat_file
+    assert "continue" in heartbeat_source, heartbeat_file
 
 migration_source = (ROOT / "src" / "backend" / "db" / "migrations.ts").read_text("utf-8")
 judge_source = (ROOT / "worker" / "orchestration" / "nodes" / "judge_findings.py").read_text("utf-8")

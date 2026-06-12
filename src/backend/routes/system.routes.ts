@@ -62,7 +62,7 @@ function persistStorageRuntimeConfig(ctx: BackendRouteContext, value: Record<str
   return configPath;
 }
 
-function existingStorageValue(ctx: BackendRouteContext) {
+function existingStorageValue(ctx: Pick<BackendRouteContext, "get">) {
   const row = ctx.get<{ settings_json: string }>(
     "SELECT settings_json FROM system_settings WHERE settings_key = ?",
     [STORAGE_SETTING_KEY]
@@ -70,14 +70,38 @@ function existingStorageValue(ctx: BackendRouteContext) {
   return row ? JSON.parse(row.settings_json || "{}") as Record<string, unknown> : {};
 }
 
-function pgConnectionConfig(input: Record<string, unknown>) {
-  const connectionString = String(input.postgres_url || "").trim();
-  const user = String(input.postgres_user || "").trim();
-  const password = String(input.postgres_password || "").trim();
+function textValue(value: unknown) {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
+export function pgConnectionConfig(input: Record<string, unknown>) {
+  const connectionString = textValue(input.postgres_url);
+  const user = textValue(input.postgres_user);
+  const password = textValue(input.postgres_password);
   return {
     ...(connectionString ? { connectionString } : {}),
     ...(user ? { user } : {}),
     ...(password ? { password } : {})
+  };
+}
+
+export function effectivePostgresStorageInput(
+  ctx: Pick<BackendRouteContext, "config" | "get">,
+  input: Record<string, unknown>
+) {
+  const existing = existingStorageValue(ctx);
+  const typedPassword = textValue(input.postgres_password);
+  const maskedPassword = textValue(input.postgres_password_masked);
+  const hasSavedPasswordMarker = Boolean(input.postgres_password_has_value);
+  const savedPassword = textValue(existing.postgres_password) || textValue(ctx.config.server?.postgres_password);
+  const passwordLooksMasked = Boolean(maskedPassword) && typedPassword === maskedPassword && hasSavedPasswordMarker;
+  const postgresPassword = typedPassword && !passwordLooksMasked ? typedPassword : savedPassword;
+  return {
+    ...input,
+    postgres_url: textValue(input.postgres_url),
+    postgres_user: textValue(input.postgres_user),
+    postgres_password: postgresPassword
   };
 }
 
@@ -159,8 +183,9 @@ export function createSystemRoutes(ctx: BackendRouteContext): Route[] {
       }
       if (driver === "postgres") {
         try {
+          const effectiveInput = effectivePostgresStorageInput(ctx, input);
           const started = Date.now();
-          await withPgClient(input, async (client) => client.query("SELECT 1 AS ok"));
+          await withPgClient(effectiveInput, async (client) => client.query("SELECT 1 AS ok"));
           return {
             ok: true,
             driver,
@@ -191,7 +216,7 @@ export function createSystemRoutes(ctx: BackendRouteContext): Route[] {
       const input = (typeof body === "object" && body ? body : {}) as Record<string, unknown>;
       if (!String(input.postgres_url || "").trim()) return badRequest("postgres_url is required");
       try {
-        const result = await initializePostgresSchema(ctx, input);
+        const result = await initializePostgresSchema(ctx, effectivePostgresStorageInput(ctx, input));
         auditLog({
           userId: actorId,
           action: "system.storage.init_postgres",
@@ -214,14 +239,14 @@ export function createSystemRoutes(ctx: BackendRouteContext): Route[] {
       const denied = ensureRoot(actorId);
       if (denied) return denied;
       const input = (typeof body === "object" && body ? body : {}) as Record<string, unknown>;
-      const existing = existingStorageValue(ctx);
+      const effectiveInput = effectivePostgresStorageInput(ctx, input);
       const driver = String(input.driver || "sqlite");
       if (!["sqlite", "postgres"].includes(driver)) return badRequest("driver must be sqlite or postgres");
       const value = {
         driver,
-        postgres_url: String(input.postgres_url || "").trim(),
-        postgres_user: String(input.postgres_user || "").trim(),
-        postgres_password: String(input.postgres_password || "").trim() || String(existing.postgres_password || ""),
+        postgres_url: String(effectiveInput.postgres_url || "").trim(),
+        postgres_user: String(effectiveInput.postgres_user || "").trim(),
+        postgres_password: String(effectiveInput.postgres_password || "").trim(),
         switch_status: driver === "postgres" ? "pg_enabled_restart_required" : "sqlite_enabled_restart_required"
       };
       const persistedConfigPath = persistStorageRuntimeConfig(ctx, value);

@@ -1714,6 +1714,69 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   font-weight: 700;
 }
 
+.agent-binding-upload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.agent-binding-upload-panel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.agent-binding-upload-panel > strong {
+  color: #1d2b44;
+  font-size: 14px;
+}
+
+.agent-binding-upload-panel label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.agent-binding-upload-panel label span {
+  color: #60728b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.agent-binding-upload-panel input,
+.agent-binding-upload-panel textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fbfdff;
+  color: #14213d;
+  font: inherit;
+  font-size: 13px;
+  padding: 9px 10px;
+}
+
+.agent-binding-upload-panel textarea {
+  min-height: 120px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.agent-binding-upload-panel button {
+  min-height: 36px;
+  justify-self: start;
+  border: 1px solid var(--blue);
+  border-radius: 5px;
+  background: var(--blue);
+  color: #fff;
+  font-weight: 800;
+  padding: 0 12px;
+}
+
 .agent-binding-editor-columns {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -5771,6 +5834,17 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
   .mr-diff-head {
     align-items: flex-start;
+  }
+
+  .agent-binding-upload-grid,
+  .agent-binding-editor-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-binding-editor-modal {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+    padding: 14px;
   }
 
   .app-shell {

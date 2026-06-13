@@ -4767,6 +4767,11 @@ function AgentBindingEditorModal({
   const [selectedRuleIds, setSelectedRuleIds] = useState(() => new Set(existingRuleIds));
   const [selectedSkillKeys, setSelectedSkillKeys] = useState(() => new Set(existingSkillKeys));
   const [selectedToolNames, setSelectedToolNames] = useState(() => new Set(existingToolNames));
+  const [newRuleName, setNewRuleName] = useState("");
+  const [newRuleContent, setNewRuleContent] = useState("");
+  const [newSkillName, setNewSkillName] = useState("");
+  const [newSkillKey, setNewSkillKey] = useState("");
+  const [newSkillContent, setNewSkillContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -4777,6 +4782,84 @@ function AgentBindingEditorModal({
       else next.delete(value);
       return next;
     });
+  }
+
+  async function createAndBindRuleDocument() {
+    const name = newRuleName.trim();
+    const content = newRuleContent.trim();
+    if (!name || !content) {
+      setError("请填写规范名称和规范内容");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const document = await api<Record<string, unknown>>(`/api/projects/${projectId}/rule-documents`, {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          doc_type: "markdown",
+          content,
+          version: "v1",
+          status: "active"
+        })
+      });
+      const ruleDocumentId = String(document.id || "");
+      if (!ruleDocumentId) throw new Error("规范文档创建失败：未返回文档 ID");
+      await api(`/api/projects/${projectId}/expert-rule-bindings`, {
+        method: "POST",
+        body: JSON.stringify({ agent_key: agentKey, rule_document_id: ruleDocumentId, priority: 100 })
+      });
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function createAndBindCustomSkill() {
+    const name = newSkillName.trim();
+    const content = newSkillContent.trim();
+    if (!name || !content) {
+      setError("请填写 Skill 名称和 Skill 内容");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const skill = await api<Record<string, unknown>>(`/api/projects/${projectId}/custom-skills`, {
+        method: "POST",
+        body: JSON.stringify({
+          skill_key: newSkillKey.trim() || name,
+          name,
+          description: "通过专家绑定弹窗上传的自定义 Skill",
+          content,
+          version: "v1",
+          status: "active"
+        })
+      });
+      const createdSkillKey = String(skill.skill_key || newSkillKey.trim() || name);
+      await api(`/api/projects/${projectId}/custom-skill-assets`, {
+        method: "POST",
+        body: JSON.stringify({
+          skill_key: createdSkillKey,
+          asset_path: "SKILL.md",
+          asset_type: "skill",
+          content,
+          executable: false
+        })
+      });
+      await api(`/api/projects/${projectId}/expert-skill-bindings`, {
+        method: "POST",
+        body: JSON.stringify({ agent_key: agentKey, skill_key: createdSkillKey, priority: 100, enabled: true })
+      });
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function saveBindings() {
@@ -4845,6 +4928,36 @@ function AgentBindingEditorModal({
           </button>
         </header>
         {error && <div className="agent-binding-editor-error">{error}</div>}
+        <div className="agent-binding-upload-grid">
+          <div className="agent-binding-upload-panel">
+            <strong>上传规范并绑定</strong>
+            <label>
+              <span>规范名称</span>
+              <input value={newRuleName} onChange={(event) => setNewRuleName(event.target.value)} placeholder="例如：聚合根设计规范" disabled={saving} />
+            </label>
+            <label>
+              <span>规范内容</span>
+              <textarea value={newRuleContent} onChange={(event) => setNewRuleContent(event.target.value)} placeholder="# 规范标题&#10;&#10;写入判断标准、违规示例和修复建议。" disabled={saving} />
+            </label>
+            <button type="button" onClick={createAndBindRuleDocument} disabled={saving}>{saving ? "处理中..." : "上传并绑定规范"}</button>
+          </div>
+          <div className="agent-binding-upload-panel">
+            <strong>上传 Skill 并绑定</strong>
+            <label>
+              <span>Skill 名称</span>
+              <input value={newSkillName} onChange={(event) => setNewSkillName(event.target.value)} placeholder="例如：领域建模深度检查" disabled={saving} />
+            </label>
+            <label>
+              <span>Skill Key</span>
+              <input value={newSkillKey} onChange={(event) => setNewSkillKey(event.target.value)} placeholder="可选，留空会按名称生成" disabled={saving} />
+            </label>
+            <label>
+              <span>Skill 内容</span>
+              <textarea value={newSkillContent} onChange={(event) => setNewSkillContent(event.target.value)} placeholder="# Skill 说明&#10;&#10;写入专家执行步骤、输入证据和输出要求。" disabled={saving} />
+            </label>
+            <button type="button" onClick={createAndBindCustomSkill} disabled={saving}>{saving ? "处理中..." : "上传并绑定 Skill"}</button>
+          </div>
+        </div>
         <div className="agent-binding-editor-columns">
           <AgentBindingChecklist
             title="规范文档"

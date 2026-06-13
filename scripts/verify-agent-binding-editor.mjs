@@ -44,6 +44,19 @@ const skill = await authenticatedRequest(`/api/projects/${projectId}/custom-skil
 });
 assert.equal(skill.skill_key, skillKey, "skill should be upserted");
 
+const skillAsset = await authenticatedRequest(`/api/projects/${projectId}/custom-skill-assets`, {
+  method: "POST",
+  body: JSON.stringify({
+    skill_key: skillKey,
+    asset_path: "SKILL.md",
+    asset_type: "skill",
+    content: "# Binding Editor Skill\n\nverify",
+    executable: false
+  })
+});
+assert.equal(skillAsset.skill_key, skillKey, "skill asset should be created for uploaded skill content");
+assert.equal(skillAsset.asset_path, "SKILL.md", "skill asset path should be preserved");
+
 let skillBindings = await authenticatedRequest(`/api/projects/${projectId}/expert-skill-bindings`, {
   method: "POST",
   body: JSON.stringify({ agent_key: agentKey, skill_key: skillKey, priority: 88, enabled: true })

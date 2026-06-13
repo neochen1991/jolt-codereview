@@ -39,7 +39,6 @@ PROMOTABLE_TOOL_RULES = {
     "DDD-VO-002",
     "DEP-CVE-001",
     "DEP-SCOPE-005",
-    "JOLT_JAVA_FIELD_AUTOWIRED",
     "PERF-LIKE-002",
     "PERF-MEM-004",
     "PERF-QUERY-001",
@@ -98,7 +97,6 @@ AGENT_BY_RULE_PREFIX = {
 }
 
 AGENT_BY_RULE = {
-    "JOLT_JAVA_FIELD_AUTOWIRED": "coding_agent",
     "HW-SEC-001": "security_agent",
     "HW-PERF-001": "performance_agent",
     "HW-LAYER-001": "backend_agent",

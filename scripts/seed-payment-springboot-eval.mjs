@@ -493,7 +493,6 @@ function seedPaymentSpringbootEval() {
 
   const expectedIssues = [
     "SEC-SECRET-004",
-    "JOLT_JAVA_FIELD_AUTOWIRED",
     "BE-API-001",
     "BE-IDEMP-004",
     "CODE-NULL-001",

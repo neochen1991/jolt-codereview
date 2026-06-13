@@ -118,7 +118,6 @@ const scenarios = [
     files: [fixtureFile("src/main/java/com/acme/payment/PaymentController.java", controllerLines)],
     expected: [
       "SEC-SECRET-004",
-      "JOLT_JAVA_FIELD_AUTOWIRED",
       "BE-API-001",
       "BE-IDEMP-004",
       "CODE-NULL-001",

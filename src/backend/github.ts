@@ -16,6 +16,7 @@ export interface GitHubPull {
   additions?: number;
   deletions?: number;
   changed_files?: number;
+  merged?: boolean;
 }
 
 export interface GitHubFile {
@@ -71,6 +72,17 @@ export async function listPullFiles(config: AppConfig, repoConfig: RepositoryCon
     throw new Error(`GitHub list pull files failed: ${response.status} ${await response.text()}`);
   }
   return (await response.json()) as GitHubFile[];
+}
+
+export async function fetchPull(config: AppConfig, repoConfig: RepositoryConfig, number: number): Promise<GitHubPull> {
+  const { owner, repo } = ownerRepo(repoConfig);
+  const token = resolveGithubToken(config, repoConfig.token_env, repoConfig.token);
+  const url = `${endpoint(config, repoConfig)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}`;
+  const response = await fetch(url, { headers: headers(token) });
+  if (!response.ok) {
+    throw new Error(`GitHub fetch pull failed: ${response.status} ${await response.text()}`);
+  }
+  return (await response.json()) as GitHubPull;
 }
 
 export async function fetchPullDiff(config: AppConfig, repoConfig: RepositoryConfig, number: number): Promise<string> {

@@ -169,6 +169,10 @@ type MergeRequest = {
   latest_run_status?: string;
   queue_blocked_by_project?: boolean;
   queue_blocked_reason?: string;
+  added_lines?: number | null;
+  max_added_lines_per_mr?: number;
+  size_policy_state?: "unknown" | "within_limit" | "over_limit";
+  size_policy_message?: string;
   active_project_review?: {
     job_id?: string;
     status?: string;
@@ -588,6 +592,8 @@ function statusLabel(status: string) {
     submitted: "已提交",
     no_issue: "无问题",
     too_large: "MR 过大",
+    merged: "已合入",
+    closed: "已关闭",
     paused: "已暂停",
     cancelled: "已停止",
     failed: "失败"
@@ -635,6 +641,7 @@ function formatElapsedSeconds(seconds: number) {
 }
 
 const ACTIVE_REVIEW_STATUSES = ["fetching", "pre_scanning", "reviewing", "judging", "running"];
+const TERMINAL_MR_STATUSES = ["merged", "closed"];
 const SYSTEM_AGENT_IDS = new Set(["router_agent", "budget_guard", "summary_agent", "system", "unknown_agent"]);
 const REVIEW_STEPS = [
   { key: "queued", label: "等待开始", description: "任务已提交，正在等待后台处理" },
@@ -649,6 +656,10 @@ function effectiveReviewStatus(detail: Detail) {
   const latestJobStatus = String(detail.jobs?.[0]?.status || "");
   if (ACTIVE_REVIEW_STATUSES.includes(latestJobStatus)) return latestJobStatus;
   return detail.mr.review_status;
+}
+
+function isTerminalMrStatus(status: string) {
+  return TERMINAL_MR_STATUSES.includes(status);
 }
 
 function reviewStepIndex(status: string) {
@@ -1080,6 +1091,21 @@ function App() {
     }
   }
 
+  async function refreshMrRemoteStatuses(showMessage = false) {
+    const result = await api<{ checked: number; refreshed: number; merged: number; closed: number; errors: string[] }>(
+      `/api/mr-review/projects/${activeProjectId}/merge-requests/status-refresh`,
+      { method: "POST", body: "{}" }
+    );
+    if (result.merged || result.closed) {
+      await loadAll(activeMrIdRef.current);
+    }
+    if (showMessage) {
+      const terminalText = result.merged || result.closed ? `，发现已合入 ${result.merged} 个、已关闭 ${result.closed} 个` : "";
+      setMessage(`已刷新 ${result.refreshed}/${result.checked} 个 MR 远端状态${terminalText}${result.errors.length ? `，失败 ${result.errors.length} 个` : ""}`);
+    }
+    return result;
+  }
+
   useEffect(() => {
     async function bootstrapSession() {
       try {
@@ -1109,7 +1135,11 @@ function App() {
     if (!ready || !projectChosen) return;
     loadAll(null).catch((error) => setMessage(error.message));
     const timer = window.setInterval(() => loadAll().catch(() => undefined), 8000);
-    return () => window.clearInterval(timer);
+    const statusTimer = window.setInterval(() => refreshMrRemoteStatuses().catch(() => undefined), 60000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearInterval(statusTimer);
+    };
   }, [ready, projectChosen, activeProjectId]);
 
   useEffect(() => {
@@ -1240,6 +1270,7 @@ function App() {
       setMessage("已提交重新检视请求，系统正在处理");
     } catch (error) {
       setMessage((error as Error).message);
+      await loadAll(mrId);
     } finally {
       endMrAction(mrId);
       setBusy(false);
@@ -1258,6 +1289,7 @@ function App() {
       setMessage("已提交开始请求，系统正在处理");
     } catch (error) {
       setMessage((error as Error).message);
+      await loadAll(mrId);
     } finally {
       endMrAction(mrId);
       setBusy(false);
@@ -1301,10 +1333,11 @@ function App() {
   function mrSupportsBatchAction(mr: MergeRequest, action: "start" | "pause" | "stop" | "delete") {
     const workflowStatus = workflowStatusForMr(mr, pendingMrActions[mr.id]);
     const queueBlocked = mr.queue_blocked_by_project && mr.review_status === "queued";
+    const terminal = isTerminalMrStatus(workflowStatus);
     if (pendingMrActions[mr.id]) return false;
-    if (action === "start") return !queueBlocked && !["too_large", ...ACTIVE_REVIEW_STATUSES].includes(workflowStatus);
-    if (action === "pause") return ["queued", ...ACTIVE_REVIEW_STATUSES].includes(workflowStatus);
-    if (action === "stop") return !["waiting_confirmation", "submitted", "no_issue", "too_large", "cancelled"].includes(workflowStatus);
+    if (action === "start") return !terminal && !queueBlocked && !["too_large", ...ACTIVE_REVIEW_STATUSES].includes(workflowStatus);
+    if (action === "pause") return !terminal && ["queued", ...ACTIVE_REVIEW_STATUSES].includes(workflowStatus);
+    if (action === "stop") return !terminal && !["waiting_confirmation", "submitted", "no_issue", "too_large", "cancelled"].includes(workflowStatus);
     if (action === "delete") return !ACTIVE_REVIEW_STATUSES.includes(workflowStatus);
     return false;
   }
@@ -1365,7 +1398,7 @@ function App() {
         if (action === "stop") return api(`/api/mr-review/merge-requests/${mr.id}/stop`, { method: "POST", body: "{}" });
         return api(`/api/mr-review/merge-requests/${mr.id}`, { method: "DELETE" });
       }));
-      const failed = results.filter((result) => result.status === "rejected");
+      const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
       if (action === "delete") {
         setSelectedMrIds((previous) => previous.filter((id) => !ids.includes(id)));
         if (activeMrIdRef.current && ids.includes(activeMrIdRef.current)) {
@@ -1375,7 +1408,8 @@ function App() {
         }
       }
       await loadAll(activeMrIdRef.current);
-      setMessage(`已对 ${targets.length - failed.length}/${targets.length} 个 MR 执行${bulkActionLabel(action)}${skipped ? `，跳过 ${skipped} 个` : ""}${failed.length ? `，失败 ${failed.length} 个` : ""}`);
+      const firstFailure = failed[0]?.reason instanceof Error ? failed[0].reason.message : "";
+      setMessage(`已对 ${targets.length - failed.length}/${targets.length} 个 MR 执行${bulkActionLabel(action)}${skipped ? `，跳过 ${skipped} 个` : ""}${failed.length ? `，失败 ${failed.length} 个${firstFailure ? `：${firstFailure}` : ""}` : ""}`);
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -1565,7 +1599,9 @@ function App() {
     const highRisk = mrs.filter((mr) => mr.risk_score >= 70).length;
     const submitted = mrs.filter((mr) => mr.review_status === "submitted").length;
     const tooLarge = mrs.filter((mr) => mr.review_status === "too_large").length;
-    return { all: mrs.length, queued, reviewing, waiting, highRisk, submitted, tooLarge };
+    const merged = mrs.filter((mr) => mr.review_status === "merged").length;
+    const closed = mrs.filter((mr) => mr.review_status === "closed").length;
+    return { all: mrs.length, queued, reviewing, waiting, highRisk, submitted, tooLarge, merged, closed };
   }, [mrs]);
 
   const filteredMrs = useMemo(() => {
@@ -5112,7 +5148,7 @@ function MrQueue({
   setTimeFilter: (value: string) => void;
   repos: Repo[];
   authors: string[];
-  stats: { all: number; queued: number; reviewing: number; waiting: number; highRisk: number; submitted: number; tooLarge: number };
+  stats: { all: number; queued: number; reviewing: number; waiting: number; highRisk: number; submitted: number; tooLarge: number; merged: number; closed: number };
   sync: () => void;
   syncing: boolean;
   busy: boolean;
@@ -5133,7 +5169,9 @@ function MrQueue({
     ["reviewing", "检视中", stats.reviewing],
     ["waiting_confirmation", "待确认", stats.waiting],
     ["submitted", "已提交", stats.submitted],
-    ["too_large", "MR 过大", stats.tooLarge]
+    ["too_large", "MR 过大", stats.tooLarge],
+    ["merged", "已合入", stats.merged],
+    ["closed", "已关闭", stats.closed]
   ] as const;
   const visibleIds = items.map((mr) => mr.id);
   const selectedVisibleCount = visibleIds.filter((id) => selectedMrIds.includes(id)).length;
@@ -5165,7 +5203,9 @@ function MrQueue({
             ["reviewing", "检视中"],
             ["waiting_confirmation", "待确认"],
             ["submitted", "已提交"],
-            ["too_large", "MR 过大"]
+            ["too_large", "MR 过大"],
+            ["merged", "已合入"],
+            ["closed", "已关闭"]
           ]}
         />
         <FilterSelect
@@ -5251,6 +5291,10 @@ function MrQueue({
             const queueBlocked = !action && mr.queue_blocked_by_project && mr.review_status === "queued";
             const displayStatus = queueBlocked ? "project_queued" : workflowStatus;
             const queueBlockedReason = mr.queue_blocked_reason || "项目内已有 MR 正在检视，当前 MR 将排队等待";
+            const sizePolicyWarning = mr.size_policy_state === "over_limit";
+            const sizePolicyMessage = mr.size_policy_message || "";
+            const terminal = isTerminalMrStatus(workflowStatus);
+            const terminalReason = workflowStatus === "merged" ? "该 MR 已合入，不能再检视或提交意见" : workflowStatus === "closed" ? "该 MR 已关闭，不能再检视或提交意见" : "";
             const rowBusy = Boolean(action);
             const selected = selectedMrIds.includes(mr.id);
             return (
@@ -5289,11 +5333,17 @@ function MrQueue({
                     )}
                   </span>
                   {queueBlocked && <small>{queueBlockedReason}</small>}
+                  {terminalReason && <small className="mr-terminal-hint">{terminalReason}</small>}
+                  {sizePolicyMessage && (
+                    <small className={sizePolicyWarning ? "mr-size-hint warning" : "mr-size-hint"}>
+                      {sizePolicyMessage}
+                    </small>
+                  )}
                 </span>
                 <span>{mr.repository_name}</span>
                 <span>{mr.author}</span>
                 <RiskBadge score={mr.risk_score} />
-                <StatusBadge status={displayStatus} title={queueBlocked ? queueBlockedReason : undefined} />
+                <StatusBadge status={displayStatus} title={terminalReason || (queueBlocked ? queueBlockedReason : undefined)} />
                 <span>{mr.finding_count || (workflowStatus === "queued" ? "--" : 0)}</span>
                 <span>{mr.review_started_at ? shortTime(mr.review_started_at) : "--"}</span>
                 <span className="mr-actions">
@@ -5304,8 +5354,8 @@ function MrQueue({
                       event.stopPropagation();
                       startReview(mr.id);
                     }}
-                    disabled={busy || rowBusy || queueBlocked || workflowStatus === "too_large" || ACTIVE_REVIEW_STATUSES.includes(workflowStatus)}
-                    title={queueBlocked ? queueBlockedReason : undefined}
+                    disabled={busy || rowBusy || terminal || queueBlocked || workflowStatus === "too_large" || ACTIVE_REVIEW_STATUSES.includes(workflowStatus)}
+                    title={terminalReason || (queueBlocked ? queueBlockedReason : undefined)}
                   >
                     {action === "start" ? "启动中" : "开始"}
                   </button>
@@ -5316,7 +5366,7 @@ function MrQueue({
                       event.stopPropagation();
                       pauseReview(mr.id);
                     }}
-                    disabled={busy || rowBusy || !["queued", ...ACTIVE_REVIEW_STATUSES].includes(workflowStatus)}
+                    disabled={busy || rowBusy || terminal || !["queued", ...ACTIVE_REVIEW_STATUSES].includes(workflowStatus)}
                   >
                     {action === "pause" ? "暂停中" : "暂停"}
                   </button>
@@ -5327,7 +5377,7 @@ function MrQueue({
                       event.stopPropagation();
                       stopReview(mr.id);
                     }}
-                    disabled={busy || rowBusy || ["waiting_confirmation", "submitted", "no_issue", "too_large", "cancelled"].includes(workflowStatus)}
+                    disabled={busy || rowBusy || terminal || ["waiting_confirmation", "submitted", "no_issue", "too_large", "cancelled"].includes(workflowStatus)}
                   >
                     {action === "stop" ? "停止中" : "停止"}
                   </button>
@@ -5338,7 +5388,7 @@ function MrQueue({
                       event.stopPropagation();
                       rerunReview(mr.id);
                     }}
-                    disabled={busy || rowBusy || workflowStatus === "too_large" || ACTIVE_REVIEW_STATUSES.includes(workflowStatus)}
+                    disabled={busy || rowBusy || terminal || workflowStatus === "too_large" || ACTIVE_REVIEW_STATUSES.includes(workflowStatus)}
                   >
                     {action === "rerun" ? "提交中" : "重检"}
                   </button>
@@ -5470,6 +5520,8 @@ function DetailPanel({
   const agentCount = participatingAgentIds(detail).length;
   const duration = estimateDuration(detail, now);
   const currentStatus = effectiveReviewStatus(detail);
+  const terminal = isTerminalMrStatus(currentStatus);
+  const terminalReason = currentStatus === "merged" ? "该 MR 已合入，不能再重新检视或提交检视意见。" : currentStatus === "closed" ? "该 MR 已关闭，不能再重新检视或提交检视意见。" : "";
   const sortedFindings = sortFindingsBySeverity(detail.findings);
 
   return (
@@ -5538,6 +5590,12 @@ function DetailPanel({
       </div>
 
       <div className="detail-actions">
+        {terminalReason && (
+          <div className="publish-duplicate-warning terminal" role="status">
+            <AlertTriangle size={16} />
+            <span>{terminalReason}</span>
+          </div>
+        )}
         {selectedAlreadyPublishedCount > 0 && (
           <div className="publish-duplicate-warning" role="status">
             <AlertTriangle size={16} />
@@ -5553,8 +5611,8 @@ function DetailPanel({
           <FileDown size={18} />
           导出 MD
         </button>
-        <button type="button" onClick={onRerun} disabled={busy}>重新检视</button>
-        <button className="submit-button" type="button" onClick={onPublish} disabled={busy || !selectedCount}>
+        <button type="button" onClick={onRerun} disabled={busy || terminal}>重新检视</button>
+        <button className="submit-button" type="button" onClick={onPublish} disabled={busy || terminal || !selectedCount}>
           <Send size={18} />
           提交选中意见到 CodeHub
         </button>

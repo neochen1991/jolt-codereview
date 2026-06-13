@@ -235,15 +235,13 @@ def main() -> None:
         "HW-PERF-001",
         "HW-SEC-001",
         "HW-TX-001",
-        "JOLT_JAVA_FIELD_AUTOWIRED",
     }
     missing = sorted(expected_rules - rules)
     assert not missing, {"missing_rules": missing, "actual_rules": sorted(rules)}
     assert not any(
         item.get("tool_rule_id") == "JOLT_JAVA_FIELD_AUTOWIRED"
-        and item.get("file_path") == "src/main/java/com/jolt/payment/controller/ConstructorAutowiredController.java"
         for item in findings
-    ), "constructor @Autowired should not be reported as field injection"
+    ), "@Autowired field injection rule should not be reported"
     assert not any(
         item.get("tool_rule_id") == "ALI-EQUALS-001"
         and item.get("file_path") == "src/main/java/com/jolt/payment/service/StatusComparisonService.java"

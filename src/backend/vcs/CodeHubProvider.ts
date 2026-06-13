@@ -1,8 +1,8 @@
 import type { AppConfig, RepositoryConfig } from "../types.js";
-import { fetchCodeHubDiff, fetchCodeHubFile, fetchCodeHubFiles, listOpenCodeHubMrs, postCodeHubSummaryComment, updateCodeHubStatus } from "../codehub.js";
+import { fetchCodeHubDiff, fetchCodeHubFile, fetchCodeHubFiles, fetchCodeHubMr, listOpenCodeHubMrs, postCodeHubSummaryComment, updateCodeHubStatus } from "../codehub.js";
 import { normalizeRepoConfig } from "../github.js";
 import type { RepositoryRow } from "../repositories/RepositoryRepository.js";
-import type { DiffPayload, InlineComment, MrRef, NormalizedMergeRequest, ReviewStatus, VcsCapabilities, VcsProvider } from "./VcsProvider.js";
+import type { DiffPayload, InlineComment, MergeRequestRemoteStatus, MrRef, NormalizedMergeRequest, ReviewStatus, VcsCapabilities, VcsProvider } from "./VcsProvider.js";
 
 export class CodeHubProvider implements VcsProvider {
   provider = "codehub";
@@ -41,6 +41,20 @@ export class CodeHubProvider implements VcsProvider {
   async fetchDiff(mr: MrRef): Promise<DiffPayload> {
     const repoConfig = normalizeRepoConfig(JSON.parse(mr.repository.provider_config_json || "{}")) as RepositoryConfig;
     return { provider: this.provider, diff: await fetchCodeHubDiff(this.config, repoConfig, mr.number) };
+  }
+
+  async fetchMergeRequestStatus(mr: MrRef): Promise<MergeRequestRemoteStatus> {
+    const repoConfig = normalizeRepoConfig(JSON.parse(mr.repository.provider_config_json || "{}")) as RepositoryConfig;
+    const mergeRequest = await fetchCodeHubMr(this.config, repoConfig, mr.number);
+    const rawState = String(mergeRequest.state ?? "").toLowerCase();
+    const state = rawState.includes("merged") || rawState === "merge"
+      ? "merged"
+      : rawState.includes("closed") || rawState === "close"
+        ? "closed"
+        : rawState.includes("open") || rawState === "opened"
+          ? "open"
+          : "unknown";
+    return { state, rawState, merged: state === "merged" };
   }
 
   async fetchFiles(mr: MrRef): Promise<unknown[]> {

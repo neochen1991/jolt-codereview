@@ -345,6 +345,17 @@ export function createRoutes(config: AppConfig, db: Db, logger?: WorkerProcessLo
     if (!repo) return notFound();
     const denied = ensureProjectRole(repo.project_id, userId, "reviewer");
     if (denied) return denied;
+    if (["merged", "closed"].includes(String(mr.review_status))) {
+      return badRequest(`该 MR ${mr.review_status === "merged" ? "已合入" : "已关闭"}，不能再提交检视意见。`);
+    }
+    try {
+      const remote = await mrSyncService.refreshMergeRequestStatusById(mrId);
+      if (remote.ok && remote.terminal_status) {
+        return badRequest(`该 MR ${remote.terminal_status === "merged" ? "已合入" : "已关闭"}，不能再提交检视意见。`);
+      }
+    } catch {
+      // Publishing can proceed when the remote status check is temporarily unavailable.
+    }
     const requestedFindingIds = Array.from(new Set(findingIds.filter(Boolean)));
     if (requestedFindingIds.length === 0) return badRequest("finding_ids is required");
     const placeholders = requestedFindingIds.map(() => "?").join(",");

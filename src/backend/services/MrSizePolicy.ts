@@ -36,9 +36,41 @@ export function mergeRequestAdditions(input: Record<string, unknown>): number {
   return numberValue(metadata.additions ?? metadata.added_lines ?? metadata.addedLines);
 }
 
+function countPatchAdditions(value: unknown): number {
+  const patch = String(value ?? "");
+  if (!patch) return 0;
+  return patch
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+    .length;
+}
+
+export function changedFileAdditions(input: unknown): number {
+  if (!Array.isArray(input)) return 0;
+  return input.reduce((total, row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return total;
+    const item = row as Record<string, unknown>;
+    const direct = numberValue(item.additions ?? item.added_lines ?? item.addedLines);
+    const patchAdded = countPatchAdditions(item.patch ?? item.diff);
+    return total + Math.max(direct, patchAdded);
+  }, 0);
+}
+
 export function evaluateMrSizePolicy(input: Record<string, unknown>, config?: AppConfig): MrSizePolicyDecision {
   const addedLines = mergeRequestAdditions(input);
   const maxAddedLines = maxAddedLinesPerMr(config);
+  return {
+    allowed: addedLines <= maxAddedLines,
+    addedLines,
+    maxAddedLines
+  };
+}
+
+export function evaluateMrSizePolicyWithFiles(input: Record<string, unknown>, files: unknown[], config?: AppConfig): MrSizePolicyDecision {
+  const metadataAddedLines = mergeRequestAdditions(input);
+  const fileAddedLines = changedFileAdditions(files);
+  const maxAddedLines = maxAddedLinesPerMr(config);
+  const addedLines = Math.max(metadataAddedLines, fileAddedLines);
   return {
     allowed: addedLines <= maxAddedLines,
     addedLines,

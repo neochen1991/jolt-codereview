@@ -51,9 +51,16 @@ export interface ReviewStatus {
   context?: string;
 }
 
+export interface MergeRequestRemoteStatus {
+  state: "open" | "closed" | "merged" | "unknown";
+  rawState?: string;
+  merged?: boolean;
+}
+
 export interface VcsProvider {
   provider: string;
   listOpenMergeRequests(repository: RepositoryRow): Promise<NormalizedMergeRequest[]>;
+  fetchMergeRequestStatus(mr: MrRef): Promise<MergeRequestRemoteStatus>;
   fetchDiff(mr: MrRef): Promise<DiffPayload>;
   fetchFiles(mr: MrRef): Promise<unknown[]>;
   fetchFile(mr: MrRef, path: string, sha?: string): Promise<string>;

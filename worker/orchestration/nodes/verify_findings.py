@@ -260,7 +260,10 @@ def make_verify_findings_node(
         files = state["files"]
         all_findings = state["all_findings"]
         conn.execute("UPDATE review_jobs SET status = 'judging', heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?", (job["id"],))
-        conn.execute("UPDATE merge_requests SET review_status = 'judging' WHERE id = ?", (job["merge_request_id"],))
+        conn.execute(
+            "UPDATE merge_requests SET review_status = 'judging' WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            (job["merge_request_id"],),
+        )
         conn.commit()
         verifier_span = recorder.span("verify_findings", "verifier")
         suppressed_hashes = load_feedback_suppressions(conn, project_id)

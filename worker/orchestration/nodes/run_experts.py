@@ -40,7 +40,10 @@ def make_run_experts_node(
         effort = state["effort"]
         selected_agents = state["selected_agents"]
         conn.execute("UPDATE review_jobs SET status = 'reviewing', heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?", (job["id"],))
-        conn.execute("UPDATE merge_requests SET review_status = 'reviewing' WHERE id = ?", (job["merge_request_id"],))
+        conn.execute(
+            "UPDATE merge_requests SET review_status = 'reviewing' WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            (job["merge_request_id"],),
+        )
         conn.commit()
         all_findings: list[dict[str, Any]] = []
         tool_observations = state.get("tool_observations") or load_tool_observations(conn, run_id)

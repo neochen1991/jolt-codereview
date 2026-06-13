@@ -816,6 +816,42 @@ def _mr_metadata(mr: sqlite3.Row) -> dict[str, Any]:
         return {}
 
 
+def _non_negative_int(value: Any) -> int:
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return 0
+    return number if number >= 0 else 0
+
+
+def max_added_lines_per_mr(config: dict[str, Any]) -> int:
+    configured = _non_negative_int((config.get("review_policy") or {}).get("max_added_lines_per_mr"))
+    return configured if configured > 0 else 2000
+
+
+def mr_metadata_additions(mr: sqlite3.Row) -> int:
+    metadata = _mr_metadata(mr)
+    return _non_negative_int(metadata.get("additions") or metadata.get("added_lines") or metadata.get("addedLines"))
+
+
+def patch_additions(patch: str) -> int:
+    return sum(1 for line in str(patch or "").splitlines() if line.startswith("+") and not line.startswith("+++"))
+
+
+def changed_files_additions(files: list[ChangedFile]) -> int:
+    return sum(max(_non_negative_int(item.additions), patch_additions(item.patch)) for item in files)
+
+
+def evaluate_mr_size_policy(mr: sqlite3.Row, files: list[ChangedFile] | None, config: dict[str, Any]) -> dict[str, Any]:
+    max_lines = max_added_lines_per_mr(config)
+    added_lines = max(mr_metadata_additions(mr), changed_files_additions(files or []))
+    return {
+        "allowed": added_lines <= max_lines,
+        "added_lines": added_lines,
+        "max_added_lines": max_lines,
+    }
+
+
 def _fetch_git_changed_files(repo: sqlite3.Row, mr: sqlite3.Row) -> tuple[list[ChangedFile], list[dict[str, Any]]]:
     provider_config = _repo_provider_config(repo)
     git_url = str(provider_config.get("git_url") or "").strip()
@@ -4364,7 +4400,10 @@ def choose_job(conn: sqlite3.Connection, config: dict[str, Any]) -> sqlite3.Row 
         if not job:
             conn.commit()
             return None
-        conn.execute("UPDATE merge_requests SET review_status = 'fetching' WHERE id = ?", (job["merge_request_id"],))
+        conn.execute(
+            "UPDATE merge_requests SET review_status = 'fetching' WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            (job["merge_request_id"],),
+        )
         conn.commit()
         return job
     except Exception:
@@ -4411,6 +4450,60 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
             "effort_level": job["requested_effort_level"],
         },
     )
+    mr = conn.execute("SELECT * FROM merge_requests WHERE id = ?", (job["merge_request_id"],)).fetchone()
+    repo = conn.execute("SELECT * FROM repositories WHERE id = ?", (mr["repository_id"],)).fetchone()
+    project_id = repo["project_id"]
+    project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    project_config = effective_project_config(config, conn, project_id, job["requested_by"])
+
+    size_guard_files: list[ChangedFile] | None = None
+    size_decision = evaluate_mr_size_policy(mr, None, project_config)
+    if size_decision["allowed"]:
+        try:
+            size_guard_files = fetch_changed_files(project_config, repo, mr)
+            size_decision = evaluate_mr_size_policy(mr, size_guard_files, project_config)
+        except Exception as exc:
+            write_worker_log(
+                config,
+                "mr_size_guard_degraded",
+                {
+                    "review_job_id": job["id"],
+                    "merge_request_id": job["merge_request_id"],
+                    "error_message": str(exc)[:500],
+                },
+                "warn",
+            )
+    if not size_decision["allowed"]:
+        message = (
+            f"该 MR 过大，新增代码行数 {size_decision['added_lines']} 行超过项目配置阈值 "
+            f"{size_decision['max_added_lines']} 行，已停止检视。"
+        )
+        conn.execute(
+            """
+            UPDATE review_jobs
+            SET status = 'cancelled', locked_at = NULL, locked_by = NULL, heartbeat_at = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (job["id"],),
+        )
+        conn.execute(
+            "UPDATE merge_requests SET review_status = 'too_large' WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            (job["merge_request_id"],),
+        )
+        conn.commit()
+        write_worker_log(
+            config,
+            "mr_size_guard_blocked",
+            {
+                "review_job_id": job["id"],
+                "merge_request_id": job["merge_request_id"],
+                "added_lines": size_decision["added_lines"],
+                "max_added_lines_per_mr": size_decision["max_added_lines"],
+                "message": message,
+            },
+            "warn",
+        )
+        return True
 
     run_id = new_id("run")
     sandbox_dir = ROOT / "data" / "sandboxes" / run_id
@@ -4448,11 +4541,6 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
             job["id"],
         ),
     )
-    mr = conn.execute("SELECT * FROM merge_requests WHERE id = ?", (job["merge_request_id"],)).fetchone()
-    repo = conn.execute("SELECT * FROM repositories WHERE id = ?", (mr["repository_id"],)).fetchone()
-    project_id = repo["project_id"]
-    project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-    project_config = effective_project_config(config, conn, project_id, job["requested_by"])
     tool_gateway = ToolGateway(conn, project_id, project_config)
     conn.execute(
         "UPDATE review_runs SET toolchain_manifest = ? WHERE id = ?",
@@ -4480,7 +4568,9 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
             mr=mr,
             job=job,
             data_policy=data_policy,
-            fetch_changed_files=fetch_changed_files,
+            fetch_changed_files=lambda _project_config, _repo, _mr: size_guard_files
+            if size_guard_files is not None
+            else fetch_changed_files(_project_config, _repo, _mr),
             fetch_changed_file_contents=fetch_changed_file_contents,
             write_json_artifact=write_json_artifact,
             apply_data_policy_to_files=apply_data_policy_to_files,
@@ -4678,7 +4768,10 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
             """,
             (job_status, next_attempt, job["id"]),
         )
-        conn.execute("UPDATE merge_requests SET review_status = ? WHERE id = ?", (mr_status, mr["id"]))
+        conn.execute(
+            "UPDATE merge_requests SET review_status = ? WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            (mr_status, mr["id"]),
+        )
         conn.commit()
         try:
             token_report = report_token_usage(conn, project_config, run_id)

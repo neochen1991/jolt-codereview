@@ -75,6 +75,24 @@ export async function listOpenCodeHubMrs(config: AppConfig, repoConfig: Reposito
   return normalizeListPayload(await response.json());
 }
 
+export async function fetchCodeHubMr(config: AppConfig, repoConfig: RepositoryConfig, mrNumber: number): Promise<CodeHubMergeRequest> {
+  const path = repoConfig.mr_path_template ?? "/api/v1/repos/{repo_id}/merge-requests/{mr_number}";
+  const url = `${endpoint(config, repoConfig)}${template(path.replace("{mr_number}", String(mrNumber)), repoConfig)}`;
+  const response = await fetch(url, { headers: headers(config, repoConfig) });
+  if (!response.ok) {
+    throw new Error(`CodeHub fetch merge request failed: ${response.status} ${await response.text()}`);
+  }
+  const payload = await response.json();
+  if (payload && typeof payload === "object") {
+    const object = payload as Record<string, unknown>;
+    for (const key of ["merge_request", "mr", "data", "item"]) {
+      if (object[key] && typeof object[key] === "object") return object[key] as unknown as CodeHubMergeRequest;
+    }
+    return object as unknown as CodeHubMergeRequest;
+  }
+  throw new Error("CodeHub fetch merge request returned unexpected payload");
+}
+
 export async function postCodeHubSummaryComment(
   config: AppConfig,
   repoConfig: RepositoryConfig,

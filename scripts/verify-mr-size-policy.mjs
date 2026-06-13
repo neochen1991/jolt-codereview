@@ -14,7 +14,9 @@ const queueModule = await import(pathToFileURL(path.join(root, "build/backend/se
 const syncModule = await import(pathToFileURL(path.join(root, "build/backend/services/MrSyncService.js")));
 const {
   DEFAULT_MAX_ADDED_LINES_PER_MR,
+  changedFileAdditions,
   evaluateMrSizePolicy,
+  evaluateMrSizePolicyWithFiles,
   mergeRequestAdditions,
   mrSizeBlockedMessage
 } = policyModule;
@@ -67,6 +69,24 @@ assert.equal(
   2003,
   "repository row should derive additions from metadata_json"
 );
+assert.equal(
+  changedFileAdditions([
+    { filename: "src/A.java", additions: 1200 },
+    { filename: "src/B.java", patch: "@@ -0,0 +1,3 @@\n+one\n+two\n+three" }
+  ]),
+  1203,
+  "changed-file additions should combine file metadata and patch additions"
+);
+const filesBlocked = evaluateMrSizePolicyWithFiles(
+  { additions: 0, metadata: { additions: 0 } },
+  [
+    { filename: "src/A.java", additions: 1500 },
+    { filename: "src/B.java", patch: `@@ -0,0 +1,501 @@\n${Array.from({ length: 501 }, (_, index) => `+line ${index}`).join("\n")}` }
+  ],
+  {}
+);
+assert.equal(filesBlocked.addedLines, 2001, "files should provide exact additions when MR metadata is incomplete");
+assert.equal(filesBlocked.allowed, false, "files-derived additions over threshold should block review");
 
 const db = new DatabaseSync(":memory:");
 migrate(db);
@@ -97,22 +117,22 @@ const largeMr = {
   changedFiles: 4,
   metadata: { additions: 2001, deletions: 0, changed_files: 4 }
 };
-const blockedSync = syncService.upsertAndEnqueue(repo, largeMr);
-assert.equal(blockedSync.jobCreated, false, "sync should not enqueue oversized MR");
-assert.equal(blockedSync.skippedTooLarge, true, "sync should report oversized skip");
+const syncedLargeMr = syncService.upsertAndEnqueue(repo, largeMr);
+assert.equal(syncedLargeMr.jobCreated, true, "sync should still enqueue oversized MR for the pending list");
+assert.equal(syncedLargeMr.skippedTooLarge, false, "sync should not apply the oversized MR guard");
 const blockedMr = mergeRequestRepository.findByRepositoryAndExternalId("repo_size", "101");
-assert.equal(blockedMr.review_status, "too_large", "oversized MR should be marked too_large");
+assert.equal(blockedMr.review_status, "queued", "sync should keep oversized MR in the pending review list");
 assert.equal(
   db.prepare("SELECT COUNT(*) AS count FROM review_jobs WHERE merge_request_id = ?").get(blockedMr.id).count,
-  0,
-  "oversized MR should not have queued jobs"
+  1,
+  "sync should create a queued job without applying the size guard"
 );
 
 projectConfigService.upsertSetting("project_size", "review_policy", { max_added_lines_per_mr: 3000 });
 const allowedSync = syncService.upsertAndEnqueue(repo, largeMr);
-assert.equal(allowedSync.jobCreated, true, "raising project threshold should allow the MR to enqueue");
+assert.equal(allowedSync.jobCreated, false, "re-syncing the same head should remain idempotent");
 const allowedMr = mergeRequestRepository.findByRepositoryAndExternalId("repo_size", "101");
-assert.equal(allowedMr.review_status, "queued", "previously oversized MR should return to queued after threshold increase");
+assert.equal(allowedMr.review_status, "queued", "MR should remain queued after threshold changes because sync does not block");
 db.close();
 
 console.log("MR size policy checks passed.");

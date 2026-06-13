@@ -300,28 +300,6 @@ private String requireText(Map<String, Object> payload, String field) {
                     rule_id="SEC-SECRET-004:ERROR_RESPONSE",
                 )
             )
-        if "@autowired" in lowered:
-            next_line = _next_code_line(lines, line_no)
-            if next_line and _is_field_declaration(next_line[1]):
-                findings.append(
-                    _finding(
-                        agent_id="coding_agent",
-                        severity="medium",
-                        confidence=0.84,
-                        file_path=file_path,
-                        line=line_no,
-                        title="Spring 字段注入降低可测试性",
-                        description="字段注入隐藏依赖，降低不可变性和单元测试可控性。",
-                        recommendation="改用构造器注入，并将依赖声明为 final。",
-                        suggested_code='''private final PaymentService paymentService;
-
-public PaymentController(PaymentService paymentService) {
-    this.paymentService = paymentService;
-}''',
-                        evidence="\n".join([line, next_line[1]]),
-                        rule_id="JOLT_JAVA_FIELD_AUTOWIRED",
-                    )
-                )
         if re.search(r"\breturn\s+null\s*;", line) and re.search(r"\b(List|Set|Map|Collection|Page|Optional)\s*[<\w,\s>]*\s+\w+\s*\(", content):
             findings.append(
                 _finding(

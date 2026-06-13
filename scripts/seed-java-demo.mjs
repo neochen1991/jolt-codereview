@@ -201,7 +201,6 @@ function seedJavaReview() {
 
   const expectedIssues = [
     "SEC-SECRET-004",
-    "JOLT_JAVA_FIELD_AUTOWIRED",
     "BE-API-001",
     "SEC-INJECT-003",
     "REDIS-CMD-003",

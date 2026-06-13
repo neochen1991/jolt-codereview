@@ -1,9 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
 import { formatMrReviewMarkdown, markdownFilename } from "../reviewMarkdown.js";
-import { evaluateMrSizePolicy, mrSizeBlockedMessage } from "../services/MrSizePolicy.js";
+import { evaluateMrSizePolicy, evaluateMrSizePolicyWithFiles, mrSizeBlockedMessage, type MrSizePolicyDecision } from "../services/MrSizePolicy.js";
 import { projectMrConcurrency } from "../services/QueuePolicy.js";
 import type { FindingRow } from "../types.js";
+import { CodeHubProvider } from "../vcs/CodeHubProvider.js";
+import { GithubProvider } from "../vcs/GithubProvider.js";
+import type { VcsProvider } from "../vcs/VcsProvider.js";
 import type { BackendRouteContext } from "./context.js";
 
 export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
@@ -26,6 +29,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     auditLog,
     syncProject,
     publishFindings,
+    mrSyncService,
     projectRepository,
     repositoryRepository,
     mergeRequestRepository,
@@ -59,6 +63,100 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       resolved: base.filter((finding) => !headByHash.has(finding.dedupe_hash)),
       retained: head.filter((finding) => baseByHash.has(finding.dedupe_hash))
     };
+  }
+
+  function providerFor(repository: { provider: string }, effectiveConfig: any): VcsProvider | null {
+    if (repository.provider === "github") return new GithubProvider(effectiveConfig ?? config);
+    if (repository.provider === "codehub") return new CodeHubProvider(effectiveConfig ?? config);
+    return null;
+  }
+
+  function parseMetadataJson(value: unknown): Record<string, unknown> {
+    if (!value) return {};
+    if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(String(value));
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function hasSyncedAdditions(row: Record<string, unknown>) {
+    if (row.additions !== undefined) return true;
+    const metadata = parseMetadataJson(row.metadata_json ?? row.metadata);
+    return metadata.additions !== undefined || metadata.added_lines !== undefined || metadata.addedLines !== undefined;
+  }
+
+  function mrSizePolicyHint(row: Record<string, unknown>, effectiveConfig: any) {
+    const decision = evaluateMrSizePolicy(row, effectiveConfig);
+    const knownAdditions = hasSyncedAdditions(row);
+    if (!knownAdditions) {
+      return {
+        added_lines: null,
+        max_added_lines_per_mr: decision.maxAddedLines,
+        size_policy_state: "unknown",
+        size_policy_message: `开始检视时将按变更文件统计新增行数，超过 ${decision.maxAddedLines} 行会停止检视`
+      };
+    }
+    if (!decision.allowed) {
+      return {
+        added_lines: decision.addedLines,
+        max_added_lines_per_mr: decision.maxAddedLines,
+        size_policy_state: "over_limit",
+        size_policy_message: `已同步新增 ${decision.addedLines} 行，超过项目阈值 ${decision.maxAddedLines} 行；点击开始检视会被拦截`
+      };
+    }
+    return {
+      added_lines: decision.addedLines,
+      max_added_lines_per_mr: decision.maxAddedLines,
+      size_policy_state: "within_limit",
+      size_policy_message: `已同步新增 ${decision.addedLines} 行，项目阈值 ${decision.maxAddedLines} 行；开始检视时会按文件变更复核`
+    };
+  }
+
+  function terminalMrMessage(status: string, action: string) {
+    const label = status === "merged" ? "已合入" : "已关闭";
+    return `该 MR ${label}，不能再${action}。`;
+  }
+
+  async function ensureMergeRequestOpenForAction(mrId: string, action: string) {
+    const current = mergeRequestRepository.findById(mrId);
+    if (!current) return notFound();
+    if (["merged", "closed"].includes(current.review_status)) {
+      return { statusCode: 400, error: "mr_not_open", message: terminalMrMessage(current.review_status, action) };
+    }
+    try {
+      const remote = await mrSyncService.refreshMergeRequestStatusById(mrId);
+      if (remote.ok && remote.terminal_status) {
+        return { statusCode: 400, error: "mr_not_open", message: terminalMrMessage(remote.terminal_status, action) };
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  async function evaluateMrSizeWithRemoteFiles(
+    mr: Record<string, unknown>,
+    repository: Record<string, unknown>,
+    effectiveConfig: any
+  ): Promise<MrSizePolicyDecision> {
+    const metadataDecision = evaluateMrSizePolicy(mr, effectiveConfig);
+    if (!metadataDecision.allowed) return metadataDecision;
+    const provider = providerFor({ provider: String(repository.provider || "") }, effectiveConfig);
+    if (!provider) return metadataDecision;
+    try {
+      const files = await provider.fetchFiles({
+        repository: repository as any,
+        number: Number(mr.number),
+        externalId: String(mr.external_mr_id || ""),
+        headSha: String(mr.latest_head_sha || "")
+      });
+      return evaluateMrSizePolicyWithFiles(mr, files, effectiveConfig);
+    } catch {
+      return metadataDecision;
+    }
   }
 
   function countByKind(items: Array<{ kind: string }>): Record<string, number> {
@@ -302,11 +400,15 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       `, [params.projectId]);
       const projectConcurrency = projectMrConcurrency(projectConfigService.effectiveConfig(params.projectId, config).effective_config);
       const activeProjectJobIds = new Set(activeProjectJobs.map((job) => String(job.merge_request_id)));
+      const effectiveConfig = projectConfigService.effectiveConfig(params.projectId, config).effective_config;
       const rows = mergeRequestRepository.listByProject(params.projectId, null).map((row: any) => {
-        const effectiveStatus = activeJobStatuses.has(String(row.latest_job_status)) ? String(row.latest_job_status) : String(row.review_status);
+        const terminalStatus = ["merged", "closed"].includes(String(row.review_status));
+        const effectiveStatus = !terminalStatus && activeJobStatuses.has(String(row.latest_job_status)) ? String(row.latest_job_status) : String(row.review_status);
         const blockedByProject = effectiveStatus === "queued" && activeProjectJobs.length >= projectConcurrency && !activeProjectJobIds.has(String(row.id));
+        const sizeHint = mrSizePolicyHint(row, effectiveConfig);
         return {
           ...row,
+          ...sizeHint,
           review_status: effectiveStatus,
           queue_blocked_by_project: Boolean(blockedByProject),
           queue_blocked_reason: blockedByProject
@@ -331,6 +433,22 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         resourceId: params.projectId,
         summary: `synced ${result.merge_requests} merge requests, queued ${result.jobs_created} jobs`,
         metadata: { repositories: result.repositories, repository_results: result.repository_results, errors: result.errors }
+      });
+      return result;
+    }),
+    route("POST", "/api/mr-review/projects/:projectId/merge-requests/status-refresh", async ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "reviewer");
+      if (denied) return denied;
+      const result = await mrSyncService.refreshProjectMergeRequestStatuses(params.projectId);
+      auditLog({
+        userId: actorId,
+        projectId: params.projectId,
+        action: "mr_review.refresh_remote_status",
+        resourceType: "project",
+        resourceId: params.projectId,
+        summary: `refreshed ${result.refreshed}/${result.checked} MR remote statuses, merged ${result.merged}, closed ${result.closed}`,
+        metadata: { checked: result.checked, refreshed: result.refreshed, merged: result.merged, closed: result.closed, errors: result.errors }
       });
       return result;
     }),
@@ -472,17 +590,19 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         content
       };
     }),
-    route("POST", "/api/mr-review/merge-requests/:mrId/review-jobs", ({ params, body, req }) => {
+    route("POST", "/api/mr-review/merge-requests/:mrId/review-jobs", async ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const mr = mergeRequestRepository.findById(params.mrId);
       if (!mr) return notFound();
-      const repo = repositoryRepository.findProjectByRepositoryId(mr.repository_id);
+      const repo = repositoryRepository.findById(mr.repository_id);
       if (!repo) return notFound();
       const denied = ensureProjectRole(repo.project_id, actorId, "reviewer");
       if (denied) return denied;
+      const closed = await ensureMergeRequestOpenForAction(params.mrId, "开始检视");
+      if (closed) return closed;
       const input = body as Record<string, unknown> | undefined;
       const effectiveConfig = projectConfigService.effectiveConfig(repo.project_id, config).effective_config;
-      const sizeDecision = evaluateMrSizePolicy(mr as unknown as Record<string, unknown>, effectiveConfig);
+      const sizeDecision = await evaluateMrSizeWithRemoteFiles(mr as unknown as Record<string, unknown>, repo as unknown as Record<string, unknown>, effectiveConfig);
       if (!sizeDecision.allowed) {
         reviewQueueService.cancelQueued(params.mrId);
         mergeRequestRepository.updateReviewStatus(params.mrId, "too_large");
@@ -520,7 +640,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const actorId = currentUserId(req);
       const mr = mergeRequestRepository.findById(params.mrId);
       if (!mr) return notFound();
-      const repo = repositoryRepository.findProjectByRepositoryId(mr.repository_id);
+      const repo = repositoryRepository.findById(mr.repository_id);
       if (!repo) return notFound();
       const denied = ensureProjectRole(repo.project_id, actorId, "reviewer");
       if (denied) return denied;
@@ -533,7 +653,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const actorId = currentUserId(req);
       const mr = mergeRequestRepository.findById(params.mrId);
       if (!mr) return notFound();
-      const repo = repositoryRepository.findProjectByRepositoryId(mr.repository_id);
+      const repo = repositoryRepository.findById(mr.repository_id);
       if (!repo) return notFound();
       const denied = ensureProjectRole(repo.project_id, actorId, "reviewer");
       if (denied) return denied;
@@ -542,7 +662,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       auditLog({ userId: actorId, projectId: repo.project_id, action: "mr_review.stop", resourceType: "merge_request", resourceId: params.mrId, summary: `stopped ${result.changes} review jobs` });
       return { ok: true, stopped_jobs: result.changes };
     }),
-    route("POST", "/api/mr-review/review-jobs/:jobId/retry", ({ params, body, req }) => {
+    route("POST", "/api/mr-review/review-jobs/:jobId/retry", async ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const input = body as Record<string, unknown> | undefined;
       const job = reviewJobRepository.findWithProject(params.jobId) as { id: string; merge_request_id: string; requested_effort_level: string; project_id: string } | undefined;
@@ -551,8 +671,13 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       const mr = mergeRequestRepository.findById(job.merge_request_id);
       if (!mr) return notFound();
+      const closed = await ensureMergeRequestOpenForAction(job.merge_request_id, "重新检视");
+      if (closed) return closed;
       const effectiveConfig = projectConfigService.effectiveConfig(job.project_id, config).effective_config;
-      const sizeDecision = evaluateMrSizePolicy(mr as unknown as Record<string, unknown>, effectiveConfig);
+      const repository = repositoryRepository.findById(mr.repository_id);
+      const sizeDecision = repository
+        ? await evaluateMrSizeWithRemoteFiles(mr as unknown as Record<string, unknown>, repository as unknown as Record<string, unknown>, effectiveConfig)
+        : evaluateMrSizePolicy(mr as unknown as Record<string, unknown>, effectiveConfig);
       if (!sizeDecision.allowed) {
         reviewQueueService.cancelQueued(job.merge_request_id);
         mergeRequestRepository.updateReviewStatus(job.merge_request_id, "too_large");
@@ -749,6 +874,14 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     }),
     route("POST", "/api/mr-review/merge-requests/:mrId/publish", async ({ params, body, req }) => {
       const input = body as Record<string, unknown>;
+      const mr = mergeRequestRepository.findById(params.mrId);
+      if (!mr) return notFound();
+      const repo = repositoryRepository.findById(mr.repository_id);
+      if (!repo) return notFound();
+      const denied = ensureProjectRole(repo.project_id, currentUserId(req), "reviewer");
+      if (denied) return denied;
+      const closed = await ensureMergeRequestOpenForAction(params.mrId, "提交检视意见");
+      if (closed) return closed;
       return publishFindings(params.mrId, (input.finding_ids as string[] | undefined) ?? [], Boolean(input.dry_run), currentUserId(req));
     }),
   ];

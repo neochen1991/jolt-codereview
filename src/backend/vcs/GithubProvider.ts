@@ -1,7 +1,7 @@
 import type { AppConfig, RepositoryConfig } from "../types.js";
-import { fetchPullDiff, fetchRepoFile, listOpenPulls, listPullFiles, normalizeRepoConfig, postIssueComment, updateCommitStatus } from "../github.js";
+import { fetchPull, fetchPullDiff, fetchRepoFile, listOpenPulls, listPullFiles, normalizeRepoConfig, postIssueComment, updateCommitStatus } from "../github.js";
 import type { RepositoryRow } from "../repositories/RepositoryRepository.js";
-import type { DiffPayload, InlineComment, MrRef, NormalizedMergeRequest, ReviewStatus, VcsCapabilities, VcsProvider } from "./VcsProvider.js";
+import type { DiffPayload, InlineComment, MergeRequestRemoteStatus, MrRef, NormalizedMergeRequest, ReviewStatus, VcsCapabilities, VcsProvider } from "./VcsProvider.js";
 
 export class GithubProvider implements VcsProvider {
   provider = "github";
@@ -37,6 +37,15 @@ export class GithubProvider implements VcsProvider {
   async fetchDiff(mr: MrRef): Promise<DiffPayload> {
     const repoConfig = normalizeRepoConfig(JSON.parse(mr.repository.provider_config_json || "{}")) as RepositoryConfig;
     return { provider: this.provider, diff: await fetchPullDiff(this.config, repoConfig, mr.number) };
+  }
+
+  async fetchMergeRequestStatus(mr: MrRef): Promise<MergeRequestRemoteStatus> {
+    const repoConfig = normalizeRepoConfig(JSON.parse(mr.repository.provider_config_json || "{}")) as RepositoryConfig;
+    const pull = await fetchPull(this.config, repoConfig, mr.number);
+    const rawState = String(pull.state ?? "").toLowerCase();
+    const merged = Boolean(pull.merged);
+    const state = merged ? "merged" : rawState === "closed" ? "closed" : rawState === "open" ? "open" : "unknown";
+    return { state, rawState, merged };
   }
 
   async fetchFiles(mr: MrRef): Promise<unknown[]> {

@@ -77,6 +77,7 @@ export interface RepositoryConfig {
   token?: string;
   token_ref?: string;
   list_mrs_path?: string;
+  mr_path_template?: string;
   diff_path_template?: string;
   files_path_template?: string;
   file_path_template?: string;

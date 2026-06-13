@@ -3344,6 +3344,23 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   font-size: 12px;
   font-weight: 700;
 }
+
+.mr-title .mr-size-hint {
+  color: #5f6c7f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mr-title .mr-size-hint.warning {
+  color: #b54708;
+}
+
+.mr-title .mr-terminal-hint {
+  color: #9f1239;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .mr-title strong { color: #1c2a3f; margin-right: 6px; }
 
 .risk-badge {
@@ -3375,6 +3392,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .status-badge.no_issue,
 .status-badge.submitted { color: var(--green); background: var(--green-soft); border: 1px solid #a8e6c1; }
 .status-badge.failed { color: var(--red); background: var(--red-soft); border: 1px solid #ffb7c0; }
+.status-badge.merged,
+.status-badge.closed { color: #9f1239; background: #fff1f2; border: 1px solid #fecdd3; }
 .status-badge.running,
 .status-badge.reviewing,
 .status-badge.pre_scanning,
@@ -6052,9 +6071,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
     grid-column: 2 / -1;
     grid-row: 1;
     white-space: normal;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+    display: grid;
+    gap: 3px;
   }
 
   .mr-row > span:nth-child(3) {

@@ -212,7 +212,10 @@ def make_finalize_node(
             (status, summary, json.dumps(budget_used, ensure_ascii=False), json.dumps(coverage, ensure_ascii=False), run_id),
         )
         conn.execute("UPDATE review_jobs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, job["id"]))
-        conn.execute("UPDATE merge_requests SET review_status = ? WHERE id = ?", (status, mr["id"]))
+        conn.execute(
+            "UPDATE merge_requests SET review_status = ? WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            (status, mr["id"]),
+        )
         if recorder:
             span = recorder.span("incremental_history", "history_tracker")
             recorder.event(span, "mr_finding_history_updated", "MR finding history 已更新", history_summary)

@@ -72,7 +72,10 @@ def make_choose_effort_node(
             (effort, json.dumps(budget, ensure_ascii=False), run_id),
         )
         conn.execute("UPDATE review_jobs SET status = 'pre_scanning', heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?", (job["id"],))
-        conn.execute("UPDATE merge_requests SET review_status = 'pre_scanning' WHERE id = ?", (job["merge_request_id"],))
+        conn.execute(
+            "UPDATE merge_requests SET review_status = 'pre_scanning' WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            (job["merge_request_id"],),
+        )
         conn.commit()
         return {**state, "effort": effort, "budget": budget, "budget_tracker": BudgetTracker.from_budget(budget)}
 

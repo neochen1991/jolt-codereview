@@ -73,6 +73,19 @@ export class MergeRequestRepository {
     return this.db.prepare(`${baseSql} AND mr.review_status = ? ${orderSql}`).all(projectId, status);
   }
 
+  listRemoteStatusCandidates(projectId: string) {
+    return this.db.prepare(`
+      SELECT mr.*, r.project_id, r.provider, r.external_repo_id, r.name AS repository_name, r.provider_config_json
+      FROM merge_requests mr
+      JOIN repositories r ON r.id = mr.repository_id
+      WHERE r.project_id = ?
+        AND r.status = 'active'
+        AND mr.review_status IN ('queued', 'paused', 'waiting_confirmation', 'no_issue', 'too_large')
+      ORDER BY mr.updated_at DESC
+      LIMIT 200
+    `).all(projectId);
+  }
+
   upsert(input: {
     id: string;
     repositoryId: string;

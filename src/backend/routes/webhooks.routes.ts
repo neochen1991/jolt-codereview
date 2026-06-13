@@ -130,7 +130,7 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
       }
       return { ok: true, provider, command: command.command, dry_run: input.dry_run !== false, body: responseBody };
     }),
-    route("POST", "/api/webhooks/:provider/:projectId", ({ params, body, req }) => {
+    route("POST", "/api/webhooks/:provider/:projectId", async ({ params, body, req }) => {
       const provider = params.provider;
       if (!["github", "codehub"].includes(provider)) return badRequest("provider must be github or codehub");
       const rawBody = typeof body === "string" ? body : JSON.stringify(body ?? {});
@@ -188,7 +188,7 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
           return { ok: true, provider, normalized_event: normalized.state === "merged" ? "mr.merged" : "mr.closed" };
         }
   
-        const result = mrSyncService.upsertAndEnqueue(repo, {
+        const result = await mrSyncService.upsertAndEnqueue(repo, {
           externalId: normalized.externalId,
           number: normalized.number,
           title: normalized.title,
@@ -247,7 +247,7 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
         return { ok: true, provider, status: "ignored", action };
       }
   
-      const result = mrSyncService.upsertAndEnqueue(repo, {
+      const result = await mrSyncService.upsertAndEnqueue(repo, {
         externalId: String(pull.id),
         number: Number(pull.number),
         title: String(pull.title ?? ""),

@@ -5,12 +5,17 @@ import type { ProjectConfigService } from "./ProjectConfigService.js";
 import type { ReviewQueueService } from "./ReviewQueueService.js";
 import { CodeHubProvider } from "../vcs/CodeHubProvider.js";
 import { GithubProvider } from "../vcs/GithubProvider.js";
-import type { NormalizedMergeRequest, VcsProvider } from "../vcs/VcsProvider.js";
-import { evaluateMrSizePolicy, mrSizeBlockedMessage } from "./MrSizePolicy.js";
+import type { MergeRequestRemoteStatus, NormalizedMergeRequest, VcsProvider } from "../vcs/VcsProvider.js";
 
 function riskScore(input: { additions?: number; deletions?: number; changedFiles?: number; changed_files?: number }): number {
   const churn = (input.additions ?? 0) + (input.deletions ?? 0);
   return Math.min(100, Math.round((input.changedFiles ?? input.changed_files ?? 0) * 8 + churn / 35));
+}
+
+function terminalReviewStatus(status: MergeRequestRemoteStatus): "merged" | "closed" | null {
+  if (status.state === "merged") return "merged";
+  if (status.state === "closed") return "closed";
+  return null;
 }
 
 export class MrSyncService {
@@ -80,15 +85,11 @@ export class MrSyncService {
       try {
         const mergeRequests = await provider.listOpenMergeRequests(repo);
         let repoJobs = 0;
-        let repoSkippedTooLarge = 0;
         for (const mergeRequest of mergeRequests) {
           const result = this.upsertAndEnqueue(repo, mergeRequest, requestedBy);
           if (result.jobCreated) {
             jobs += 1;
             repoJobs += 1;
-          }
-          if (result.skippedTooLarge) {
-            repoSkippedTooLarge += 1;
           }
           merged += 1;
         }
@@ -99,7 +100,7 @@ export class MrSyncService {
           external_repo_id: repo.external_repo_id,
           merge_requests: mergeRequests.length,
           jobs_created: repoJobs,
-          skipped_too_large: repoSkippedTooLarge
+          skipped_too_large: 0
         });
       } catch (error) {
         const message = (error as Error).message;
@@ -140,20 +141,6 @@ export class MrSyncService {
       htmlUrl: mergeRequest.htmlUrl,
       metadata: mergeRequest.metadata
     });
-    const effectiveConfig = this.effectiveConfigForProject(repository.project_id);
-    const sizeDecision = evaluateMrSizePolicy(mergeRequest as unknown as Record<string, unknown>, effectiveConfig);
-    if (!sizeDecision.allowed) {
-      const mergeRequestId = existing?.id ?? mrId;
-      this.reviewQueueService.cancelQueued(mergeRequestId);
-      this.mergeRequestRepository.updateReviewStatus(mergeRequestId, "too_large");
-      return {
-        mergeRequestId,
-        riskScore: score,
-        jobCreated: false,
-        skippedTooLarge: true,
-        message: mrSizeBlockedMessage(sizeDecision)
-      };
-    }
     if (existing && existing.latest_head_sha !== mergeRequest.headSha) {
       this.reviewQueueService.supersedeQueued(existing.id);
     }
@@ -173,5 +160,56 @@ export class MrSyncService {
       jobCreated: jobResult.created,
       skippedTooLarge: false
     };
+  }
+
+  async refreshMergeRequestStatusById(mergeRequestId: string) {
+    const mr = this.mergeRequestRepository.findById(mergeRequestId);
+    if (!mr) return { ok: false, reason: "merge_request_not_found" };
+    const repository = this.repositoryRepository.findById(mr.repository_id);
+    if (!repository) return { ok: false, reason: "repository_not_found" };
+    const providers = this.providersFor(this.effectiveConfigForProject(repository.project_id));
+    const provider = providers[repository.provider];
+    if (!provider) return { ok: false, reason: `unsupported provider ${repository.provider}` };
+    const remoteStatus = await provider.fetchMergeRequestStatus({
+      repository,
+      number: mr.number,
+      externalId: mr.external_mr_id,
+      headSha: mr.latest_head_sha
+    });
+    const terminalStatus = terminalReviewStatus(remoteStatus);
+    if (terminalStatus) {
+      this.reviewQueueService.stopByMergeRequest(mergeRequestId);
+      this.mergeRequestRepository.updateReviewStatus(mergeRequestId, terminalStatus);
+    }
+    return {
+      ok: true,
+      merge_request_id: mergeRequestId,
+      remote_status: remoteStatus,
+      terminal_status: terminalStatus,
+      blocked: Boolean(terminalStatus)
+    };
+  }
+
+  async refreshProjectMergeRequestStatuses(projectId: string) {
+    const rows = this.mergeRequestRepository.listRemoteStatusCandidates(projectId) as Array<Record<string, any>>;
+    let refreshed = 0;
+    let merged = 0;
+    let closed = 0;
+    const errors: string[] = [];
+    const items: Array<Record<string, unknown>> = [];
+    for (const row of rows) {
+      try {
+        const result = await this.refreshMergeRequestStatusById(String(row.id));
+        if (result.ok) refreshed += 1;
+        if (result.terminal_status === "merged") merged += 1;
+        if (result.terminal_status === "closed") closed += 1;
+        items.push(result);
+      } catch (error) {
+        const message = (error as Error).message;
+        errors.push(`!${row.number} ${row.title}: ${message}`);
+        items.push({ ok: false, merge_request_id: row.id, error: message });
+      }
+    }
+    return { checked: rows.length, refreshed, merged, closed, errors, items };
   }
 }

@@ -10,6 +10,8 @@
 
 DDD finding 必须说明业务语义影响，不能只说“设计不优雅”。每个 finding 必须落在当前 MR diff 的精确新增行，必须说明违反的 DDD 规则、业务后果、误报边界和可落地重构建议。
 
+不要仅因 Controller、Service 或 Repository 中出现 `@Autowired` 字段注入就输出 DDD 问题；只有当领域对象、值对象或 domain 包直接依赖 Spring Bean、Repository、Redis、HTTP 等基础设施，且造成领域模型污染时才可报告。
+
 ## 战略设计
 
 ## DDD-CTX-001 限界上下文边界必须清晰

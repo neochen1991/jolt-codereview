@@ -72,6 +72,22 @@ def main() -> None:
     )
     insert_report(
         conn,
+        "pmd_noisy_equals_hashcode",
+        "pmd",
+        "xml",
+        {
+            "content": """
+            <pmd>
+              <file name="src/main/java/com/acme/payment/PaymentController.java">
+                <violation beginline="40" endline="40" rule="OverrideBothEqualsAndHashcode" priority="3">Ensure you override both equals() and hashCode()</violation>
+                <violation beginline="41" endline="41" rule="OverrideBothEqualsAndHashCodeOnComparable" priority="3">When implementing Comparable both equals() and hashCode() should be overridden</violation>
+              </file>
+            </pmd>
+            """
+        },
+    )
+    insert_report(
+        conn,
         "checkstyle_1",
         "error-prone",
         "xml",
@@ -150,8 +166,10 @@ def main() -> None:
     findings, reports = external_report_findings(conn, MR_ID, HEAD_SHA, files_by_name)
     tools = {item["tool_name"] for item in findings}
     agents = {item["agent_id"] for item in findings}
-    assert len(reports) == 5, reports
-    assert len(findings) == 5, findings
+    assert len(reports) == 6, reports
+    assert len(findings) == 7, findings
+    assert any(item.get("tool_rule_id") == "OverrideBothEqualsAndHashcode" for item in findings), findings
+    assert any(item.get("tool_rule_id") == "OverrideBothEqualsAndHashCodeOnComparable" for item in findings), findings
     assert {"pmd", "error-prone", "spotbugs", "codeql", "jacoco"} <= tools, tools
     assert {"coding_agent", "security_agent", "test_agent"} <= agents, agents
     assert all(item["head_sha"] == HEAD_SHA for item in findings)

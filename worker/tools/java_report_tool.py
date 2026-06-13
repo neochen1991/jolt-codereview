@@ -47,7 +47,6 @@ RULE_AGENT_HINTS = {
     "archunit": "ddd_agent",
 }
 
-
 def parse_report(report_path: Path, report_kind: str) -> dict[str, Any]:
     if not report_path.exists():
         return {"tool": report_kind, "status": "requires_report", "findings": []}

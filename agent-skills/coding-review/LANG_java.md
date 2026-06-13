@@ -8,16 +8,16 @@
 - `BigDecimal` 不得使用 `double`/`float` 构造，金额计算必须保留明确精度和舍入策略。
 - 不得直接使用 `Executors` 工厂方法创建生产线程池。
 - `SimpleDateFormat` 不得作为 `static` 共享对象。
-- 重写 `equals` 必须同时重写 `hashCode`，两者必须使用一致业务身份。
+- 重写 `equals` 必须同时重写 `hashCode`，两者必须使用一致业务身份；普通 `xxx.equals(...)` 调用不属于该规则。
 - 集合、Map、Page、Optional 类型返回值不得返回 `null`。
 - 禁止 `printStackTrace()` 和 `System.out/System.err` 进入生产代码。
 - `Optional.get()` 前必须证明存在值。
 - `catch Exception` 不得吞异常或返回误导性成功。
-- `@Autowired` 字段注入应避免用于新增业务类。
+- `@Autowired` 字段注入应避免用于新增业务类；构造器注入、方法注入或测试代码中的注入不按字段注入问题报告。
 
 ## 如何检查
 1. 搜索新增类名、字段名、方法名，检查是否命中 `_`、`$`、中文或拼音混合命名。
-2. 搜索 `new BigDecimal(`、`Executors.new`、`new SimpleDateFormat(`、`equals(`、`hashCode(`。
+2. 搜索 `new BigDecimal(`、`Executors.new`、`new SimpleDateFormat(`、`public boolean equals(Object`、`public int hashCode()`。
 3. 搜索 `return null`，确认方法返回类型是否为集合、Map、Page 或 Optional。
 4. 搜索 `printStackTrace`、`System.out`、`System.err`、`catch (Exception`、`Optional.get()`。
 5. 对每个问题给出精确行号、命中的规范条目、可替换建议代码和必要的回归测试建议。

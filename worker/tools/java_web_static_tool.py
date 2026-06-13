@@ -26,6 +26,29 @@ def _text(lines: list[tuple[int, str]]) -> str:
     return "\n".join(line for _, line in lines)
 
 
+def _next_code_line(lines: list[tuple[int, str]], line_no: int) -> tuple[int, str] | None:
+    for next_no, next_line in lines:
+        stripped = next_line.strip()
+        if next_no > line_no and stripped and not stripped.startswith("//"):
+            return next_no, next_line
+    return None
+
+
+def _is_field_declaration(line: str) -> bool:
+    stripped = line.strip()
+    if "(" in stripped or not stripped.endswith(";"):
+        return False
+    return bool(re.match(r"(?:private|protected|public)?\s*(?:final\s+)?[\w.$<>?,\s\[\]]+\s+\w+\s*(?:=.*)?;", stripped))
+
+
+def _has_equals_override(content: str) -> bool:
+    return bool(re.search(r"(?:@Override\s*)?public\s+boolean\s+equals\s*\(\s*Object\s+\w+\s*\)", content))
+
+
+def _has_hashcode_override(content: str) -> bool:
+    return bool(re.search(r"(?:@Override\s*)?public\s+int\s+hashCode\s*\(\s*\)", content))
+
+
 def _finding(
     *,
     agent_id: str,
@@ -278,25 +301,27 @@ private String requireText(Map<String, Object> payload, String field) {
                 )
             )
         if "@autowired" in lowered:
-            findings.append(
-                _finding(
-                    agent_id="coding_agent",
-                    severity="medium",
-                    confidence=0.84,
-                    file_path=file_path,
-                    line=line_no,
-                    title="Spring 字段注入降低可测试性",
-                    description="字段注入隐藏依赖，降低不可变性和单元测试可控性。",
-                    recommendation="改用构造器注入，并将依赖声明为 final。",
-                    suggested_code='''private final PaymentService paymentService;
+            next_line = _next_code_line(lines, line_no)
+            if next_line and _is_field_declaration(next_line[1]):
+                findings.append(
+                    _finding(
+                        agent_id="coding_agent",
+                        severity="medium",
+                        confidence=0.84,
+                        file_path=file_path,
+                        line=line_no,
+                        title="Spring 字段注入降低可测试性",
+                        description="字段注入隐藏依赖，降低不可变性和单元测试可控性。",
+                        recommendation="改用构造器注入，并将依赖声明为 final。",
+                        suggested_code='''private final PaymentService paymentService;
 
 public PaymentController(PaymentService paymentService) {
     this.paymentService = paymentService;
 }''',
-                    evidence=line,
-                    rule_id="JOLT_JAVA_FIELD_AUTOWIRED",
+                        evidence="\n".join([line, next_line[1]]),
+                        rule_id="JOLT_JAVA_FIELD_AUTOWIRED",
+                    )
                 )
-            )
         if re.search(r"\breturn\s+null\s*;", line) and re.search(r"\b(List|Set|Map|Collection|Page|Optional)\s*[<\w,\s>]*\s+\w+\s*\(", content):
             findings.append(
                 _finding(
@@ -746,8 +771,10 @@ public void updatePaymentStatus(...) {
                             rule_id="HW-TX-001",
                         )
                     )
-    if re.search(r"equals\s*\([^)]*\)", content) and "hashCode(" not in content:
-        line_no = next((no for no, line in lines if "equals(" in line), 1)
+    has_equals_override = _has_equals_override(content)
+    has_hashcode_override = _has_hashcode_override(content)
+    if has_equals_override and not has_hashcode_override:
+        line_no = next((no for no, line in lines if re.search(r"public\s+boolean\s+equals\s*\(", line)), 1)
         findings.append(
             _finding(
                 agent_id="coding_agent",
@@ -762,12 +789,12 @@ public void updatePaymentStatus(...) {
 public int hashCode() {
     return Objects.hash(id);
 }''',
-                evidence="类中出现 equals 但未发现 hashCode。",
+                evidence="类中重写 equals 但未发现 hashCode。",
                 rule_id="ALI-EQUALS-001",
             )
         )
-    if "hashCode(" in content and not re.search(r"equals\s*\([^)]*\)", content):
-        line_no = next((no for no, line in lines if "hashCode(" in line), 1)
+    if has_hashcode_override and not has_equals_override:
+        line_no = next((no for no, line in lines if re.search(r"public\s+int\s+hashCode\s*\(", line)), 1)
         findings.append(
             _finding(
                 agent_id="coding_agent",
@@ -782,7 +809,7 @@ public int hashCode() {
 public boolean equals(Object other) {
     // compare business identity
 }''',
-                evidence="类中出现 hashCode 但未发现 equals。",
+                evidence="类中重写 hashCode 但未发现 equals。",
                 rule_id="ALI-EQUALS-001",
             )
         )

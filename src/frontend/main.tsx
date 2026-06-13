@@ -39,6 +39,7 @@ import "./styles.css";
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8011";
 const DEFAULT_PROJECT_ID = "project_default";
 const DEFAULT_WORKSPACE_MESSAGE = "请选择项目进入 MR 工作台";
+const SOURCE_CONTEXT_RADIUS = 5;
 type ViewKey = "mr" | "full" | "issues" | "rules" | "agents" | "repos" | "policy" | "users" | "tools" | "queue" | "personal" | "settings" | "system";
 type RouteScreen = "login" | "projects" | "workspace";
 type WorkspaceRouteState = {
@@ -872,8 +873,8 @@ function textCodeLines(value: string, startLine = 1): ParsedDiffLine[] {
 
 function sourceCodeWindow(source: string, startLine: number, endLine: number): ParsedDiffLine[] {
   const allLines = source.split(/\r?\n/);
-  const safeStart = Math.max(1, startLine - 4);
-  const safeEnd = Math.min(allLines.length, Math.max(endLine, startLine) + 4);
+  const safeStart = Math.max(1, startLine - SOURCE_CONTEXT_RADIUS);
+  const safeEnd = Math.min(allLines.length, Math.max(endLine, startLine) + SOURCE_CONTEXT_RADIUS);
   return allLines.slice(safeStart - 1, safeEnd).map((content, index) => ({
     kind: "context",
     oldLine: safeStart + index,
@@ -893,11 +894,11 @@ function diffCodeWindow(patch: string, startLine: number, endLine: number): Pars
     return (newLine >= targetStart && newLine <= targetEnd) || (oldLine >= targetStart && oldLine <= targetEnd);
   });
   if (matchIndex < 0) return [];
-  let safeStart = Math.max(0, matchIndex - 5);
-  while (safeStart > 0 && parsed[safeStart].kind !== "meta" && matchIndex - safeStart < 12) {
+  let safeStart = Math.max(0, matchIndex - SOURCE_CONTEXT_RADIUS);
+  while (safeStart > 0 && parsed[safeStart].kind !== "meta" && matchIndex - safeStart < SOURCE_CONTEXT_RADIUS * 2 + 2) {
     safeStart -= 1;
   }
-  const safeEnd = Math.min(parsed.length, matchIndex + 8);
+  const safeEnd = Math.min(parsed.length, matchIndex + SOURCE_CONTEXT_RADIUS + 1);
   return parsed.slice(safeStart, safeEnd);
 }
 
@@ -5960,12 +5961,11 @@ function FindingDetailModal({
       cancelled = true;
     };
   }, [projectId, ruleKey]);
-  const patchProblemLines = sourcePatch ? diffCodeWindow(sourcePatch, finding.line_start || 1, finding.line_end || finding.line_start || 1) : [];
   const problemLines = sourceCode
-    ? patchProblemLines.length
-      ? patchProblemLines
-      : sourceCodeWindow(sourceCode, finding.line_start || 1, finding.line_end || finding.line_start || 1)
-    : textCodeLines(finding.evidence || location, finding.line_start || 1);
+    ? sourceCodeWindow(sourceCode, finding.line_start || 1, finding.line_end || finding.line_start || 1)
+    : sourcePatch
+      ? diffCodeWindow(sourcePatch, finding.line_start || 1, finding.line_end || finding.line_start || 1)
+      : textCodeLines(finding.evidence || location, finding.line_start || 1);
   const suggestionLines = textCodeLines(suggestedCode || "// 当前 finding 未提供明确代码片段，请重新检视生成建议修改代码。", finding.line_start || 1);
   const evidenceCount = sourceObservations.length || toolProvenance.length;
   const source = findingSource(finding);
@@ -5976,9 +5976,9 @@ function FindingDetailModal({
     const source = readPathMap(sourceByPath, resolvedFilePath || filePath);
     const safeStart = startLine > 0 ? startLine : 1;
     const safeEnd = endLine > 0 ? endLine : safeStart;
+    if (source) return sourceCodeWindow(source, safeStart, safeEnd);
     const patchLines = patch ? diffCodeWindow(patch, safeStart, safeEnd) : [];
     if (patchLines.length) return patchLines;
-    if (source) return sourceCodeWindow(source, safeStart, safeEnd);
     return textCodeLines(fallback || `${filePath}:${safeStart}`, safeStart);
   };
   return (

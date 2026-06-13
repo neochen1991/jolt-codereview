@@ -92,6 +92,46 @@ def main() -> None:
             ),
         ),
         ChangedFile(
+            "src/main/java/com/jolt/payment/controller/LegacyAutowiredController.java",
+            _patch(
+                "package com.jolt.payment.controller;",
+                "import org.springframework.beans.factory.annotation.Autowired;",
+                "import org.springframework.web.bind.annotation.RestController;",
+                "@RestController",
+                "public class LegacyAutowiredController {",
+                "    @Autowired",
+                "    private PaymentService paymentService;",
+                "}",
+            ),
+        ),
+        ChangedFile(
+            "src/main/java/com/jolt/payment/controller/ConstructorAutowiredController.java",
+            _patch(
+                "package com.jolt.payment.controller;",
+                "import org.springframework.beans.factory.annotation.Autowired;",
+                "import org.springframework.web.bind.annotation.RestController;",
+                "@RestController",
+                "public class ConstructorAutowiredController {",
+                "    private final PaymentService paymentService;",
+                "    @Autowired",
+                "    public ConstructorAutowiredController(PaymentService paymentService) {",
+                "        this.paymentService = paymentService;",
+                "    }",
+                "}",
+            ),
+        ),
+        ChangedFile(
+            "src/main/java/com/jolt/payment/service/StatusComparisonService.java",
+            _patch(
+                "package com.jolt.payment.service;",
+                "public class StatusComparisonService {",
+                "    public boolean paid(String status) {",
+                "        return \"PAID\".equals(status);",
+                "    }",
+                "}",
+            ),
+        ),
+        ChangedFile(
             "src/main/java/com/jolt/payment/application/PaymentDddApplicationService.java",
             _patch(
                 "package com.jolt.payment.application;",
@@ -195,9 +235,20 @@ def main() -> None:
         "HW-PERF-001",
         "HW-SEC-001",
         "HW-TX-001",
+        "JOLT_JAVA_FIELD_AUTOWIRED",
     }
     missing = sorted(expected_rules - rules)
     assert not missing, {"missing_rules": missing, "actual_rules": sorted(rules)}
+    assert not any(
+        item.get("tool_rule_id") == "JOLT_JAVA_FIELD_AUTOWIRED"
+        and item.get("file_path") == "src/main/java/com/jolt/payment/controller/ConstructorAutowiredController.java"
+        for item in findings
+    ), "constructor @Autowired should not be reported as field injection"
+    assert not any(
+        item.get("tool_rule_id") == "ALI-EQUALS-001"
+        and item.get("file_path") == "src/main/java/com/jolt/payment/service/StatusComparisonService.java"
+        for item in findings
+    ), "ordinary equals() calls should not be reported as equals/hashCode override violations"
 
     observations: list[dict[str, Any]] = [
         {

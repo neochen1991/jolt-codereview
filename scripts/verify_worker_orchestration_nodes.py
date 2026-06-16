@@ -43,6 +43,7 @@ from orchestration.nodes.judge_findings import (
     make_judge_findings_node,
     match_tool_observations_for_finding,
     promote_tool_observations,
+    supplement_bound_rule_findings,
 )
 from orchestration.nodes.run_targeted_debate import run_targeted_debate
 from orchestration.nodes.summarize_pr import make_summarize_pr_node
@@ -235,6 +236,42 @@ prompt_items = prompt_payload["structured_diff"]["items"]
 assert len(prompt_items) <= 12, len(prompt_items)
 assert prompt_items[0]["file"] == "src/test/java/com/acme/payment/PaymentServiceTest.java", prompt_items[0]
 assert len(prompt) < 60000, len(prompt)
+bound_rule_prompt, _bound_rule_safety = build_prompt(
+    {
+        "agent_id": "security_agent",
+        "display_name": "安全专家",
+        "applies_to": {
+            "persona": "安全专家",
+            "exclusive_scope": "security",
+            "review_scope": "安全问题",
+        },
+        "bound_rules": [
+            {
+                "rule_id": "SEC-DOC-001",
+                "title": "接口必须校验资源归属",
+                "severity": "high",
+                "check": "新增接口读取 userId/orderId 时必须校验资源归属。",
+                "required_evidence": "必须展示请求参数来源和缺失归属校验的代码行。",
+            },
+            {
+                "rule_id": "SEC-DOC-002",
+                "title": "回调签名必须常量时间比较",
+                "severity": "medium",
+                "check": "新增回调验签不得使用普通 equals 比较签名。",
+                "required_evidence": "必须展示签名比较行。",
+            },
+        ],
+    },
+    [
+        PromptFile(
+            "src/main/java/com/acme/payment/api/PaymentController.java",
+            "@@ -1 +1 @@\n+String userId = payload.get(\"userId\");\n",
+            1,
+        )
+    ],
+)
+for expected in ["bound_rule_review_contract", "SEC-DOC-001", "SEC-DOC-002", "逐条检查", "skipped_rules"]:
+    assert expected in bound_rule_prompt, expected
 
 java_ddd_route_agents = [
     {
@@ -673,6 +710,35 @@ open_source_promoted = promote_tool_observations(
 )
 assert len(open_source_promoted) == 3, open_source_promoted
 assert {item["agent_id"] for item in open_source_promoted} == {"coding_agent", "security_agent", "dependency_agent"}, open_source_promoted
+bound_rule_scoped_promoted = promote_tool_observations(
+    [
+        {
+            "tool_name": "java_web_static",
+            "rule_id": "ALI-EXC-002",
+            "severity": "medium",
+            "confidence": 0.83,
+            "file_path": "src/main/java/com/acme/demo/DemoService.java",
+            "line_start": 20,
+            "message": "Do not printStackTrace.",
+        },
+        {
+            "tool_name": "java_web_static",
+            "rule_id": "LLDOC-EXC-105",
+            "severity": "high",
+            "confidence": 0.9,
+            "file_path": "src/main/java/com/acme/demo/DemoService.java",
+            "line_start": 21,
+            "message": "catch Exception then return null.",
+        },
+    ],
+    [],
+    allowed_agent_ids={"low_level_defect_agent"},
+    allowed_rule_ids={"LLDOC-EXC-105"},
+    rule_agent_overrides={"LLDOC-EXC-105": "low_level_defect_agent"},
+)
+assert len(bound_rule_scoped_promoted) == 1, bound_rule_scoped_promoted
+assert bound_rule_scoped_promoted[0]["agent_id"] == "low_level_defect_agent", bound_rule_scoped_promoted
+assert bound_rule_scoped_promoted[0]["covered_rules"] == ["LLDOC-EXC-105"], bound_rule_scoped_promoted
 tree_sitter_ddd_promoted = promote_tool_observations(
     [
         {
@@ -1632,6 +1698,39 @@ aligned_string_valueof = align_finding_with_tool_observations(
 assert aligned_string_valueof["line_start"] == 23, aligned_string_valueof
 assert "String.valueOf" in aligned_string_valueof["evidence"], aligned_string_valueof
 assert aligned_string_valueof["title"] == "Map 入参字段缺少显式空值和类型校验", aligned_string_valueof
+aligned_string_valueof_with_valid = align_finding_with_tool_observations(
+    {
+        "agent_id": "backend_agent",
+        "severity": "medium",
+        "confidence": 0.86,
+        "title": "Map 入参字段缺少显式空值和类型校验",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentAdminController.java",
+        "line_start": 23,
+        "covered_rules": ["CODE-NULL-001", "BE-API-001"],
+        "evidence": 'String userId = String.valueOf(payload.get("userId"));',
+    },
+    [
+        {
+            "tool_name": "java_web_static",
+            "rule_id": "CODE-NULL-001",
+            "file_path": "src/main/java/com/acme/payment/api/PaymentAdminController.java",
+            "line_start": 23,
+            "line_end": 23,
+            "message": 'String.valueOf(payload.get("userId")) converts a missing Map field to literal "null".',
+        },
+        {
+            "tool_name": "tree_sitter_code_graph",
+            "rule_id": "BE-API-001",
+            "file_path": "src/main/java/com/acme/payment/api/PaymentAdminController.java",
+            "line_start": 22,
+            "line_end": 22,
+            "message": "Controller method accepts @RequestBody without @Valid.",
+        },
+    ],
+)
+assert "String.valueOf" in aligned_string_valueof_with_valid["evidence"], aligned_string_valueof_with_valid
+assert "@Valid" in aligned_string_valueof_with_valid["evidence"], aligned_string_valueof_with_valid
+assert "BE-API-001" in aligned_string_valueof_with_valid["covered_rules"], aligned_string_valueof_with_valid
 low_precision_layer = normalize_tool_finding(
     {
         "agent_id": "backend_agent",
@@ -1721,8 +1820,70 @@ for low_value_advisory in [
         "line_start": 14,
         "covered_rules": ["DEP-VERSION-003"],
     },
+    {
+        "agent_id": "security_agent",
+        "title": "资源访问缺少归属校验：任意用户可查询他人支付数据",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentAdminController.java",
+        "line_start": 22,
+        "covered_rules": ["SEC-AUTHZ-002", "BE-API-001"],
+        "evidence": "Semgrep candidate: jolt.java.map-payload-string-valueof; 接口接受外部userId参数且未校验归属",
+    },
+    {
+        "agent_id": "database_agent",
+        "title": "新增非空列缺少默认值或回填方案",
+        "file_path": "src/main/resources/db/migration/V1__alter.sql",
+        "line_start": 1,
+        "covered_rules": ["DB-NOTNULL-002", "DB-NOTNULL-008"],
+        "evidence": "ALTER TABLE payments ADD COLUMN settlement_channel VARCHAR(32);",
+    },
+    {
+        "agent_id": "coding_agent",
+        "title": "状态更新遗漏关键审计字段",
+        "file_path": "src/main/java/com/acme/payment/domain/PaymentAggregate.java",
+        "line_start": 14,
+        "covered_rules": ["CODE-STATE-004"],
+        "problem_description": "markPaid 方法只更新 status，缺少 paidAt 和 paidBy。",
+    },
+    {
+        "agent_id": "backend_agent",
+        "title": "AuditRequest DTO 缺少字段校验约束",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentAdminController.java",
+        "line_start": 35,
+        "covered_rules": ["BE-API-001"],
+        "problem_description": "record 字段 operator 和 reason 无 @NotBlank。",
+    },
+    {
+        "agent_id": "performance_agent",
+        "title": "JDBC 连接和语句未设置超时导致线程阻塞",
+        "file_path": "src/main/java/com/acme/payment/service/PaymentQueryService.java",
+        "line_start": 23,
+        "covered_rules": ["PERF-TIMEOUT-003"],
+        "problem_description": "DataSource getConnection 和 statement executeQuery 未设置超时。",
+    },
+    {
+        "agent_id": "coding_agent",
+        "title": "SQL 查询未设置结果集上限",
+        "file_path": "src/main/java/com/acme/payment/service/PaymentQueryService.java",
+        "line_start": 23,
+        "covered_rules": ["CODE-BOUND-002"],
+        "problem_description": "executeQuery 后循环读取结果，可能返回大量数据。",
+    },
 ]:
     assert _drop_without_tool_support(normalize_tool_finding(low_value_advisory), []), low_value_advisory
+exact_requestbody_validation = normalize_tool_finding(
+    {
+        "agent_id": "backend_agent",
+        "title": "接口 RequestBody 缺少 Bean Validation",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentAdminController.java",
+        "line_start": 22,
+        "covered_rules": ["BE-API-001"],
+        "evidence": "public Map<String, Object> search(@RequestBody Map<String, Object> payload)",
+    }
+)
+assert not _drop_without_tool_support(
+    exact_requestbody_validation,
+    [{"tool_name": "tree_sitter_code_graph", "rule_id": "BE-API-001", "message": "Controller method accepts @RequestBody without @Valid."}],
+), exact_requestbody_validation
 hard_rule_with_test_boundary = normalize_tool_finding(
     {
         "agent_id": "backend_agent",
@@ -1749,6 +1910,51 @@ assert _drop_without_tool_support(
     broad_exception_advisory,
     [{"tool_name": "java_web_static", "rule_id": "CODE-EXC-003", "message": "catch Exception"}],
 ), broad_exception_advisory
+ddd_tool_priority_findings, ddd_tool_priority_rejected = judge_candidate_findings(
+    [
+        {
+            "agent_id": "coding_agent",
+            "severity": "medium",
+            "confidence": 0.93,
+            "dedupe_hash": "ddd_vo_llm",
+            "file_path": "src/main/java/com/acme/payment/domain/PaymentAggregate.java",
+            "line_start": 7,
+            "title": "聚合根使用 Map<String,Object> 存储扩展属性，违反值对象类型安全原则",
+            "covered_rules": ["DDD-VO-002", "CODE-NULL-001"],
+            "problem_description": "模型推断 Map 扩展属性缺少明确值对象。",
+        },
+        {
+            "agent_id": "ddd_agent",
+            "severity": "medium",
+            "confidence": 0.88,
+            "dedupe_hash": "ddd_vo_tool",
+            "file_path": "src/main/java/com/acme/payment/domain/PaymentAggregate.java",
+            "line_start": 7,
+            "title": "聚合根使用 Map<String,Object> 存储扩展属性",
+            "covered_rules": ["DDD-VO-002", "CODE-NULL-001"],
+            "verification_flags": ["tool_promoted"],
+            "source_tool_observation": {
+                "tool_name": "tree_sitter_code_graph",
+                "rule_id": "DDD-VO-002",
+                "file_path": "src/main/java/com/acme/payment/domain/PaymentAggregate.java",
+                "line_start": 7,
+                "message": "Domain model uses Map<String,Object> instead of a value object.",
+            },
+        },
+    ],
+    [],
+    max_findings=5,
+)
+assert any(
+    item.get("agent_id") == "ddd_agent"
+    and item.get("source_tool_observation", {}).get("rule_id") == "DDD-VO-002"
+    for item in ddd_tool_priority_findings
+), ddd_tool_priority_findings
+assert any(
+    item.get("agent_id") == "coding_agent"
+    and "deduped_lower_rank" in (item.get("rejected_reasons") or [])
+    for item in ddd_tool_priority_rejected
+), ddd_tool_priority_rejected
 same_root_findings, same_root_rejected = judge_candidate_findings(
     [
         {
@@ -2178,6 +2384,169 @@ assert len(same_line_merged) == 1, same_line_merged
 assert len(same_line_rejected) == 1, same_line_rejected
 assert set(same_line_merged[0]["merged_agent_ids"]) == {"security_agent", "database_agent"}, same_line_merged
 assert set(same_line_merged[0]["covered_rules"]) >= {"SEC-INJECT-003", "ALI-MYBATIS-001"}, same_line_merged
+
+same_bound_rule_merged, same_bound_rule_rejected = dedupe_same_line_same_issue_findings([
+    {
+        "agent_id": "security_agent",
+        "severity": "high",
+        "confidence": 0.86,
+        "file_path": "src/main/java/com/example/CallbackService.java",
+        "line_start": 53,
+        "line_end": 55,
+        "title": "异常被捕获后吞掉并返回 null",
+        "covered_rules": ["SEC-DOC-EXC-001"],
+    },
+    {
+        "agent_id": "security_agent",
+        "severity": "medium",
+        "confidence": 0.84,
+        "file_path": "src/main/java/com/example/CallbackService.java",
+        "line_start": 54,
+        "line_end": 54,
+        "title": "printStackTrace 绕过统一审计日志",
+        "covered_rules": ["SEC-DOC-EXC-001"],
+    },
+])
+assert len(same_bound_rule_merged) == 1, same_bound_rule_merged
+assert len(same_bound_rule_rejected) == 1, same_bound_rule_rejected
+assert "SEC-DOC-EXC-001" in same_bound_rule_merged[0]["covered_rules"], same_bound_rule_merged
+
+security_bound_supplements = supplement_bound_rule_findings(
+    [
+        ChangedFile(
+            "src/main/java/com/acme/security/UploadScanService.java",
+            "modified",
+            9,
+            0,
+            9,
+            "\n".join(
+                [
+                    "@@ -0,0 +1,9 @@",
+                    "+package com.acme.security;",
+                    "+import java.io.FileInputStream;",
+                    "+import java.io.File;",
+                    "+class UploadScanService {",
+                    "+  void scan(File file) throws Exception {",
+                    "+    FileInputStream input = new FileInputStream(file);",
+                    "+    scanner.scan(input);",
+                    "+  }",
+                    "+}",
+                ]
+            ),
+        )
+    ],
+    [
+        {
+            "agent_id": "security_agent",
+            "bound_rules": [
+                {
+                    "rule_id": "SEC-DOC-RES-001",
+                    "title": "安全扫描输入流必须关闭",
+                    "severity": "high",
+                    "check": "上传扫描、解压和审计读取不得泄漏 InputStream；必须使用 try-with-resources 或 close。",
+                    "required_evidence": "必须展示资源创建行和缺少关闭的作用域。",
+                    "negative_examples": "`FileInputStream input = new FileInputStream(file); scanner.scan(input);`",
+                    "fix_guidance": "使用 try-with-resources 包裹扫描输入流。",
+                }
+            ],
+        }
+    ],
+    [],
+)
+assert len(security_bound_supplements) == 1, security_bound_supplements
+assert security_bound_supplements[0]["agent_id"] == "security_agent", security_bound_supplements
+assert security_bound_supplements[0]["covered_rules"] == ["SEC-DOC-RES-001"], security_bound_supplements
+assert security_bound_supplements[0]["line_start"] == 6, security_bound_supplements
+
+security_bound_supplements_with_existing = supplement_bound_rule_findings(
+    [
+        ChangedFile(
+            "src/main/java/com/acme/security/UploadScanService.java",
+            "modified",
+            9,
+            0,
+            9,
+            "\n".join(
+                [
+                    "@@ -0,0 +1,9 @@",
+                    "+package com.acme.security;",
+                    "+import java.io.FileInputStream;",
+                    "+import java.io.File;",
+                    "+class UploadScanService {",
+                    "+  void scan(File file) throws Exception {",
+                    "+    FileInputStream input = new FileInputStream(file);",
+                    "+    scanner.scan(input);",
+                    "+  }",
+                    "+}",
+                ]
+            ),
+        )
+    ],
+    [
+        {
+            "agent_id": "security_agent",
+            "bound_rules": [
+                {
+                    "rule_id": "SEC-DOC-RES-001",
+                    "title": "安全扫描输入流必须关闭",
+                    "severity": "high",
+                    "check": "上传扫描、解压和审计读取不得泄漏 InputStream；必须使用 try-with-resources 或 close。",
+                    "required_evidence": "必须展示资源创建行和缺少关闭的作用域。",
+                    "negative_examples": "`FileInputStream input = new FileInputStream(file); scanner.scan(input);`",
+                    "fix_guidance": "使用 try-with-resources 包裹扫描输入流。",
+                }
+            ],
+        }
+    ],
+    [
+        {
+            "agent_id": "security_agent",
+            "severity": "medium",
+            "confidence": 0.8,
+            "file_path": "src/main/java/com/acme/security/UploadScanService.java",
+            "line_start": 2,
+            "line_end": 2,
+            "title": "安全扫描输入流必须关闭",
+            "covered_rules": ["SEC-DOC-RES-001"],
+            "evidence": "第2行 import java.io.FileInputStream;",
+        }
+    ],
+)
+assert len(security_bound_supplements_with_existing) == 1, security_bound_supplements_with_existing
+assert security_bound_supplements_with_existing[0]["line_start"] == 6, security_bound_supplements_with_existing
+
+bound_distinct_rule_findings, bound_distinct_rule_rejected = judge_candidate_findings(
+    [
+        {
+            "agent_id": "low_level_defect_agent",
+            "severity": "high",
+            "confidence": 0.97,
+            "dedupe_hash": "bound-exc",
+            "file_path": "src/main/java/com/acme/lowlevel/LowLevelSettlementService.java",
+            "line_start": 53,
+            "line_end": 55,
+            "title": "异常被吞掉并返回 null",
+            "problem_description": "catch Exception 后 printStackTrace 并 return null。",
+            "covered_rules": ["LLDOC-EXC-105"],
+        },
+        {
+            "agent_id": "low_level_defect_agent",
+            "severity": "medium",
+            "confidence": 0.87,
+            "dedupe_hash": "bound-opt",
+            "file_path": "src/main/java/com/acme/lowlevel/LowLevelSettlementService.java",
+            "line_start": 31,
+            "line_end": 32,
+            "title": "Optional.get 未先判断存在性",
+            "problem_description": "Optional<PaymentOrder> order 后直接 return order.get()。",
+            "covered_rules": ["LLDOC-OPT-102"],
+        },
+    ],
+    [],
+    max_findings=5,
+)
+assert len(bound_distinct_rule_findings) == 2, bound_distinct_rule_findings
+assert not any("deduped_lower_rank" in (item.get("rejected_reasons") or []) for item in bound_distinct_rule_rejected), bound_distinct_rule_rejected
 
 different_issue_same_line_merged, different_issue_same_line_rejected = dedupe_same_line_same_issue_findings([
     {

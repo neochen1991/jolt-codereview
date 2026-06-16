@@ -127,6 +127,19 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
     review_rules = {
         "dedicated_markdown_standard": _compact_text(skill_summary, 5000),
         "bound_markdown_rules": _compact_json_value(agent.get("bound_rules") or [], text_limit=500, list_limit=18),
+        "bound_rule_review_contract": {
+            "priority": "绑定 Markdown 规范是本专家的项目级检视准则，优先级高于自由发挥和通用静态工具建议。",
+            "checklist": (
+                "必须逐条检查 bound_markdown_rules 中的每个 rule_id；命中时 finding.covered_rules 必须包含该 rule_id；"
+                "确认未命中时把该 rule_id 放入 skipped_rules，并保持 skipped_rules 可审计。"
+            ),
+            "coverage": "如果多个绑定规则命中，不要只输出最显眼的一条；在 max_findings 内优先覆盖不同绑定 rule_id。",
+            "evidence": "每个绑定规则 finding 必须满足该规则 required_evidence/evidence_required 中的证据要求。",
+            "tool_policy": (
+                "tool_observations 只能作为证据；若工具规则不属于本专家 exclusive_scope，也不属于绑定 rule_id，"
+                "不要为了工具命中而输出该问题。"
+            ),
+        },
         "output_rule_fields": ["covered_rules", "skipped_rules"],
     }
     static_tool_scan_findings = {
@@ -179,7 +192,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
                 "suggested_code 不允许为空，不允许只写自然语言，不确定完整上下文时也要给出最小可参考修改片段。"
                 "suggested_code 保持精炼，优先给 5-30 行核心修改示例，不要输出整类或整文件。"
                 "必须执行两类检视并取并集："
-                "A. 按 dedicated_markdown_standard 的“专属代码规范”和 bound_markdown_rules 逐条检查；"
+                "A. 按 dedicated_markdown_standard 的“专属代码规范”和 bound_markdown_rules 逐条检查，并遵守 bound_rule_review_contract；"
                 "B. 按 persona 和 review_scope 做专家自由检视。"
                 "C. 如果 agent_profile.custom_prompt 不为空，必须按该自定义 Agent Prompt 执行补充检视。"
                 "covered_rules 填写触发本问题的 rule_id；skipped_rules 填写已检查但未命中的 rule_id。"

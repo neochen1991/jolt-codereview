@@ -478,6 +478,99 @@ function listItems<T>(value: T[] | { items?: T[] } | null | undefined): T[] {
   return Array.isArray(value?.items) ? value.items : [];
 }
 
+type BrowserSkillFile = File & { webkitRelativePath?: string };
+
+function readUploadText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("文件读取失败"));
+    reader.readAsText(file, "utf-8");
+  });
+}
+
+function cleanUploadPath(value: string) {
+  return value.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+/g, "/");
+}
+
+function uploadRelativePath(file: File) {
+  return cleanUploadPath((file as BrowserSkillFile).webkitRelativePath || file.name);
+}
+
+function normalizeSkillBundleAssetPath(file: File) {
+  const rawPath = uploadRelativePath(file);
+  const segments = rawPath.split("/").filter(Boolean);
+  const standardIndex = segments.findIndex((segment) => segment === "SKILL.md" || segment === "references" || segment === "scripts" || segment === "assets");
+  if (standardIndex >= 0) return segments.slice(standardIndex).join("/");
+  return segments.length > 1 ? segments.slice(1).join("/") : rawPath;
+}
+
+function isStandardSkillAssetPath(path: string) {
+  return path === "SKILL.md" || path.startsWith("references/") || path.startsWith("scripts/") || path.startsWith("assets/");
+}
+
+function skillRootNameFromFiles(files: File[]) {
+  const firstPath = files.map(uploadRelativePath).find((path) => path.includes("/"));
+  return firstPath ? firstPath.split("/")[0] : "";
+}
+
+function readableFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 102.4) / 10} KB`;
+  return `${Math.round(bytes / 1024 / 102.4) / 10} MB`;
+}
+
+async function uploadSkillBundleToProject(input: {
+  projectId: string;
+  agentKey: string;
+  skillName: string;
+  skillKey: string;
+  files: File[];
+}) {
+  const files = input.files.filter((file) => file.size >= 0 && !uploadRelativePath(file).split("/").some((segment) => segment === ".DS_Store"));
+  if (!files.length) throw new Error("请选择标准 Skill 文件夹");
+  const assets = files
+    .map((file) => ({ file, assetPath: normalizeSkillBundleAssetPath(file) }))
+    .filter((item) => item.assetPath && !item.assetPath.includes("..") && isStandardSkillAssetPath(item.assetPath));
+  const skillMd = assets.find((item) => item.assetPath === "SKILL.md");
+  if (!skillMd) throw new Error("Skill 文件夹必须包含 SKILL.md");
+  const skillContent = await readUploadText(skillMd.file);
+  const rootName = skillRootNameFromFiles(files);
+  const skillName = input.skillName.trim() || rootName || "项目自定义 Skill";
+  const skillKey = input.skillKey.trim() || rootName || skillName;
+  const skill = await api<Record<string, unknown>>(`/api/projects/${input.projectId}/custom-skills`, {
+    method: "POST",
+    body: JSON.stringify({
+      skill_key: skillKey,
+      name: skillName,
+      description: "项目级标准 Skill Bundle",
+      content: skillContent,
+      version: "v1",
+      status: "active"
+    })
+  });
+  const createdSkillKey = String(skill.skill_key || skillKey);
+  for (const asset of assets) {
+    const content = await readUploadText(asset.file);
+    await api(`/api/projects/${input.projectId}/custom-skill-assets`, {
+      method: "POST",
+      body: JSON.stringify({
+        skill_key: createdSkillKey,
+        asset_path: asset.assetPath,
+        content,
+        executable: asset.assetPath.startsWith("scripts/")
+      })
+    });
+  }
+  if (input.agentKey) {
+    await api(`/api/projects/${input.projectId}/expert-skill-bindings`, {
+      method: "POST",
+      body: JSON.stringify({ agent_key: input.agentKey, skill_key: createdSkillKey, priority: 100, enabled: true })
+    });
+  }
+  return { skillKey: createdSkillKey, assetCount: assets.length };
+}
+
 function normalizeMrChangedFiles(value: unknown): MrChangedFile[] {
   const rawItems = Array.isArray(value)
     ? value
@@ -2809,9 +2902,12 @@ function ConfigWorkspace({
   const [customAgentLanguages, setCustomAgentLanguages] = useState("java");
   const [customAgentPaths, setCustomAgentPaths] = useState("src/main/java/**, **/*.java");
   const [customAgentTriggers, setCustomAgentTriggers] = useState("service, controller, repository");
+  const [ruleDocUploadInfo, setRuleDocUploadInfo] = useState("");
   const [skillName, setSkillName] = useState("团队自定义检视 Skill");
   const [skillKey, setSkillKey] = useState("team-custom-review");
   const [skillAgentKey, setSkillAgentKey] = useState("team_custom_agent");
+  const [skillBundleFiles, setSkillBundleFiles] = useState<File[]>([]);
+  const [skillBundleInfo, setSkillBundleInfo] = useState("");
   const [skillAssetPath, setSkillAssetPath] = useState("references/team-rules.md");
   const [skillAssetSkillKey, setSkillAssetSkillKey] = useState("team-custom-review");
   const [skillAssetContent, setSkillAssetContent] = useState("## TEAM-RULE-001 团队自定义规范\n\n### 规范说明\n在这里填写团队规则说明。\n\n### 检查点\n- 检查点 1。\n- 检查点 2。\n\n### 如何检查\n1. 读取当前 MR diff。\n2. 对照规则逐条检查。\n\n### 反例\n```java\n// bad example\n```\n\n### 正例\n```java\n// good example\n```\n");
@@ -3059,6 +3155,21 @@ function ConfigWorkspace({
     await loadConfigView();
   }
 
+  async function handleRuleMarkdownFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".md")) {
+      setMessage("请选择 .md 格式的规范文档");
+      return;
+    }
+    const content = await readUploadText(file);
+    setRuleDocName(file.name);
+    setRuleContent(content);
+    setRuleDocUploadInfo(`${file.name} · ${readableFileSize(file.size)}`);
+    setMessage("Markdown 规范已读取，可直接上传并绑定");
+  }
+
   async function createCustomAgent() {
     if (!customAgentName.trim() || !customAgentRole.trim() || !customAgentScope.trim()) return;
     const created = await api<Record<string, unknown>>(`/api/projects/${projectId}/expert-profiles`, {
@@ -3089,6 +3200,21 @@ function ConfigWorkspace({
   }
 
   async function createCustomSkill() {
+    if (skillBundleFiles.length) {
+      const result = await uploadSkillBundleToProject({
+        projectId,
+        agentKey: skillAgentKey,
+        skillName,
+        skillKey,
+        files: skillBundleFiles
+      });
+      setSkillKey(result.skillKey);
+      setSkillBundleFiles([]);
+      setSkillBundleInfo("");
+      setMessage(`Skill 文件夹已上传并绑定，资源 ${result.assetCount} 个`);
+      await loadConfigView();
+      return;
+    }
     if (!skillName.trim() || !skillContent.trim()) return;
     const skill = await api<Record<string, unknown>>(`/api/projects/${projectId}/custom-skills`, {
       method: "POST",
@@ -3120,6 +3246,20 @@ function ConfigWorkspace({
     }
     setMessage("自定义 Skill 已创建并绑定");
     await loadConfigView();
+  }
+
+  function handleSkillBundleFiles(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!files.length) return;
+    const rootName = skillRootNameFromFiles(files);
+    if (rootName && (!skillName.trim() || skillName === "团队自定义检视 Skill")) setSkillName(rootName);
+    if (rootName && (!skillKey.trim() || skillKey === "team-custom-review")) setSkillKey(rootName);
+    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+    const hasSkillMd = files.some((file) => normalizeSkillBundleAssetPath(file) === "SKILL.md");
+    setSkillBundleFiles(files);
+    setSkillBundleInfo(`${rootName || "已选择文件"} · ${files.length} 个文件 · ${readableFileSize(totalSize)}${hasSkillMd ? "" : " · 缺少 SKILL.md"}`);
+    setMessage(hasSkillMd ? "Skill 文件夹已选择，可上传并绑定" : "Skill 文件夹缺少 SKILL.md，请重新选择");
   }
 
   async function uploadSkillAsset() {
@@ -3577,18 +3717,18 @@ function ConfigWorkspace({
             <button type="button" className={agentTab === "list" ? "active" : ""} onClick={() => setAgentTab("list")}>专家 Agent 列表</button>
           </div>
           {agentTab === "create" && (
-            <div className="agent-tab-panel">
-              <div className="rule-upload-panel">
+            <div className="agent-tab-panel agent-create-workbench">
+              <div className="rule-upload-panel agent-create-panel">
                 <div>
                   <strong>创建自定义专家 Agent</strong>
-                  <span>零代码定义专家画像、检视 Prompt、适用语言/路径/触发词；创建后可绑定规范文档和标准 Skill bundle。</span>
+                  <span>定义专家画像、职责边界和触发范围；创建后在同页上传规范或 Skill 文件夹。</span>
                 </div>
-                <div className="rule-upload-form">
+                <div className="rule-upload-form agent-main-form">
                   <input value={customAgentKey} onChange={(event) => setCustomAgentKey(event.target.value)} placeholder="agent-key，例如 payment_agent" disabled={!canEdit} />
                   <input value={customAgentName} onChange={(event) => setCustomAgentName(event.target.value)} placeholder="Agent 名称" disabled={!canEdit} />
                   <button type="button" onClick={createCustomAgent} disabled={!canEdit}>创建 Agent</button>
                 </div>
-                <div className="agent-editor-grid">
+                <div className="agent-editor-grid compact">
                   <label>
                     <span>Agent 画像</span>
                     <textarea value={customAgentRole} onChange={(event) => setCustomAgentRole(event.target.value)} disabled={!canEdit} />
@@ -3619,52 +3759,84 @@ function ConfigWorkspace({
                   </label>
                 </div>
               </div>
-              <div className="rule-upload-panel">
-                <div>
-                  <strong>上传结构化 Markdown 规范</strong>
-                  <span>建议使用 rule_id、适用范围、检查项、反例、修复建议等结构化段落，Agent 会逐条按规范检视。</span>
+              <div className="agent-upload-grid">
+                <div className="rule-upload-panel compact-upload-card">
+                  <div>
+                    <strong>上传 Markdown 规范</strong>
+                    <span>选择 `.md` 文档后自动读取内容，再绑定到指定专家。</span>
+                  </div>
+                  <div className="rule-upload-form compact-upload-form">
+                    <input value={ruleDocName} onChange={(event) => setRuleDocName(event.target.value)} disabled={!canEdit} />
+                    <select value={ruleDocAgentKey} onChange={(event) => setRuleDocAgentKey(event.target.value)} disabled={!canEdit}>
+                      {rows.map((row, index) => {
+                        const agentKey = String(row.agent_key || row.agent_id || `agent_${index}`);
+                        return <option key={agentKey} value={agentKey}>{String(row.display_name || row.agent_key || row.agent_id || agentKey)}</option>;
+                      })}
+                    </select>
+                    <button type="button" onClick={uploadRuleDocument} disabled={!canEdit || !ruleContent.trim()}>上传并绑定</button>
+                  </div>
+                  <label className="file-upload-dropzone">
+                    <FileCode2 size={20} />
+                    <span>{ruleDocUploadInfo || "选择 .md 规范文档"}</span>
+                    <input type="file" accept=".md,text/markdown,text/plain" onChange={handleRuleMarkdownFile} disabled={!canEdit} />
+                  </label>
+                  <details className="compact-preview">
+                    <summary>查看或微调规范内容</summary>
+                    <textarea value={ruleContent} onChange={(event) => setRuleContent(event.target.value)} disabled={!canEdit} />
+                  </details>
                 </div>
-                <div className="rule-upload-form">
-                  <input value={ruleDocName} onChange={(event) => setRuleDocName(event.target.value)} disabled={!canEdit} />
-                  <select value={ruleDocAgentKey} onChange={(event) => setRuleDocAgentKey(event.target.value)} disabled={!canEdit}>
-                    {rows.map((row, index) => {
-                      const agentKey = String(row.agent_key || row.agent_id || `agent_${index}`);
-                      return <option key={agentKey} value={agentKey}>{String(row.display_name || row.agent_key || row.agent_id || agentKey)}</option>;
-                    })}
-                  </select>
-                  <button type="button" onClick={uploadRuleDocument} disabled={!canEdit}>上传并绑定</button>
+                <div className="rule-upload-panel compact-upload-card">
+                  <div>
+                    <strong>上传标准 Skill 文件夹</strong>
+                    <span>文件夹需包含 `SKILL.md`，支持 `references/`、`scripts/`、`assets/`。</span>
+                  </div>
+                  <div className="rule-upload-form compact-upload-form">
+                    <input value={skillName} onChange={(event) => setSkillName(event.target.value)} placeholder="Skill 名称" disabled={!canEdit} />
+                    <input value={skillKey} onChange={(event) => setSkillKey(event.target.value)} placeholder="skill-key" disabled={!canEdit} />
+                    <select value={skillAgentKey} onChange={(event) => setSkillAgentKey(event.target.value)} disabled={!canEdit}>
+                      {rows.map((row, index) => {
+                        const agentKey = String(row.agent_key || row.agent_id || `agent_${index}`);
+                        return <option key={agentKey} value={agentKey}>{String(row.display_name || row.agent_key || row.agent_id || agentKey)}</option>;
+                      })}
+                    </select>
+                    <button type="button" onClick={createCustomSkill} disabled={!canEdit}>{skillBundleFiles.length ? "上传并绑定文件夹" : "创建并绑定"}</button>
+                  </div>
+                  <label className="file-upload-dropzone">
+                    <Folder size={20} />
+                    <span>{skillBundleInfo || "选择 Skill 文件夹"}</span>
+                    <input
+                      type="file"
+                      multiple
+                      ref={(node) => {
+                        if (node) {
+                          node.setAttribute("webkitdirectory", "");
+                          node.setAttribute("directory", "");
+                        }
+                      }}
+                      onChange={handleSkillBundleFiles}
+                      disabled={!canEdit}
+                    />
+                  </label>
+                  <details className="compact-preview">
+                    <summary>手动创建 SKILL.md 内容</summary>
+                    <textarea value={skillContent} onChange={(event) => setSkillContent(event.target.value)} disabled={!canEdit} />
+                  </details>
                 </div>
-                <textarea value={ruleContent} onChange={(event) => setRuleContent(event.target.value)} disabled={!canEdit} />
-              </div>
-              <div className="rule-upload-panel">
-                <div>
-                  <strong>创建零代码自定义 Skill</strong>
-                  <span>用于补充团队业务知识、检视步骤、输出约束和特殊风险模型；绑定后下一次 MR 检视自动加载。</span>
+                <div className="rule-upload-panel compact-upload-card">
+                  <div>
+                    <strong>补充单个 Skill 资源</strong>
+                    <span>用于追加或覆盖某个 Skill 的 reference/script/asset 文件。</span>
+                  </div>
+                  <div className="rule-upload-form compact-upload-form">
+                    <input value={skillAssetSkillKey} onChange={(event) => setSkillAssetSkillKey(event.target.value)} placeholder="skill-key" disabled={!canEdit} />
+                    <input value={skillAssetPath} onChange={(event) => setSkillAssetPath(event.target.value)} placeholder="references/rules.md 或 scripts/check.py" disabled={!canEdit} />
+                    <button type="button" onClick={uploadSkillAsset} disabled={!canEdit}>保存资源</button>
+                  </div>
+                  <details className="compact-preview" open>
+                    <summary>资源内容</summary>
+                    <textarea value={skillAssetContent} onChange={(event) => setSkillAssetContent(event.target.value)} disabled={!canEdit} />
+                  </details>
                 </div>
-                <div className="rule-upload-form">
-                  <input value={skillName} onChange={(event) => setSkillName(event.target.value)} placeholder="Skill 名称" disabled={!canEdit} />
-                  <input value={skillKey} onChange={(event) => setSkillKey(event.target.value)} placeholder="skill-key，例如 payment-business-review" disabled={!canEdit} />
-                  <select value={skillAgentKey} onChange={(event) => setSkillAgentKey(event.target.value)} disabled={!canEdit}>
-                    {rows.map((row, index) => {
-                      const agentKey = String(row.agent_key || row.agent_id || `agent_${index}`);
-                      return <option key={agentKey} value={agentKey}>{String(row.display_name || row.agent_key || row.agent_id || agentKey)}</option>;
-                    })}
-                  </select>
-                  <button type="button" onClick={createCustomSkill} disabled={!canEdit}>创建并绑定</button>
-                </div>
-                <textarea value={skillContent} onChange={(event) => setSkillContent(event.target.value)} disabled={!canEdit} />
-              </div>
-              <div className="rule-upload-panel">
-                <div>
-                  <strong>添加 Skill Bundle 资源</strong>
-                  <span>支持标准路径：SKILL.md、references/*.md、scripts/*.py、assets/*。脚本默认只注册为资源，执行需后续开启沙箱策略。</span>
-                </div>
-                <div className="rule-upload-form">
-                  <input value={skillAssetSkillKey} onChange={(event) => setSkillAssetSkillKey(event.target.value)} placeholder="skill-key" disabled={!canEdit} />
-                  <input value={skillAssetPath} onChange={(event) => setSkillAssetPath(event.target.value)} placeholder="references/rules.md 或 scripts/check.py" disabled={!canEdit} />
-                  <button type="button" onClick={uploadSkillAsset} disabled={!canEdit}>保存资源</button>
-                </div>
-                <textarea value={skillAssetContent} onChange={(event) => setSkillAssetContent(event.target.value)} disabled={!canEdit} />
               </div>
             </div>
           )}
@@ -4809,6 +4981,9 @@ function AgentBindingEditorModal({
   const [newSkillName, setNewSkillName] = useState("");
   const [newSkillKey, setNewSkillKey] = useState("");
   const [newSkillContent, setNewSkillContent] = useState("");
+  const [newRuleFileInfo, setNewRuleFileInfo] = useState("");
+  const [newSkillBundleFiles, setNewSkillBundleFiles] = useState<File[]>([]);
+  const [newSkillBundleInfo, setNewSkillBundleInfo] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -4855,7 +5030,40 @@ function AgentBindingEditorModal({
     }
   }
 
+  async function handleModalRuleMarkdownFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".md")) {
+      setError("请选择 .md 格式的规范文档");
+      return;
+    }
+    setError("");
+    setNewRuleName(file.name);
+    setNewRuleContent(await readUploadText(file));
+    setNewRuleFileInfo(`${file.name} · ${readableFileSize(file.size)}`);
+  }
+
   async function createAndBindCustomSkill() {
+    if (newSkillBundleFiles.length) {
+      setSaving(true);
+      setError("");
+      try {
+        await uploadSkillBundleToProject({
+          projectId,
+          agentKey,
+          skillName: newSkillName,
+          skillKey: newSkillKey,
+          files: newSkillBundleFiles
+        });
+        await onSaved();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     const name = newSkillName.trim();
     const content = newSkillContent.trim();
     if (!name || !content) {
@@ -4897,6 +5105,20 @@ function AgentBindingEditorModal({
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleModalSkillBundleFiles(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!files.length) return;
+    const rootName = skillRootNameFromFiles(files);
+    if (rootName && !newSkillName.trim()) setNewSkillName(rootName);
+    if (rootName && !newSkillKey.trim()) setNewSkillKey(rootName);
+    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+    const hasSkillMd = files.some((file) => normalizeSkillBundleAssetPath(file) === "SKILL.md");
+    setNewSkillBundleFiles(files);
+    setNewSkillBundleInfo(`${rootName || "已选择文件"} · ${files.length} 个文件 · ${readableFileSize(totalSize)}${hasSkillMd ? "" : " · 缺少 SKILL.md"}`);
+    setError(hasSkillMd ? "" : "Skill 文件夹缺少 SKILL.md");
   }
 
   async function saveBindings() {
@@ -4967,19 +5189,40 @@ function AgentBindingEditorModal({
         {error && <div className="agent-binding-editor-error">{error}</div>}
         <div className="agent-binding-upload-grid">
           <div className="agent-binding-upload-panel">
-            <strong>上传规范并绑定</strong>
+            <strong>上传 Markdown 规范</strong>
+            <label className="file-upload-dropzone compact">
+              <FileCode2 size={18} />
+              <span>{newRuleFileInfo || "选择 .md 文件"}</span>
+              <input type="file" accept=".md,text/markdown,text/plain" onChange={handleModalRuleMarkdownFile} disabled={saving} />
+            </label>
             <label>
               <span>规范名称</span>
               <input value={newRuleName} onChange={(event) => setNewRuleName(event.target.value)} placeholder="例如：聚合根设计规范" disabled={saving} />
             </label>
-            <label>
-              <span>规范内容</span>
+            <details className="compact-preview">
+              <summary>查看或微调规范内容</summary>
               <textarea value={newRuleContent} onChange={(event) => setNewRuleContent(event.target.value)} placeholder="# 规范标题&#10;&#10;写入判断标准、违规示例和修复建议。" disabled={saving} />
-            </label>
+            </details>
             <button type="button" onClick={createAndBindRuleDocument} disabled={saving}>{saving ? "处理中..." : "上传并绑定规范"}</button>
           </div>
           <div className="agent-binding-upload-panel">
-            <strong>上传 Skill 并绑定</strong>
+            <strong>上传 Skill 文件夹</strong>
+            <label className="file-upload-dropzone compact">
+              <Folder size={18} />
+              <span>{newSkillBundleInfo || "选择包含 SKILL.md 的文件夹"}</span>
+              <input
+                type="file"
+                multiple
+                ref={(node) => {
+                  if (node) {
+                    node.setAttribute("webkitdirectory", "");
+                    node.setAttribute("directory", "");
+                  }
+                }}
+                onChange={handleModalSkillBundleFiles}
+                disabled={saving}
+              />
+            </label>
             <label>
               <span>Skill 名称</span>
               <input value={newSkillName} onChange={(event) => setNewSkillName(event.target.value)} placeholder="例如：领域建模深度检查" disabled={saving} />
@@ -4988,11 +5231,11 @@ function AgentBindingEditorModal({
               <span>Skill Key</span>
               <input value={newSkillKey} onChange={(event) => setNewSkillKey(event.target.value)} placeholder="可选，留空会按名称生成" disabled={saving} />
             </label>
-            <label>
-              <span>Skill 内容</span>
+            <details className="compact-preview">
+              <summary>手动填写 SKILL.md</summary>
               <textarea value={newSkillContent} onChange={(event) => setNewSkillContent(event.target.value)} placeholder="# Skill 说明&#10;&#10;写入专家执行步骤、输入证据和输出要求。" disabled={saving} />
-            </label>
-            <button type="button" onClick={createAndBindCustomSkill} disabled={saving}>{saving ? "处理中..." : "上传并绑定 Skill"}</button>
+            </details>
+            <button type="button" onClick={createAndBindCustomSkill} disabled={saving}>{saving ? "处理中..." : newSkillBundleFiles.length ? "上传并绑定文件夹" : "创建并绑定 Skill"}</button>
           </div>
         </div>
         <div className="agent-binding-editor-columns">
@@ -5183,14 +5426,16 @@ function MrQueue({
     <section className="queue-panel">
       <div className="panel-heading">
         <h1>待检视 MR</h1>
-      </div>
-      <div className="segmented-tabs">
-        {tabs.map(([key, label, count]) => (
-          <button key={key} className={statusFilter === key ? "active" : ""} onClick={() => setStatusFilter(key)}>
-            {label}
-            <strong>{count}</strong>
-          </button>
-        ))}
+        <div className="status-tabs-bar">
+          <div className="segmented-tabs">
+            {tabs.map(([key, label, count]) => (
+              <button key={key} className={statusFilter === key ? "active" : ""} onClick={() => setStatusFilter(key)}>
+                {label}
+                <strong>{count}</strong>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
       <div className="filters">
         <FilterSelect

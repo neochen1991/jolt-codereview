@@ -564,6 +564,17 @@ def _business_subcategory(category: str, finding: dict[str, Any]) -> str:
 
 def _semantic_dedupe_key(finding: dict[str, Any]) -> tuple[str, str, int]:
     item = normalize_tool_finding(finding)
+    bound_rules = sorted(
+        str(rule)
+        for rule in (item.get("covered_rules") or [])
+        if _looks_like_bound_document_rule(str(rule))
+    )
+    if bound_rules:
+        return (
+            f"BOUND_RULE:{','.join(bound_rules)}",
+            str(item.get("file_path") or ""),
+            line_bucket(item.get("line_start")),
+        )
     root_cause = _root_cause_signature(item)
     primary_rule = _primary_rule_key(item)
     primary_category = normalized_rule_category(primary_rule, item.get("title")) if primary_rule else str(item.get("normalized_rule_category") or "")
@@ -675,6 +686,14 @@ def _line_overlap_or_same(left: dict[str, Any], right: dict[str, Any], *, tolera
     return left_start <= right_end + tolerance and right_start <= left_end + tolerance
 
 
+def _looks_like_bound_document_rule(rule_id: str) -> bool:
+    value = str(rule_id or "").upper()
+    if "-DOC-" in value:
+        return True
+    known_prefixes = ("BE-", "CODE-", "DB-", "DDD-", "DEP-", "PERF-", "REDIS-", "SEC-", "TEST-", "ALI-", "HW-")
+    return bool(value) and not value.startswith(known_prefixes)
+
+
 def _token_set(value: str) -> set[str]:
     normalized = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", " ", value.lower())
     return {token for token in normalized.split() if len(token) >= 2}
@@ -698,6 +717,8 @@ def _same_line_same_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
     right_normalized = normalize_tool_finding(right)
     left_rules = {str(rule) for rule in (left_normalized.get("covered_rules") or []) if rule}
     right_rules = {str(rule) for rule in (right_normalized.get("covered_rules") or []) if rule}
+    if any(_looks_like_bound_document_rule(rule) for rule in left_rules & right_rules):
+        return True
     left_category = _selection_category_key(left_normalized)
     right_category = _selection_category_key(right_normalized)
     if left_rules & right_rules and left_category == right_category:
@@ -1349,16 +1370,48 @@ def _has_exact_source_rule(source_observations: list[dict[str, Any]], rules: set
     return any(str(item.get("rule_id") or "") in rules for item in source_observations)
 
 
+def _source_observation_text(source_observations: list[dict[str, Any]]) -> str:
+    return " ".join(
+        str(item.get(key) or "")
+        for item in source_observations
+        for key in ["rule_id", "message", "file_path"]
+    ).lower()
+
+
 def _is_low_precision_unbacked_advisory(finding: dict[str, Any], source_observations: list[dict[str, Any]]) -> bool:
     item = normalize_tool_finding(finding)
     covered = {str(rule) for rule in (item.get("covered_rules") or [])}
     category = _selection_category_key(item)
     text = _text_blob(item)
     path = str(item.get("file_path") or "").replace("\\", "/").lower()
+    source_text = _source_observation_text(source_observations)
     if covered & {"DB-IDX-003", "REDIS-KEY-001", "DB-LOCK-006"} and not _has_exact_source_rule(source_observations, covered):
         return True
     if covered & {"DEP-VERSION-003", "DEP-CONVERGE-004"} and not _has_exact_source_rule(source_observations, covered):
         return True
+    if covered & {"PERF-TIMEOUT-003"} and not _has_exact_source_rule(source_observations, covered):
+        return True
+    if covered & {"CODE-BOUND-002"} and not _has_exact_source_rule(source_observations, {"CODE-BOUND-002"}):
+        if any(marker in text for marker in ["sql", "query", "executequery", "查询", "结果集", "limit", "分页", "上限"]):
+            return True
+    if covered & {"SEC-AUTHZ-002"} and not _has_exact_source_rule(source_observations, {"SEC-AUTHZ-002"}):
+        has_only_input_shape_signal = any(marker in text + " " + source_text for marker in ["map-payload-string-valueof", "payload.get", "@requestbody map"])
+        if has_only_input_shape_signal and any(marker in text for marker in ["归属", "任意用户", "他人", "authorization", "authz", "权限"]):
+            return True
+    if covered & {"DB-NOTNULL-002", "DB-NOTNULL-008"} and not _has_exact_source_rule(source_observations, covered):
+        evidence_text = " ".join(str(item.get(key) or "") for key in ["evidence", "problem_description", "title"]).lower()
+        if path.endswith(".sql") and "not null" not in evidence_text:
+            return True
+    if covered & {"CODE-STATE-004"} and not _has_exact_source_rule(source_observations, {"CODE-STATE-004"}):
+        if any(marker in text for marker in ["paidat", "paidby", "审计字段", "操作人", "时间戳"]) and not any(
+            marker in text for marker in ["status.valueof", "overridestatus", "reassignmerchant", "manual_override", "force"]
+        ):
+            return True
+    if covered == {"BE-API-001"} and not _has_exact_source_rule(source_observations, {"BE-API-001"}):
+        if any(marker in text for marker in ["@notblank", "字段校验", "字段缺少", "dto 缺少"]) and not any(
+            marker in text for marker in ["@requestbody", "@valid", "requestbody without @valid", "缺少 @valid"]
+        ):
+            return True
     if any(rule.startswith("TEST-") for rule in covered):
         has_high_risk_test_tool = any(
             str(item.get("rule_id") or "") == "jolt.test.skip-high-risk-path-tests"
@@ -1426,6 +1479,7 @@ def _selection_threshold_for_finding(finding: dict[str, Any], default_threshold:
 
 def _evidence_specificity_score(finding: dict[str, Any]) -> int:
     score = 0
+    flags = {str(flag) for flag in (finding.get("verification_flags") or [])}
     if finding.get("file_path"):
         score += 2
     if _as_int(finding.get("line_start")) is not None:
@@ -1434,6 +1488,8 @@ def _evidence_specificity_score(finding: dict[str, Any]) -> int:
         score += 2
     if _is_tool_backed_finding(finding):
         score += 3
+    if "bound_rule_document_supplement" in flags:
+        score += 2
     evidence = str(finding.get("evidence") or finding.get("problem_description") or "")
     if len(evidence.strip()) >= 80:
         score += 1
@@ -1460,6 +1516,18 @@ def _priority_sort_key(finding: dict[str, Any]) -> tuple[int, int, int, int, int
 def _is_tool_backed_finding(finding: dict[str, Any]) -> bool:
     verification_flags = {str(flag) for flag in (finding.get("verification_flags") or [])}
     return bool(finding.get("source_tool_observation") or finding.get("tool_name") or "tool_promoted" in verification_flags)
+
+
+def _has_exact_promoted_tool_rule(finding: dict[str, Any]) -> bool:
+    observation = finding.get("source_tool_observation")
+    if not isinstance(observation, dict):
+        return False
+    rule = _canonical_tool_rule_id(observation) or str(observation.get("rule_id") or "")
+    if not rule:
+        return False
+    covered = {str(item) for item in (finding.get("covered_rules") or []) if item}
+    flags = {str(flag) for flag in (finding.get("verification_flags") or [])}
+    return rule in covered and ("tool_promoted" in flags or bool(finding.get("tool_name")))
 
 
 def _preserve_static_tool_finding(finding: dict[str, Any]) -> bool:
@@ -2112,14 +2180,29 @@ def _format_observation_evidence(observations: list[dict[str, Any]], *, limit: i
 def promote_tool_observations(
     tool_observations: list[dict[str, Any]],
     existing_findings: list[dict[str, Any]],
+    *,
+    allowed_agent_ids: set[str] | None = None,
+    allowed_rule_ids: set[str] | None = None,
+    rule_agent_overrides: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     existing_keys = {_dedupe_key(item) for item in existing_findings}
     grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
     group_rule: dict[tuple[str, str, str, str], str] = {}
     for observation in tool_observations:
-        if not _promotable_tool_observation(observation):
+        raw_rule_id = canonical_rule_id(observation.get("rule_id"))
+        rule_id = raw_rule_id if allowed_rule_ids is not None and raw_rule_id in allowed_rule_ids else _canonical_tool_rule_id(observation)
+        is_allowed_bound_rule = allowed_rule_ids is not None and rule_id in allowed_rule_ids
+        if not is_allowed_bound_rule and not _promotable_tool_observation(observation):
             continue
-        rule_id = _canonical_tool_rule_id(observation)
+        if is_allowed_bound_rule:
+            has_location = bool(observation.get("file_path")) and _as_int(observation.get("line_start")) is not None
+            if not has_location or float(observation.get("confidence") or 0) < 0.75:
+                continue
+        if allowed_rule_ids is not None and rule_id not in allowed_rule_ids:
+            continue
+        agent_id = (rule_agent_overrides or {}).get(rule_id) or _agent_for_rule(rule_id)
+        if allowed_agent_ids is not None and agent_id not in allowed_agent_ids:
+            continue
         key = _tool_observation_group_key(rule_id, observation)
         grouped.setdefault(key, []).append(observation)
         group_rule[key] = rule_id
@@ -2139,7 +2222,7 @@ def promote_tool_observations(
             {
                 "severity": observation.get("severity") or "medium",
                 "confidence": max(max(float(item.get("confidence") or 0.8) for item in observations), 0.8),
-                "agent_id": _agent_for_rule(rule_id),
+                "agent_id": (rule_agent_overrides or {}).get(rule_id) or _agent_for_rule(rule_id),
                 "file_path": observation.get("file_path"),
                 "line_start": line_start,
                 "line_end": line_end,
@@ -2160,6 +2243,11 @@ def promote_tool_observations(
                 "source_tool_observation": observation,
             }
         )
+        if allowed_rule_ids is not None:
+            scoped_rules = [rule for rule in (candidate.get("covered_rules") or []) if str(rule) in allowed_rule_ids]
+            if not scoped_rules:
+                continue
+            candidate["covered_rules"] = scoped_rules
         candidate["dedupe_hash"] = sha1(
             "|".join(
                 [
@@ -2176,6 +2264,320 @@ def promote_tool_observations(
         existing_keys.add(key)
         promoted.append(candidate)
     return promoted
+
+
+def _bound_rule_text(rule: dict[str, Any]) -> str:
+    fields = [
+        rule.get("rule_id"),
+        rule.get("title"),
+        rule.get("category"),
+        rule.get("check"),
+        rule.get("required_evidence"),
+        rule.get("evidence_required"),
+        rule.get("negative_examples"),
+        rule.get("false_positive_patterns"),
+    ]
+    return "\n".join(str(value or "") for value in fields)
+
+
+def _bound_rule_title(rule: dict[str, Any]) -> str:
+    return str(rule.get("title") or rule.get("rule_id") or "绑定规范命中").strip()
+
+
+def _bound_rule_severity(rule: dict[str, Any]) -> str:
+    severity = str(rule.get("severity") or "medium").lower()
+    return severity if severity in SEVERITY_RANK else "medium"
+
+
+def _bound_rule_fix_guidance(rule: dict[str, Any]) -> str:
+    return str(rule.get("fix_guidance") or rule.get("recommendation") or "按绑定规范要求修复，并补充对应回归验证。").strip()
+
+
+def _existing_covered_rule_ids(findings: list[dict[str, Any]]) -> set[str]:
+    covered: set[str] = set()
+    for finding in findings:
+        normalized = normalize_tool_finding(finding)
+        for rule in normalized.get("covered_rules") or []:
+            if rule:
+                covered.add(str(rule))
+    return covered
+
+
+def _changed_file_added_lines(changed: Any) -> list[tuple[int, str]]:
+    lines: list[tuple[int, str]] = []
+    for line_no, text in extract_added_lines(str(getattr(changed, "patch", "") or "")):
+        if line_no is not None:
+            lines.append((int(line_no), text))
+    return lines
+
+
+def _snippet(lines: list[tuple[int, str]], start_index: int, end_index: int) -> str:
+    return "\n".join(f"{line_no}: {text}" for line_no, text in lines[max(0, start_index) : min(len(lines), end_index + 1)])
+
+
+def _resource_type_pattern(rule_text: str) -> re.Pattern[str] | None:
+    resource_markers: list[str] = []
+    marker_map = {
+        "fileinputstream": "FileInputStream",
+        "files.newinputstream": "Files\\.newInputStream",
+        "inputstream": "[A-Za-z0-9_]*InputStream",
+        "reader": "[A-Za-z0-9_]*Reader",
+        "connection": "Connection",
+        "resultset": "ResultSet",
+        "statement": "Statement",
+    }
+    lowered = rule_text.lower()
+    for marker, pattern in marker_map.items():
+        if marker in lowered:
+            resource_markers.append(pattern)
+    if not resource_markers:
+        return None
+    return re.compile(r"\b(?:new\s+(?:" + "|".join(resource_markers) + r")|(?:Connection|ResultSet|Statement)\s+\w+\s*=)", re.IGNORECASE)
+
+
+def _rule_mentions_unclosed_resource(rule_text: str) -> bool:
+    lowered = rule_text.lower()
+    return bool(
+        ("try-with-resources" in lowered or "关闭" in lowered or "close" in lowered)
+        and ("inputstream" in lowered or "reader" in lowered or "connection" in lowered or "resultset" in lowered or "statement" in lowered)
+    )
+
+
+def _resource_line_has_owner_close(lines: list[tuple[int, str]], index: int) -> bool:
+    current = lines[index][1]
+    if "try (" in current or "try(" in current:
+        return True
+    window = "\n".join(text for _, text in lines[max(0, index - 2) : min(len(lines), index + 9)]).lower()
+    return ".close(" in window or "try (" in window or "try(" in window
+
+
+def _supplement_resource_rule(
+    *,
+    rule: dict[str, Any],
+    agent_id: str,
+    file_path: str,
+    lines: list[tuple[int, str]],
+) -> list[dict[str, Any]]:
+    rule_text = _bound_rule_text(rule)
+    pattern = _resource_type_pattern(rule_text)
+    if pattern is None or not _rule_mentions_unclosed_resource(rule_text):
+        return []
+    findings: list[dict[str, Any]] = []
+    for index, (line_no, text) in enumerate(lines):
+        if not pattern.search(text) or _resource_line_has_owner_close(lines, index):
+            continue
+        rule_id = str(rule.get("rule_id") or "")
+        evidence = (
+            f"line {line_no}: {text.strip()}\n"
+            f"绑定规范证据要求：{rule.get('required_evidence') or rule.get('evidence_required') or '展示资源创建行和关闭责任。'}"
+        )
+        findings.append(
+            normalize_tool_finding(
+                {
+                    "severity": _bound_rule_severity(rule),
+                    "confidence": 0.82,
+                    "agent_id": agent_id,
+                    "file_path": file_path,
+                    "line_start": line_no,
+                    "line_end": line_no,
+                    "title": _bound_rule_title(rule),
+                    "problem_description": "绑定规范要求新增资源必须由当前作用域关闭；该新增行创建了资源，但附近未看到 try-with-resources 或 close。",
+                    "recommendation": _bound_rule_fix_guidance(rule),
+                    "suggested_code": "try (var resource = /* create resource */) {\n    // use resource\n}",
+                    "evidence": evidence,
+                    "covered_rules": [rule_id],
+                    "skipped_rules": [],
+                    "judge_adjustment": "supplemented_from_bound_rule_document",
+                    "verification_flags": ["bound_rule_document_supplement"],
+                }
+            )
+        )
+    return findings[:1]
+
+
+def _rule_mentions_collection_mutation(rule_text: str) -> bool:
+    lowered = rule_text.lower()
+    return bool(
+        ("for (" in lowered or "增强 for" in lowered or "foreach" in lowered)
+        and (".remove" in lowered or ".add" in lowered or ".clear" in lowered or "修改集合" in lowered)
+    )
+
+
+def _supplement_collection_mutation_rule(
+    *,
+    rule: dict[str, Any],
+    agent_id: str,
+    file_path: str,
+    lines: list[tuple[int, str]],
+) -> list[dict[str, Any]]:
+    if not _rule_mentions_collection_mutation(_bound_rule_text(rule)):
+        return []
+    findings: list[dict[str, Any]] = []
+    for index, (line_no, text) in enumerate(lines):
+        loop = re.search(r"\bfor\s*\([^:;]+?\b([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)", text)
+        if not loop:
+            continue
+        collection_name = loop.group(2)
+        block_end = min(len(lines), index + 12)
+        for edit_line_no, edit_text in lines[index + 1 : block_end]:
+            if re.search(rf"\b{re.escape(collection_name)}\s*\.\s*(remove|add|clear)\s*\(", edit_text):
+                rule_id = str(rule.get("rule_id") or "")
+                evidence = (
+                    f"line {line_no}: {text.strip()}\n"
+                    f"line {edit_line_no}: {edit_text.strip()}\n"
+                    f"绑定规范证据要求：{rule.get('required_evidence') or rule.get('evidence_required') or '展示循环声明行和集合修改行。'}"
+                )
+                findings.append(
+                    normalize_tool_finding(
+                        {
+                            "severity": _bound_rule_severity(rule),
+                            "confidence": 0.84,
+                            "agent_id": agent_id,
+                            "file_path": file_path,
+                            "line_start": edit_line_no,
+                            "line_end": edit_line_no,
+                            "title": _bound_rule_title(rule),
+                            "problem_description": "绑定规范禁止在增强 for 遍历原集合时直接修改该集合；该代码在循环体内调用了原集合的修改方法。",
+                            "recommendation": _bound_rule_fix_guidance(rule),
+                            "suggested_code": f"{collection_name}.removeIf(item -> /* condition */);",
+                            "evidence": evidence,
+                            "covered_rules": [rule_id],
+                            "skipped_rules": [],
+                            "judge_adjustment": "supplemented_from_bound_rule_document",
+                            "verification_flags": ["bound_rule_document_supplement"],
+                        }
+                    )
+                )
+                break
+    return findings[:1]
+
+
+def _code_anchor_tokens(rule: dict[str, Any]) -> set[str]:
+    negative = str(rule.get("negative_examples") or "")
+    check = str(rule.get("check") or "")
+    raw_tokens = set(re.findall(r"`([^`\n]{2,120})`", f"{negative}\n{check}"))
+    raw_tokens.update(re.findall(r"\b[A-Z][A-Za-z0-9_]{3,}\b", f"{negative}\n{check}"))
+    raw_tokens.update(re.findall(r"\.[A-Za-z_][A-Za-z0-9_]*\s*\(", f"{negative}\n{check}"))
+    tokens: set[str] = set()
+    stop = {"String", "List", "Map", "Object", "Order", "PaymentOrder"}
+    for token in raw_tokens:
+        compact = token.strip()
+        if not compact or compact in stop:
+            continue
+        nested_calls = re.findall(r"\.[A-Za-z_][A-Za-z0-9_]*\s*\(", compact)
+        for nested in nested_calls:
+            tokens.add(nested.replace(" ", ""))
+        class_names = re.findall(r"\b[A-Z][A-Za-z0-9_]{3,}\b", compact)
+        for class_name in class_names:
+            if class_name not in stop:
+                tokens.add(class_name)
+        if len(compact) >= 3:
+            tokens.add(compact)
+    return tokens
+
+
+def _supplement_exact_anchor_rule(
+    *,
+    rule: dict[str, Any],
+    agent_id: str,
+    file_path: str,
+    lines: list[tuple[int, str]],
+) -> list[dict[str, Any]]:
+    tokens = _code_anchor_tokens(rule)
+    if len(tokens) < 2:
+        return []
+    findings: list[dict[str, Any]] = []
+    for index, (line_no, text) in enumerate(lines):
+        window_lines = lines[max(0, index - 2) : min(len(lines), index + 3)]
+        window = "\n".join(item for _, item in window_lines)
+        matched = [token for token in tokens if token in window]
+        if len(matched) < min(3, len(tokens)):
+            continue
+        scored_lines: list[tuple[int, int, int, str]] = []
+        for candidate_line_no, candidate_text in window_lines:
+            direct_matches = [token for token in matched if token in candidate_text]
+            api_matches = [token for token in direct_matches if token.startswith(".") or "(" in token]
+            scored_lines.append((len(api_matches), len(direct_matches), candidate_line_no, candidate_text))
+        _, _, anchor_line_no, _ = max(scored_lines, key=lambda item: (item[0], item[1], item[2]))
+        rule_id = str(rule.get("rule_id") or "")
+        evidence = (
+            f"{_snippet(lines, index - 2, index + 2)}\n"
+            f"绑定规范证据要求：{rule.get('required_evidence') or rule.get('evidence_required') or '展示精确代码证据。'}"
+        )
+        findings.append(
+            normalize_tool_finding(
+                {
+                    "severity": _bound_rule_severity(rule),
+                    "confidence": 0.8,
+                    "agent_id": agent_id,
+                    "file_path": file_path,
+                    "line_start": anchor_line_no,
+                    "line_end": anchor_line_no,
+                    "title": _bound_rule_title(rule),
+                    "problem_description": "新增代码命中了绑定规范文档中的反例/API 锚点，需要按该规范修复。",
+                    "recommendation": _bound_rule_fix_guidance(rule),
+                    "suggested_code": "// 按绑定规范替换上述反例写法，并补充回归测试。",
+                    "evidence": evidence,
+                    "covered_rules": [rule_id],
+                    "skipped_rules": [],
+                    "judge_adjustment": "supplemented_from_bound_rule_document",
+                    "verification_flags": ["bound_rule_document_supplement"],
+                }
+            )
+        )
+        break
+    return findings[:1]
+
+
+def supplement_bound_rule_findings(
+    files: list[Any],
+    selected_agents: list[dict[str, Any]],
+    existing_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    existing_keys = {_dedupe_key(item) for item in existing_findings}
+    added_lines_by_file = {str(getattr(changed, "filename", "") or ""): _changed_file_added_lines(changed) for changed in files}
+    supplemented: list[dict[str, Any]] = []
+    for agent in selected_agents:
+        if not isinstance(agent, dict):
+            continue
+        agent_id = str(agent.get("agent_id") or "")
+        if not agent_id:
+            continue
+        for rule in agent.get("bound_rules") or []:
+            if not isinstance(rule, dict):
+                continue
+            rule_id = str(rule.get("rule_id") or "")
+            if not rule_id:
+                continue
+            candidates: list[dict[str, Any]] = []
+            for file_path, lines in added_lines_by_file.items():
+                if not lines:
+                    continue
+                candidates.extend(_supplement_collection_mutation_rule(rule=rule, agent_id=agent_id, file_path=file_path, lines=lines))
+                candidates.extend(_supplement_resource_rule(rule=rule, agent_id=agent_id, file_path=file_path, lines=lines))
+                if not candidates:
+                    candidates.extend(_supplement_exact_anchor_rule(rule=rule, agent_id=agent_id, file_path=file_path, lines=lines))
+                if candidates:
+                    break
+            for candidate in candidates:
+                key = _dedupe_key(candidate)
+                if key in existing_keys:
+                    continue
+                candidate["dedupe_hash"] = sha1(
+                    "|".join(
+                        [
+                            "bound-rule-supplement",
+                            rule_id,
+                            str(candidate.get("file_path") or ""),
+                            str(candidate.get("line_start") or ""),
+                            str(candidate.get("title") or ""),
+                        ]
+                    )
+                )
+                existing_keys.add(key)
+                supplemented.append(candidate)
+                break
+    return supplemented
 
 
 def apply_debate_verdicts(findings: list[dict[str, Any]], debate_results: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -2337,22 +2739,22 @@ def align_finding_with_tool_observations(
         return item
 
     observation = _best_source_observation_for_rule(source_observations, "CODE-NULL-001")
+    be_api_observation = _best_source_observation_for_rule(source_observations, "BE-API-001") if "BE-API-001" in covered else None
     if not observation:
         return item
     observation_text = str(observation.get("message") or "")
     if "string.valueof" not in observation_text.lower() or "payload.get" not in observation_text.lower():
         return item
-    if _has_code_null_signal(item):
-        return item
 
     remediation = RULE_REMEDIATION.get("CODE-NULL-001", {})
     aligned = dict(item)
-    aligned["title"] = remediation.get("title") or "Map 入参字段缺少显式空值和类型校验"
-    aligned["problem_description"] = (
-        f"工具证据显示新增代码使用 {observation_text}；字段缺失时会得到字面量 \"null\"，"
-        "绕过显式必填校验并进入后续查询或业务逻辑。"
-    )
-    aligned["evidence"] = observation_text
+    if not _has_code_null_signal(item):
+        aligned["title"] = remediation.get("title") or "Map 入参字段缺少显式空值和类型校验"
+        aligned["problem_description"] = (
+            f"工具证据显示新增代码使用 {observation_text}；字段缺失时会得到字面量 \"null\"，"
+            "绕过显式必填校验并进入后续查询或业务逻辑。"
+        )
+        aligned["evidence"] = observation_text
     aligned["recommendation"] = remediation.get("recommendation") or aligned.get("recommendation")
     aligned["suggested_code"] = remediation.get("suggested_code") or aligned.get("suggested_code")
     aligned["line_start"] = _as_int(observation.get("line_start")) or aligned.get("line_start")
@@ -2365,6 +2767,23 @@ def align_finding_with_tool_observations(
         "aligned_to_tool_rule": "CODE-NULL-001",
         "aligned_to_tool_line": aligned.get("line_start"),
     }
+    if be_api_observation:
+        be_api_text = str(be_api_observation.get("message") or "")
+        if "@requestbody" in be_api_text.lower() and "@valid" in be_api_text.lower():
+            be_api_sentence = f"同一入口还命中 BE-API-001：{be_api_text}"
+            for key in ["problem_description", "evidence"]:
+                current_text = str(aligned.get(key) or "")
+                if "@valid" not in current_text.lower():
+                    aligned[key] = f"{current_text}\n{be_api_sentence}".strip()
+            flags = list(aligned.get("verification_flags") or [])
+            if "aligned_to_be_api_validation_observation" not in flags:
+                flags.append("aligned_to_be_api_validation_observation")
+            aligned["verification_flags"] = flags
+            aligned["quality_trace"] = {
+                **(aligned.get("quality_trace") if isinstance(aligned.get("quality_trace"), dict) else {}),
+                "aligned_to_be_api_rule": "BE-API-001",
+                "aligned_to_be_api_line": _as_int(be_api_observation.get("line_start")) or aligned.get("line_start"),
+            }
     return normalize_tool_finding(aligned)
 
 
@@ -2616,6 +3035,16 @@ def judge_candidate_findings(
         if current is None:
             by_key[key] = _normalize_for_judging(item)
             continue
+        current_exact_tool = _has_exact_promoted_tool_rule(current)
+        item_exact_tool = _has_exact_promoted_tool_rule(item)
+        if current_exact_tool != item_exact_tool:
+            if item_exact_tool:
+                rejected.append({**current, "rejected_reasons": ["deduped_lower_rank"]})
+                by_key[key] = _merge_finding_metadata(_normalize_for_judging(item), current)
+            else:
+                rejected.append({**item, "rejected_reasons": ["deduped_lower_rank"]})
+                by_key[key] = _merge_finding_metadata(current, item)
+            continue
         if _priority_sort_key(item) > _priority_sort_key(current):
             rejected.append({**current, "rejected_reasons": ["deduped_lower_rank"]})
             by_key[key] = _merge_finding_metadata(_normalize_for_judging(item), current)
@@ -2689,7 +3118,25 @@ def make_judge_findings_node(
                     "reasons": observation.get("rejected_reasons") or [],
                 },
             )
-        promoted_findings = promote_tool_observations(tool_observations, state["verified_findings"])
+        selected_agents = state.get("selected_agents") or []
+        selected_agent_ids = {str(agent.get("agent_id") or "") for agent in selected_agents if isinstance(agent, dict) and agent.get("agent_id")}
+        bound_rule_agent_overrides: dict[str, str] = {}
+        for agent in selected_agents:
+            if not isinstance(agent, dict):
+                continue
+            agent_id = str(agent.get("agent_id") or "")
+            if not agent_id:
+                continue
+            for rule in agent.get("bound_rules") or []:
+                if isinstance(rule, dict) and rule.get("rule_id"):
+                    bound_rule_agent_overrides[str(rule["rule_id"])] = agent_id
+        promoted_findings = promote_tool_observations(
+            tool_observations,
+            state["verified_findings"],
+            allowed_agent_ids=selected_agent_ids or None,
+            allowed_rule_ids=set(bound_rule_agent_overrides) or None,
+            rule_agent_overrides=bound_rule_agent_overrides or None,
+        )
         if promoted_findings:
             upsert_candidate_findings(
                 conn,
@@ -2707,8 +3154,29 @@ def make_judge_findings_node(
                     "tool_observation_count": len(tool_observations),
                 },
             )
-        final_findings, judge_rejections = judge_candidate_findings(
+        supplemented_findings = supplement_bound_rule_findings(
+            state.get("files") or [],
+            selected_agents,
             [*state["verified_findings"], *promoted_findings],
+        )
+        if supplemented_findings:
+            upsert_candidate_findings(
+                conn,
+                review_run_id=run_id,
+                items=supplemented_findings,
+                stage="bound_rule_supplement",
+                status="candidate",
+            )
+            recorder.event(
+                judge_span,
+                "bound_rule_findings_supplemented",
+                f"按绑定规范文档补充 {len(supplemented_findings)} 个候选问题",
+                {
+                    "rules": sorted({rule for item in supplemented_findings for rule in item.get("covered_rules", [])}),
+                },
+            )
+        final_findings, judge_rejections = judge_candidate_findings(
+            [*state["verified_findings"], *promoted_findings, *supplemented_findings],
             state.get("conflicts") or [],
             state.get("debate_results") or [],
             max_findings=max_findings,

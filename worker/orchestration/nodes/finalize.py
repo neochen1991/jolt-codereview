@@ -88,6 +88,48 @@ def update_mr_finding_history(
     return {"active": len(current_hashes), "resolved": len(resolved_hashes)}
 
 
+def summarize_evidence_contracts(final_findings: list[dict[str, Any]]) -> dict[str, Any]:
+    contracts: list[dict[str, Any]] = []
+    for finding in final_findings:
+        trace = finding.get("quality_trace") or {}
+        if isinstance(trace, str):
+            try:
+                trace = json.loads(trace)
+            except json.JSONDecodeError:
+                trace = {}
+        contract = trace.get("evidence_contract") if isinstance(trace, dict) else None
+        if isinstance(contract, dict):
+            contracts.append(contract)
+
+    status_counts: dict[str, int] = {}
+    missing_counts: dict[str, int] = {}
+    score_total = 0.0
+    for contract in contracts:
+        status = str(contract.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        try:
+            score_total += float(contract.get("score") or 0)
+        except (TypeError, ValueError):
+            pass
+        for missing in contract.get("missing") or []:
+            key = str(missing)
+            missing_counts[key] = missing_counts.get(key, 0) + 1
+
+    complete_contract_rate = round(status_counts.get("satisfied", 0) / len(contracts), 4) if contracts else 0
+    return {
+        "version": "evidence_contract_summary_v1",
+        "finding_count": len(final_findings),
+        "contract_count": len(contracts),
+        "status_counts": status_counts,
+        "missing_counts": missing_counts,
+        "average_score": round(score_total / len(contracts), 4) if contracts else 0,
+        "complete_contract_rate": complete_contract_rate,
+        "findings_missing_rule": missing_counts.get("has_rule", 0),
+        "findings_missing_tool_evidence": missing_counts.get("has_tool_evidence", 0),
+        "findings_missing_suggested_code": missing_counts.get("has_suggested_code", 0),
+    }
+
+
 def make_finalize_node(
     *,
     conn: sqlite3.Connection,
@@ -184,6 +226,7 @@ def make_finalize_node(
             "agents_executed": [str(row["agent_id"]) for row in agent_rows],
             "finding_count": len(final_findings),
             "candidate_quality": state.get("candidate_quality") or {},
+            "evidence_contracts": summarize_evidence_contracts(final_findings),
         }
         budget_used = {
             "llm_calls": int(usage["llm_calls"] or 0),

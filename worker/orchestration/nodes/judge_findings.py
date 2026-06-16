@@ -2126,6 +2126,44 @@ def reconcile_rules_with_tool_observations(
     return normalize_tool_finding(item)
 
 
+def _has_text(value: Any) -> bool:
+    return bool(str(value or "").strip())
+
+
+def build_evidence_contract(finding: dict[str, Any], source_observations: list[dict[str, Any]]) -> dict[str, Any]:
+    rules = [str(rule) for rule in (finding.get("covered_rules") or []) if str(rule or "").strip()]
+    has_rule = bool(rules or _has_text(finding.get("tool_rule_id")) or _has_text(finding.get("rule_id")))
+    has_location = _has_text(finding.get("file_path")) and bool(_as_int(finding.get("line_start")))
+    has_source_context = _has_text(finding.get("evidence")) or bool(source_observations)
+    has_tool_evidence = bool(source_observations or _has_text(finding.get("tool_name")) or _has_text(finding.get("tool_rule_id")))
+    has_recommendation = _has_text(finding.get("recommendation"))
+    suggested_code = str(finding.get("suggested_code") or "").strip()
+    has_suggested_code = bool(suggested_code and "未提供明确代码片段" not in suggested_code)
+    checks = {
+        "has_rule": has_rule,
+        "has_location": has_location,
+        "has_source_context": has_source_context,
+        "has_tool_evidence": has_tool_evidence,
+        "has_recommendation": has_recommendation,
+        "has_suggested_code": has_suggested_code,
+    }
+    missing = [name for name, passed in checks.items() if not passed]
+    score = round(sum(1 for passed in checks.values() if passed) / len(checks), 4)
+    if score >= 0.84 and has_location and has_source_context and has_recommendation:
+        status = "satisfied"
+    elif score >= 0.5 and has_location:
+        status = "partial"
+    else:
+        status = "weak"
+    return {
+        "version": "evidence_contract_v1",
+        **checks,
+        "missing": missing,
+        "score": score,
+        "status": status,
+    }
+
+
 def build_quality_trace(finding: dict[str, Any], source_observations: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "agent_id": finding.get("agent_id"),
@@ -2152,6 +2190,7 @@ def build_quality_trace(finding: dict[str, Any], source_observations: list[dict[
         },
         "calibration": finding.get("calibration") or {},
         "debate": finding.get("debate_verdict") or {},
+        "evidence_contract": build_evidence_contract(finding, source_observations),
         "tools": [
             {
                 "tool_name": item.get("tool_name"),
@@ -2489,6 +2528,8 @@ def make_judge_findings_node(
             tool_provenance = _tool_provenance(finding, source_observations)
             quality_trace = build_quality_trace(finding, source_observations)
             finding["source_observations"] = source_observations
+            finding["tool_provenance"] = tool_provenance
+            finding["quality_trace"] = quality_trace
             finding_id = new_id("finding")
             conn.execute(
                 """

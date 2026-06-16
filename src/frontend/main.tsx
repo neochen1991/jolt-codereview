@@ -5935,6 +5935,11 @@ function FindingDetailModal({
   const sourceObservations = parseJsonObjectArray(finding.source_observations_json);
   const toolProvenance = parseJsonObjectArray(finding.tool_provenance_json);
   const qualityTrace = safeJson(String(finding.quality_trace_json || "{}"));
+  const evidenceContract = (
+    qualityTrace.evidence_contract && typeof qualityTrace.evidence_contract === "object"
+      ? qualityTrace.evidence_contract
+      : {}
+  ) as Record<string, unknown>;
   const traceLocation = qualityTrace.location as Record<string, unknown> | undefined;
   const location = formatFindingLocation(finding);
   const suggestedCode = (finding.suggested_code || extractSuggestedCode(finding.recommendation)).trim();
@@ -6136,6 +6141,18 @@ function FindingDetailModal({
               <div>
                 <dt>来源</dt>
                 <dd>{source.label}</dd>
+              </div>
+              <div>
+                <dt>证据合同</dt>
+                <dd>{formatEvidenceContractStatus(evidenceContract)}</dd>
+              </div>
+              <div>
+                <dt>证据分</dt>
+                <dd>{formatEvidenceContractScore(evidenceContract)}</dd>
+              </div>
+              <div>
+                <dt>缺失项</dt>
+                <dd>{formatEvidenceContractMissing(evidenceContract)}</dd>
               </div>
               <div>
                 <dt>去重指纹</dt>
@@ -6711,6 +6728,36 @@ function formatTraceLocation(location: Record<string, unknown> | undefined) {
   if (!start) return file;
   if (end && end !== start) return `${file}:${start}-${end}`;
   return `${file}:${start}`;
+}
+
+function formatEvidenceContractStatus(contract: Record<string, unknown>) {
+  const status = String(contract.status || "");
+  const map: Record<string, string> = {
+    satisfied: "完整",
+    partial: "部分完整",
+    weak: "证据薄弱"
+  };
+  return map[status] || "未记录";
+}
+
+function formatEvidenceContractScore(contract: Record<string, unknown>) {
+  const score = Number(contract.score);
+  if (!Number.isFinite(score)) return "--";
+  return `${Math.round(score * 100)}%`;
+}
+
+function formatEvidenceContractMissing(contract: Record<string, unknown>) {
+  const missing = Array.isArray(contract.missing) ? contract.missing.map((item) => String(item)) : [];
+  if (!missing.length) return "无";
+  const labels: Record<string, string> = {
+    has_rule: "规范",
+    has_location: "位置",
+    has_source_context: "源码上下文",
+    has_tool_evidence: "工具证据",
+    has_recommendation: "修复建议",
+    has_suggested_code: "建议代码"
+  };
+  return missing.map((item) => labels[item] || item).join("、");
 }
 
 function formatObservationLocation(item: Record<string, unknown>) {

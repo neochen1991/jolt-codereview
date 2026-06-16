@@ -172,6 +172,84 @@ def _changed_symbol_names(files: list[Any]) -> list[str]:
     return names[:30]
 
 
+def _changed_lines_by_file(files: list[Any]) -> dict[str, list[tuple[int, str]]]:
+    result: dict[str, list[tuple[int, str]]] = {}
+    for changed in files:
+        filename = str(getattr(changed, "filename", ""))
+        if not language_for_path(filename):
+            continue
+        result[filename] = extract_added_lines(str(getattr(changed, "patch", "")))
+    return result
+
+
+def _symbol_role(file_path: str, symbol_name: str) -> str:
+    lowered = f"{file_path}/{symbol_name}".lower()
+    if "test" in lowered:
+        return "test"
+    if "controller" in lowered or "/api/" in lowered or "/web/" in lowered:
+        return "controller"
+    if "repository" in lowered or "mapper" in lowered or "/dao/" in lowered:
+        return "repository"
+    if "service" in lowered or "application" in lowered:
+        return "service"
+    if "domain" in lowered or "aggregate" in lowered or "entity" in lowered or "valueobject" in lowered:
+        return "domain"
+    if "config" in lowered or "properties" in lowered:
+        return "configuration"
+    return "source"
+
+
+def _changed_call_targets(changed_lines: list[tuple[int, str]]) -> list[str]:
+    targets: list[str] = []
+    for _line_no, line in changed_lines:
+        for ref in _refs_for_line(line):
+            if ref not in targets:
+                targets.append(ref)
+    return targets[:20]
+
+
+def _related_test_files(worktree: Path, symbol_name: str, definition_file: str) -> list[str]:
+    first = _find_test_file(worktree, symbol_name, definition_file)
+    result = [first] if first else []
+    definition_stem = Path(definition_file).stem.lower()
+    for path in _iter_source_files(worktree):
+        rel = path.relative_to(worktree).as_posix()
+        lowered = rel.lower()
+        if "test" not in lowered or rel in result:
+            continue
+        if definition_stem in lowered:
+            result.append(rel)
+        if len(result) >= 5:
+            break
+    return result
+
+
+def _definitions_for_changed_lines(conn: sqlite3.Connection, changed_lines: dict[str, list[tuple[int, str]]]) -> list[sqlite3.Row]:
+    definitions: list[sqlite3.Row] = []
+    seen: set[tuple[str, str, int]] = set()
+    for file_path, lines in changed_lines.items():
+        for line_no, _line_text in lines:
+            row = conn.execute(
+                """
+                SELECT * FROM symbols
+                WHERE file = ?
+                  AND kind IN ('function', 'class')
+                  AND start_line <= ?
+                  AND end_line >= ?
+                ORDER BY CASE kind WHEN 'function' THEN 0 ELSE 1 END, start_line DESC
+                LIMIT 1
+                """,
+                (file_path, line_no, line_no),
+            ).fetchone()
+            if not row:
+                continue
+            key = (str(row["file"]), str(row["name"]), int(row["start_line"]))
+            if key not in seen:
+                seen.add(key)
+                definitions.append(row)
+    return definitions[:30]
+
+
 def _read_lines(worktree: Path, file_path: str) -> list[str]:
     target = (worktree / file_path).resolve()
     try:
@@ -205,11 +283,14 @@ def resolve_diff_symbols(index_info: dict[str, Any], worktree: Path, files: list
     if not index_path.exists():
         return {"status": "missing_index", "modified_symbols": [], "source_file_contents": {}}
     modified_names = _changed_symbol_names(files)
+    changed_lines = _changed_lines_by_file(files)
     source_file_contents: dict[str, str] = {}
     modified_symbols: list[dict[str, Any]] = []
     chars_used = 0
     with sqlite3.connect(index_path) as conn:
         conn.row_factory = sqlite3.Row
+        definitions: list[sqlite3.Row] = _definitions_for_changed_lines(conn, changed_lines)
+        seen_definitions = {(str(row["file"]), str(row["name"]), int(row["start_line"])) for row in definitions}
         for name in modified_names:
             definition = conn.execute(
                 "SELECT * FROM symbols WHERE name = ? ORDER BY start_line LIMIT 1",
@@ -217,8 +298,20 @@ def resolve_diff_symbols(index_info: dict[str, Any], worktree: Path, files: list
             ).fetchone()
             if not definition:
                 continue
+            key = (str(definition["file"]), str(definition["name"]), int(definition["start_line"]))
+            if key in seen_definitions:
+                continue
+            seen_definitions.add(key)
+            definitions.append(definition)
+        for definition in definitions[:30]:
+            name = str(definition["name"])
             def_lines = _read_lines(worktree, definition["file"])
             definition_snippet = _snippet_from_lines(def_lines, int(definition["start_line"]), 15) if def_lines else ""
+            symbol_changed_lines = [
+                (line_no, line)
+                for line_no, line in changed_lines.get(str(definition["file"]), [])
+                if int(definition["start_line"]) <= line_no <= int(definition["end_line"])
+            ]
             callers = []
             for ref in conn.execute(
                 "SELECT * FROM refs WHERE symbol_name = ? AND file <> ? ORDER BY file, line LIMIT 3",
@@ -232,17 +325,22 @@ def resolve_diff_symbols(index_info: dict[str, Any], worktree: Path, files: list
                         "snippet": _snippet_from_lines(ref_lines, int(ref["line"]), 8) if ref_lines else "",
                     }
                 )
-            test_file = _find_test_file(worktree, name, str(definition["file"]))
-            has_test = bool(test_file) or any("test" in caller["file"].lower() for caller in callers) or any("test" in str(getattr(item, "filename", "")).lower() for item in files)
+            related_tests = _related_test_files(worktree, name, str(definition["file"]))
+            has_test = bool(related_tests) or any("test" in caller["file"].lower() for caller in callers) or any("test" in str(getattr(item, "filename", "")).lower() for item in files)
             item = {
                 "name": name,
                 "kind": definition["kind"],
+                "symbol_role": _symbol_role(str(definition["file"]), name),
                 "definition_file": definition["file"],
                 "definition_line": int(definition["start_line"]),
                 "definition_snippet": definition_snippet,
+                "changed_line_count": len(symbol_changed_lines),
+                "changed_lines": [{"line": line_no, "text": line[:240]} for line_no, line in symbol_changed_lines[:12]],
+                "call_targets": _changed_call_targets(symbol_changed_lines),
                 "callers": callers,
                 "has_test": has_test,
-                "test_file": test_file or next((str(getattr(changed, "filename", "")) for changed in files if "test" in str(getattr(changed, "filename", "")).lower()), ""),
+                "test_file": related_tests[0] if related_tests else next((str(getattr(changed, "filename", "")) for changed in files if "test" in str(getattr(changed, "filename", "")).lower()), ""),
+                "related_tests": related_tests,
             }
             item_size = len(json_like(item))
             if chars_used + item_size > RELATED_CONTEXT_MAX_CHARS:
@@ -256,8 +354,22 @@ def resolve_diff_symbols(index_info: dict[str, Any], worktree: Path, files: list
             source_file_contents[filename] = "\n".join(lines[:MAX_FILE_LINES])
     return {
         "status": "resolved",
-        "format": "related_context_v1",
+        "format": "related_context_v2",
         "modified_symbols": modified_symbols,
+        "changed_symbols": [
+            {
+                "name": item["name"],
+                "kind": item["kind"],
+                "symbol_role": item.get("symbol_role"),
+                "definition_file": item["definition_file"],
+                "definition_line": item["definition_line"],
+                "changed_line_count": item.get("changed_line_count", 0),
+                "call_targets": item.get("call_targets", []),
+                "has_test": item.get("has_test", False),
+            }
+            for item in modified_symbols
+        ],
+        "related_tests": sorted({test for item in modified_symbols for test in item.get("related_tests", []) if test})[:20],
         "source_file_contents": source_file_contents,
         "limits": {"related_context_max_chars": RELATED_CONTEXT_MAX_CHARS},
     }

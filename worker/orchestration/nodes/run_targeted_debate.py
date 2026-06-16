@@ -193,7 +193,12 @@ def run_targeted_debate_with_llm(
     finding_by_hash = _finding_by_hash(findings)
     if not conflicts:
         return [], []
-    max_debate_calls = max(1, int(len(findings) * 0.3))
+    debate_config = (config.get("review") or {}).get("targeted_debate") or {}
+    try:
+        configured_max_calls = int(debate_config.get("max_calls", 3))
+    except (TypeError, ValueError):
+        configured_max_calls = 3
+    max_debate_calls = max(1, min(configured_max_calls, int(len(findings) * 0.3) or 1))
     ranked_conflicts = sorted(conflicts, key=lambda item: _conflict_priority(item, finding_by_hash), reverse=True)[:max_debate_calls]
     llm = config.get("llm", {})
     transcripts: list[dict[str, Any]] = []

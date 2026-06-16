@@ -1646,6 +1646,16 @@ def builtin_java_heuristics_enabled(project_config: dict[str, Any] | None) -> bo
     )
 
 
+def builtin_java_heuristics_disabled(project_config: dict[str, Any] | None) -> bool:
+    policy = tool_policy_config(project_config)
+    runner_cfg = static_runner_config(project_config, "java_web_static")
+    return bool(
+        policy.get("disable_builtin_java_heuristics")
+        or policy.get("disable_jolt_builtin_rules")
+        or runner_cfg.get("enabled") is False
+    )
+
+
 def _decode_subprocess_output(value: Any) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
@@ -3389,15 +3399,25 @@ def run_external_static_prescan(
     )
     results.extend(java_results + security_results + iac_results)
 
+    semgrep_failed = any(item.get("tool") == "semgrep" and item.get("status") == "failed" for item in results)
+    has_java_changes = any(str(getattr(file, "filename", "") or "").lower().endswith(".java") for file in files)
+    builtin_disabled = builtin_java_heuristics_disabled(project_config)
+    run_builtin_java_heuristics = (has_java_changes and not builtin_disabled) or builtin_java_heuristics_enabled(project_config) or semgrep_failed
     java_web_findings: list[dict[str, Any]] = []
-    if builtin_java_heuristics_enabled(project_config):
+    if run_builtin_java_heuristics:
         java_web_findings = scan_java_web_files(files, head_sha)
+        if semgrep_failed and not builtin_java_heuristics_enabled(project_config):
+            fallback_reason = "semgrep_failed_fallback"
+        elif has_java_changes and not builtin_disabled and not builtin_java_heuristics_enabled(project_config):
+            fallback_reason = "java_changes_default"
+        else:
+            fallback_reason = "enable_builtin_java_heuristics=true"
         recorder.tool_call(
             span_id,
             "static.java_web_static",
             "completed",
             0,
-            args_summary="enable_builtin_java_heuristics=true",
+            args_summary=fallback_reason,
             output_summary=f"builtin heuristic findings={len(java_web_findings)}",
             tool_version="jolt-builtin-static-analysis-v1",
         )
@@ -3409,6 +3429,7 @@ def run_external_static_prescan(
                 "version": "jolt-builtin-static-analysis-v1",
                 "findings": java_web_findings,
                 "builtin": True,
+                "fallback_reason": fallback_reason,
             }
         )
     else:

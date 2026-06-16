@@ -8,19 +8,30 @@ from dataclasses import dataclass
 class ParsedRule:
     rule_id: str
     title: str
+    category: str
     severity: str
     applies_to: str
     check: str
-    evidence_required: str
+    required_evidence: str
+    positive_examples: str
+    negative_examples: str
+    false_positive_patterns: str
+    fix_guidance: str
 
     def to_prompt_item(self) -> dict:
         return {
             "rule_id": self.rule_id,
             "title": self.title,
+            "category": self.category,
             "severity": self.severity,
             "applies_to": self.applies_to,
             "check": self.check,
-            "evidence_required": self.evidence_required,
+            "required_evidence": self.required_evidence,
+            "evidence_required": self.required_evidence,
+            "positive_examples": self.positive_examples,
+            "negative_examples": self.negative_examples,
+            "false_positive_patterns": self.false_positive_patterns,
+            "fix_guidance": self.fix_guidance,
         }
 
 
@@ -50,10 +61,16 @@ def parse_markdown_rules(content: str) -> list[ParsedRule]:
             current = {
                 "rule_id": heading.group(1),
                 "title": heading.group(2).strip(),
+                "category": "general",
                 "severity": "medium",
                 "applies_to": "**/*",
                 "check": "",
-                "evidence_required": "changed line and concrete evidence",
+                "required_evidence": "",
+                "evidence_required": "",
+                "positive_examples": "",
+                "negative_examples": "",
+                "false_positive_patterns": "",
+                "fix_guidance": "",
                 "body": [],
             }
             continue
@@ -76,16 +93,28 @@ def _to_rule(raw: dict[str, str | list[str]]) -> ParsedRule:
     check = str(raw.get("check") or "").strip()
     if not check:
         check = _join_sections(sections, ["规范说明", "检查点", "如何检查"])
-    evidence_required = str(raw.get("evidence_required") or "").strip()
-    if not evidence_required:
-        evidence_required = _join_sections(sections, ["输出要求"]) or "精确文件、行号、代码证据、触发规则、影响说明和建议修改代码"
+    required_evidence = str(raw.get("required_evidence") or raw.get("evidence_required") or "").strip()
+    if not required_evidence:
+        required_evidence = (
+            _join_sections(sections, ["证据要求", "输出要求"])
+            or "精确文件、行号、代码证据、触发规则、影响说明和建议修改代码"
+        )
+    positive_examples = str(raw.get("positive_examples") or "").strip() or _join_sections(sections, ["正例", "正确示例"])
+    negative_examples = str(raw.get("negative_examples") or "").strip() or _join_sections(sections, ["反例", "错误示例"])
+    false_positive_patterns = str(raw.get("false_positive_patterns") or "").strip() or _join_sections(sections, ["误报模式", "误报排除", "例外"])
+    fix_guidance = str(raw.get("fix_guidance") or "").strip() or _join_sections(sections, ["修复建议", "整改建议"])
     return ParsedRule(
         rule_id=str(raw["rule_id"]),
         title=str(raw["title"]),
+        category=str(raw.get("category", "general")),
         severity=str(raw.get("severity", "medium")),
         applies_to=str(raw.get("applies_to", "**/*")),
         check=_compact(check, 900),
-        evidence_required=_compact(evidence_required, 300),
+        required_evidence=_compact(required_evidence, 400),
+        positive_examples=_compact(positive_examples, 700),
+        negative_examples=_compact(negative_examples, 700),
+        false_positive_patterns=_compact(false_positive_patterns, 700),
+        fix_guidance=_compact(fix_guidance, 700),
     )
 
 

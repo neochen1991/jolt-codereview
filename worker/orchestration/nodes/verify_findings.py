@@ -88,6 +88,16 @@ def _source_contradiction_reasons(finding: dict[str, Any], source_snippet: str) 
     return reasons
 
 
+def _source_has_rule_signal(finding: dict[str, Any], source_snippet: str) -> bool:
+    source = str(source_snippet or "").lower()
+    rules = set(_rule_ids_for(finding))
+    categories = {normalized_rule_category(rule, finding.get("title")) for rule in rules}
+    if "SPRING_ACTUATOR_EXPOSED" in categories or "SEC-CONFIG-007" in rules:
+        compact = re.sub(r"\s+", " ", source)
+        return "management" in compact and "endpoints" in compact and "exposure" in compact and re.search(r"include\s*:\s*['\"]?\*", compact) is not None
+    return False
+
+
 def _with_flag(finding: dict[str, Any], flag: str) -> dict[str, Any]:
     flags = list(finding.get("verification_flags") or [])
     if flag not in flags:
@@ -207,7 +217,7 @@ def verify_candidate_findings(
             )
             evidence_match = _evidence_matches_source(evidence_signal, source_snippet)
             evidence_score = float(evidence_match["score"])
-            if evidence_score < 0.1:
+            if evidence_score < 0.1 and not _source_has_rule_signal(finding, source_snippet):
                 reasons.append("evidence_not_in_source")
             elif evidence_score < min_evidence_jaccard:
                 penalty = 0.05 if evidence_score >= 0.2 else 0.08

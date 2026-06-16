@@ -33,6 +33,8 @@ from review_runtime import (
 from orchestration.nodes.detect_conflicts import detect_conflicts
 from orchestration.nodes.choose_effort import budget_for_effort
 from orchestration.nodes.judge_findings import (
+    _drop_without_tool_support,
+    align_finding_with_tool_observations,
     apply_debate_verdicts,
     dedupe_same_line_same_issue_findings,
     filter_to_diff_introduced_findings,
@@ -50,6 +52,7 @@ from orchestration.deepagents_runner import OpenAICompatibleToolChatModel
 from prompts.builder import build_prompt
 from tools.registry import findings_to_observations
 from tools.tree_sitter_tool import build_diff_graph
+from tools.tool_normalizer import normalize_tool_finding
 from langchain_core.messages import HumanMessage
 
 node_dir = ROOT / "worker" / "orchestration" / "nodes"
@@ -119,6 +122,8 @@ assert "min(max_tool_calls, 24)" in deepagents_text
 assert "trace_callback" in deepagents_text
 assert "timeout_seconds=timeout_seconds" in targeted_debate_text
 assert "stream=stream_enabled" in targeted_debate_text
+assert "configured_max_calls" in targeted_debate_text
+assert "max_calls" in targeted_debate_text
 assert "llm_request_timeout_seconds" in runtime_text
 assert "llm_stream_enabled" in runtime_text
 assert "http_json as llm_http_json" in runtime_text
@@ -191,6 +196,8 @@ assert "上下文摘要" in deepagent_llm_traces[0]["response_text"], deepagent_
 assert "semgrep_config_values" in runtime_text
 assert "static.semgrep.aggregate" in runtime_text
 assert "output_path.parent.mkdir(parents=True, exist_ok=True)" in runtime_text
+assert "builtin_java_heuristics_disabled" in runtime_text
+assert "java_changes_default" in runtime_text
 
 
 class PromptFile:
@@ -565,6 +572,30 @@ tool_supported_accepted, tool_supported_rejected = verify_candidate_findings(
     [{"tool_name": "semgrep", "rule_id": "SEC-INJECT-003", "file_path": "backend/api/project.py", "line_start": 88, "message": "JDBC SQL concat"}],
 )
 assert len(tool_supported_accepted) == 1, (tool_supported_accepted, tool_supported_rejected)
+
+config_signal_accepted, config_signal_rejected = verify_candidate_findings(
+    [
+        {
+            "agent_id": "security_agent",
+            "severity": "high",
+            "confidence": 0.86,
+            "dedupe_hash": "actuator-expose-all",
+            "file_path": "src/main/resources/application-prod.yml",
+            "line_start": 9,
+            "title": "生产环境暴露全部 Spring Actuator 端点存在严重安全风险",
+            "problem_description": "management endpoints include=* 暴露过多运维端点。",
+            "evidence": "Actuator endpoints are exposed to all users.",
+            "covered_rules": ["SEC-CONFIG-007"],
+        }
+    ],
+    {"src/main/resources/application-prod.yml"},
+    {"security_agent": {"min_confidence": 0.75}},
+    set(),
+    {"src/main/resources/application-prod.yml": [(5, 9)]},
+    {"SEC-CONFIG-007"},
+    lambda _file, _line, window=5: 'management:\n  endpoints:\n    web:\n      exposure:\n        include: "*"',
+)
+assert len(config_signal_accepted) == 1, (config_signal_accepted, config_signal_rejected)
 
 final_findings, judge_rejected = judge_candidate_findings(accepted, conflicts, max_findings=3)
 assert len(final_findings) == 3, final_findings
@@ -1475,12 +1506,298 @@ auxiliary_overlap_findings, auxiliary_overlap_rejected = judge_candidate_finding
 )
 assert {item["title"] for item in auxiliary_overlap_findings} == {
     "admin adjustment endpoint lacks authentication and authorization",
+    "管理员余额调整接口缺少幂等控制",
     "Refund allows already-refunded payments and cumulative amount can exceed paid amount",
 }, (auxiliary_overlap_findings, auxiliary_overlap_rejected)
-assert any(
-    item.get("title") == "管理员余额调整接口缺少幂等控制" and "auxiliary_overlap_core_issue" in item.get("rejected_reasons", [])
-    for item in auxiliary_overlap_rejected
-), auxiliary_overlap_rejected
+assert any(item.get("title") == "新增 admin adjustment 端点缺少 Controller 测试覆盖" for item in auxiliary_overlap_rejected), auxiliary_overlap_rejected
+normalized_notnull = normalize_tool_finding(
+    {
+        "title": "新增非空列缺少默认值",
+        "file_path": "src/main/resources/db/migration/V1__alter.sql",
+        "line_start": 1,
+        "covered_rules": ["DB-NOTNULL-008", "DB-COMPAT-009", "CODE-NULL-001"],
+    }
+)
+assert "DB-NOTNULL-002" in normalized_notnull["covered_rules"], normalized_notnull
+normalized_map = normalize_tool_finding(
+    {
+        "title": "数据库查询结果使用裸 Map 承载业务字段",
+        "file_path": "src/main/java/com/acme/payment/PaymentController.java",
+        "line_start": 30,
+        "covered_rules": ["DB-MAP-004"],
+    }
+)
+assert "CODE-NULL-001" in normalized_map["covered_rules"], normalized_map
+normalized_ddd = normalize_tool_finding(
+    {
+        "title": "聚合使用Map<String,Object>导致领域模型贫血",
+        "file_path": "src/main/java/com/acme/payment/domain/PaymentAggregate.java",
+        "line_start": 6,
+        "covered_rules": ["DDD-VO-002"],
+    }
+)
+assert "DDD-VO-002" in normalized_ddd["covered_rules"], normalized_ddd
+normalized_resource = normalize_tool_finding(
+    {
+        "title": "Statement 未使用后未正确关闭",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentController.java",
+        "line_start": 32,
+        "covered_rules": ["DB-CONN-010", "LLDEF-RES-006"],
+    }
+)
+assert "CODE-RESOURCE-005" in normalized_resource["covered_rules"], normalized_resource
+assert normalized_resource["normalized_rule_category"] == "DB_CONNECTION_STATE_LEAK", normalized_resource
+normalized_idempotency = normalize_tool_finding(
+    {
+        "title": "POST 副作用接口缺少幂等保护",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentController.java",
+        "line_start": 27,
+        "tool_rule_id": "BE-IDEMP-004",
+        "covered_rules": ["CODE-NULL-001", "BE-IDEMP-004"],
+    }
+)
+assert normalized_idempotency["covered_rules"][0] == "BE-IDEMP-004", normalized_idempotency
+normalized_sql_injection = normalize_tool_finding(
+    {
+        "title": "SQL 注入漏洞：字符串拼接构造 SQL 查询",
+        "file_path": "src/main/java/com/acme/payment/service/PaymentQueryService.java",
+        "line_start": 22,
+        "covered_rules": ["BE-API-001", "BE-TX-002"],
+        "problem_description": "用户输入 userId 被直接拼接到 SQL。",
+    }
+)
+assert normalized_sql_injection["covered_rules"][0] == "SEC-INJECT-003", normalized_sql_injection
+normalized_redis_ttl = normalize_tool_finding(
+    {
+        "title": "Redis缓存写入未设置TTL，存在内存泄漏风险",
+        "file_path": "src/main/java/com/acme/payment/infra/RedisPaymentCache.java",
+        "line_start": 23,
+        "covered_rules": ["PERF-MEM-004"],
+        "evidence": 'redisTemplate.opsForValue().set("payment:last:" + orderNo, value);',
+    }
+)
+assert normalized_redis_ttl["covered_rules"][0] == "REDIS-TTL-002", normalized_redis_ttl
+normalized_fastjson_cve = normalize_tool_finding(
+    {
+        "title": "依赖存在已知反序列化远程代码执行漏洞",
+        "file_path": "pom.xml",
+        "line_start": 16,
+        "covered_rules": ["SEC-DESER-005"],
+        "problem_description": "fastjson 1.2.47 存在 GHSA/CVE 风险。",
+    }
+)
+assert normalized_fastjson_cve["covered_rules"][0] == "DEP-CVE-001", normalized_fastjson_cve
+normalized_drop_column = normalize_tool_finding(
+    {
+        "title": "直接删除生产列 - 违反灰度迁移规范",
+        "file_path": "src/main/resources/db/migration/V1__alter.sql",
+        "line_start": 2,
+        "covered_rules": ["DB-NOTNULL-002", "DB-DDL-001"],
+        "evidence": "ALTER TABLE payments DROP COLUMN legacy_channel;",
+    }
+)
+assert normalized_drop_column["covered_rules"] == ["DB-DDL-001"], normalized_drop_column
+normalized_string_valueof = normalize_tool_finding(
+    {
+        "title": "String.valueOf 处理 null 导致查询异常",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentController.java",
+        "line_start": 23,
+        "covered_rules": ["CODE-EXC-003"],
+        "evidence": 'String userId = String.valueOf(payload.get("userId"));',
+    }
+)
+assert normalized_string_valueof["covered_rules"][0] == "CODE-NULL-001", normalized_string_valueof
+aligned_string_valueof = align_finding_with_tool_observations(
+    {
+        "agent_id": "backend_agent",
+        "severity": "medium",
+        "confidence": 0.86,
+        "title": "search 接口使用裸 Map 作为响应类型，API 契约不稳定",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentController.java",
+        "line_start": 22,
+        "covered_rules": ["CODE-NULL-001"],
+        "problem_description": "接口响应使用 Map<String,Object>，缺少稳定 DTO。",
+    },
+    [
+        {
+            "tool_name": "java_web_static",
+            "rule_id": "CODE-NULL-001",
+            "file_path": "src/main/java/com/acme/payment/api/PaymentController.java",
+            "line_start": 23,
+            "line_end": 23,
+            "message": 'String.valueOf(payload.get("userId")) converts a missing Map field to literal "null".',
+        }
+    ],
+)
+assert aligned_string_valueof["line_start"] == 23, aligned_string_valueof
+assert "String.valueOf" in aligned_string_valueof["evidence"], aligned_string_valueof
+assert aligned_string_valueof["title"] == "Map 入参字段缺少显式空值和类型校验", aligned_string_valueof
+low_precision_layer = normalize_tool_finding(
+    {
+        "agent_id": "backend_agent",
+        "title": "Controller 层直接操作 JDBC 绕过 Repository 层",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentController.java",
+        "line_start": 32,
+        "covered_rules": ["DDD-LAYER-001", "HW-LAYER-001"],
+        "problem_description": "Controller 直接使用 Statement 执行 SQL。",
+        "confidence": 0.9,
+    }
+)
+assert _drop_without_tool_support(low_precision_layer, []), low_precision_layer
+low_precision_ddd_sql = normalize_tool_finding(
+    {
+        "agent_id": "ddd_agent",
+        "rule_id": "DDD-CTX-005",
+        "tool_rule_id": "DDD-CTX-005",
+        "title": "SQL查询直接拼接用户输入，暴露跨上下文数据泄露风险",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentController.java",
+        "line_start": 33,
+        "covered_rules": ["DDD-CTX-005", "DDD-AGG-003"],
+        "problem_description": "Controller 中直接拼接 SQL。",
+        "confidence": 0.95,
+    }
+)
+assert _drop_without_tool_support(
+    low_precision_ddd_sql,
+    [{"tool_name": "semgrep", "rule_id": "SEC-INJECT-003", "message": "SQL injection"}],
+), low_precision_ddd_sql
+for low_precision_advisory in [
+    {
+        "agent_id": "database_agent",
+        "title": "高频查询字段 user_id 缺少索引评估",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentController.java",
+        "line_start": 33,
+        "covered_rules": ["DB-IDX-003"],
+    },
+    {
+        "agent_id": "redis_agent",
+        "title": "缓存 key 缺少业务隔离维度",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentController.java",
+        "line_start": 38,
+        "covered_rules": ["REDIS-KEY-001"],
+    },
+    {
+        "agent_id": "backend_agent",
+        "title": "Controller 直接操作数据库和缓存，违反分层架构",
+        "file_path": "src/main/java/com/acme/payment/api/PaymentController.java",
+        "line_start": 31,
+        "covered_rules": ["BE-TX-002"],
+    },
+]:
+    assert _drop_without_tool_support(normalize_tool_finding(low_precision_advisory), []), low_precision_advisory
+for low_value_advisory in [
+    {
+        "agent_id": "test_agent",
+        "title": "PaymentAggregate.markPaid 缺少状态流转测试",
+        "file_path": "src/main/java/com/acme/payment/domain/PaymentAggregate.java",
+        "line_start": 14,
+        "covered_rules": ["TEST-COVER-001", "TEST-ASSERT-002"],
+    },
+    {
+        "agent_id": "database_agent",
+        "title": "大表建索引未使用 CONCURRENTLY - 可能锁表",
+        "file_path": "src/main/resources/db/migration/V1__alter.sql",
+        "line_start": 3,
+        "covered_rules": ["DB-LOCK-006"],
+    },
+    {
+        "agent_id": "performance_agent",
+        "title": "JDBC直连查询未设置查询超时，可能导致线程阻塞",
+        "file_path": "src/main/java/com/acme/payment/service/PaymentQueryService.java",
+        "line_start": 24,
+        "covered_rules": ["CODE-RESOURCE-005", "PERF-TIMEOUT-003"],
+    },
+    {
+        "agent_id": "ddd_agent",
+        "title": "聚合根采用贫血模型设计，缺乏领域行为封装",
+        "file_path": "src/main/java/com/acme/payment/domain/PaymentAggregate.java",
+        "line_start": 7,
+        "covered_rules": ["DDD-AGG-002", "DDD-AGG-001", "DDD-AGG-007"],
+    },
+    {
+        "agent_id": "dependency_agent",
+        "title": "Spring Boot 大版本升级 3.x 必须评估 Jakarta 迁移",
+        "file_path": "pom.xml",
+        "line_start": 14,
+        "covered_rules": ["DEP-VERSION-003"],
+    },
+]:
+    assert _drop_without_tool_support(normalize_tool_finding(low_value_advisory), []), low_value_advisory
+hard_rule_with_test_boundary = normalize_tool_finding(
+    {
+        "agent_id": "backend_agent",
+        "title": "SQL 字符串拼接存在注入风险",
+        "file_path": "src/main/java/com/acme/payment/service/PaymentQueryService.java",
+        "line_start": 22,
+        "covered_rules": ["SEC-INJECT-003", "TEST-BOUND-003"],
+    }
+)
+assert not _drop_without_tool_support(
+    hard_rule_with_test_boundary,
+    [{"tool_name": "semgrep", "rule_id": "SEC-INJECT-003", "message": "JDBC SQL concat"}],
+), hard_rule_with_test_boundary
+broad_exception_advisory = normalize_tool_finding(
+    {
+        "agent_id": "coding_agent",
+        "title": "异常捕获范围过宽，掩盖真实失败原因",
+        "file_path": "src/main/java/com/acme/payment/service/PaymentQueryService.java",
+        "line_start": 27,
+        "covered_rules": ["CODE-EXC-003"],
+    }
+)
+assert _drop_without_tool_support(
+    broad_exception_advisory,
+    [{"tool_name": "java_web_static", "rule_id": "CODE-EXC-003", "message": "catch Exception"}],
+), broad_exception_advisory
+same_root_findings, same_root_rejected = judge_candidate_findings(
+    [
+        {
+            "agent_id": "database_agent",
+            "severity": "high",
+            "confidence": 0.95,
+            "dedupe_hash": "sql_a",
+            "file_path": "src/main/java/com/acme/payment/service/PaymentQueryService.java",
+            "line_start": 22,
+            "title": "SQL拼接注入风险 - 业务入参直接拼入WHERE条件",
+            "covered_rules": ["DB-SQL-001", "SEC-INJECT-003"],
+        },
+        {
+            "agent_id": "backend_agent",
+            "severity": "high",
+            "confidence": 0.89,
+            "dedupe_hash": "sql_b",
+            "file_path": "src/main/java/com/acme/payment/service/PaymentQueryService.java",
+            "line_start": 22,
+            "title": "SQL 注入漏洞：字符串拼接构造 SQL 查询",
+            "covered_rules": ["BE-API-001", "BE-TX-002"],
+        },
+        {
+            "agent_id": "dependency_agent",
+            "severity": "medium",
+            "confidence": 0.8,
+            "dedupe_hash": "fastjson_a",
+            "file_path": "pom.xml",
+            "line_start": 19,
+            "title": "直接依赖 fastjson 1.2.47 存在已知 CVE 风险",
+            "covered_rules": ["DEP-CVE-001"],
+        },
+        {
+            "agent_id": "security_agent",
+            "severity": "high",
+            "confidence": 0.84,
+            "dedupe_hash": "fastjson_b",
+            "file_path": "pom.xml",
+            "line_start": 16,
+            "title": "依赖存在已知反序列化远程代码执行漏洞",
+            "problem_description": "fastjson 1.2.47 存在 GHSA/CVE 风险。",
+            "covered_rules": ["SEC-DESER-005"],
+        },
+    ],
+    [],
+    max_findings=10,
+)
+assert len(same_root_findings) == 2, same_root_findings
+assert len(same_root_rejected) == 2, same_root_rejected
 limited_findings, limited_rejected = judge_candidate_findings(accepted, conflicts, max_findings=2)
 assert len(limited_findings) == 2, limited_findings
 assert any("max_findings_exceeded" in item["rejected_reasons"] for item in limited_rejected), limited_rejected
@@ -1861,6 +2178,31 @@ assert len(same_line_merged) == 1, same_line_merged
 assert len(same_line_rejected) == 1, same_line_rejected
 assert set(same_line_merged[0]["merged_agent_ids"]) == {"security_agent", "database_agent"}, same_line_merged
 assert set(same_line_merged[0]["covered_rules"]) >= {"SEC-INJECT-003", "ALI-MYBATIS-001"}, same_line_merged
+
+different_issue_same_line_merged, different_issue_same_line_rejected = dedupe_same_line_same_issue_findings([
+    {
+        "agent_id": "security_agent",
+        "severity": "high",
+        "confidence": 0.95,
+        "file_path": "src/main/java/com/example/PaymentRepository.java",
+        "line_start": 42,
+        "line_end": 42,
+        "title": "SQL 使用字符串拼接存在注入风险",
+        "covered_rules": ["SEC-INJECT-003", "DB-SQL-001"],
+    },
+    {
+        "agent_id": "low_level_defect_agent",
+        "severity": "high",
+        "confidence": 0.94,
+        "file_path": "src/main/java/com/example/PaymentRepository.java",
+        "line_start": 41,
+        "line_end": 42,
+        "title": "JDBC Statement 和 ResultSet 资源未关闭",
+        "covered_rules": ["CODE-RESOURCE-005", "DB-SQL-001"],
+    },
+])
+assert len(different_issue_same_line_merged) == 2, different_issue_same_line_merged
+assert not different_issue_same_line_rejected, different_issue_same_line_rejected
 
 print(json.dumps({
     "conflict_count": len(conflicts),

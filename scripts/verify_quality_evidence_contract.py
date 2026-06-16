@@ -10,7 +10,7 @@ if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
 from orchestration.nodes.finalize import summarize_evidence_contracts
-from orchestration.nodes.judge_findings import build_evidence_contract, build_quality_trace
+from orchestration.nodes.judge_findings import build_evidence_contract, build_quality_trace, is_publishable_evidence_contract
 
 
 def main() -> None:
@@ -42,10 +42,13 @@ def main() -> None:
     assert contract["status"] == "satisfied", contract
     assert contract["score"] == 1.0, contract
     assert contract["missing"] == [], contract
+    assert contract["source_type"] == "hybrid", contract
+    assert contract["decision_hint"] == "final_candidate", contract
 
     trace = build_quality_trace(complete_finding, [source_observation])
     assert trace["evidence_contract"]["status"] == "satisfied", trace
     assert trace["tools"][0]["tool_name"] == "tree_sitter_code_graph", trace
+    assert is_publishable_evidence_contract(trace), trace
 
     weak_finding = {
         "agent_id": "coding_agent",
@@ -63,8 +66,23 @@ def main() -> None:
     }
     weak_trace = build_quality_trace(weak_finding, [])
     assert weak_trace["evidence_contract"]["status"] == "weak", weak_trace
+    assert weak_trace["evidence_contract"]["decision_hint"] == "needs_review", weak_trace
     assert "has_location" in weak_trace["evidence_contract"]["missing"], weak_trace
     assert "has_rule" in weak_trace["evidence_contract"]["missing"], weak_trace
+    assert not is_publishable_evidence_contract(weak_trace), weak_trace
+
+    no_rule_finding = {
+        **complete_finding,
+        "dedupe_hash": "hash_no_rule",
+        "title": "VARCHAR(32) 长度可能不足",
+        "covered_rules": [],
+        "rule_id": "VARCHAR(32) 长度可能不足",
+        "tool_rule_id": "",
+    }
+    no_rule_trace = build_quality_trace(no_rule_finding, [source_observation])
+    assert no_rule_trace["evidence_contract"]["status"] != "satisfied", no_rule_trace
+    assert "has_rule" in no_rule_trace["evidence_contract"]["missing"], no_rule_trace
+    assert not is_publishable_evidence_contract(no_rule_trace), no_rule_trace
 
     summary = summarize_evidence_contracts(
         [
@@ -79,6 +97,8 @@ def main() -> None:
     assert summary["findings_missing_rule"] == 1, summary
     assert summary["findings_missing_suggested_code"] == 1, summary
     assert summary["complete_contract_rate"] == 0.5, summary
+    assert summary["weak_contract_count"] == 1, summary
+    assert summary["quality_risk"] == "needs_attention", summary
 
     frontend = (ROOT / "src/frontend/main.tsx").read_text(encoding="utf-8")
     assert "formatEvidenceContractStatus" in frontend

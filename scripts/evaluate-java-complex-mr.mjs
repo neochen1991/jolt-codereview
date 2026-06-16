@@ -89,6 +89,10 @@ function hasActionableSuggestedCode(value) {
   ].some((marker) => lowered.includes(marker.toLowerCase()));
 }
 
+function evidenceContractFromTrace(trace) {
+  return trace && typeof trace === "object" ? trace.evidence_contract || {} : {};
+}
+
 function renderMarkdown(report) {
   const lines = [
     "# Java Complex 10-File MR Review Quality Report",
@@ -108,6 +112,9 @@ function renderMarkdown(report) {
     `- Meets Target: ${report.meets_target ? "yes" : "no"}`,
     `- Trace Complete: ${report.trace_complete ? "yes" : "no"}`,
     `- Suggested Code Complete: ${report.suggested_code_complete ? "yes" : "no"}`,
+    `- Evidence Contract Complete: ${report.evidence_contract_complete ? "yes" : "no"}`,
+    `- Evidence Contract Avg Score: ${formatPercent(report.evidence_contract_average_score)}`,
+    `- Evidence Contract Risk: ${report.evidence_contract_summary.quality_risk || "unknown"}`,
     "",
     "## Expected Issue Coverage",
     "",
@@ -119,10 +126,10 @@ function renderMarkdown(report) {
     lines.push(`| ${item.rule_id} | ${item.strict_matched ? "matched" : "missing"} | ${item.file_path} | ${item.line_start} | ${item.title} |`);
   }
 
-  lines.push("", "## Final Findings", "", "| Rule(s) | Severity | Confidence | Agent | File | Line | Title | Tool Count |", "| --- | --- | ---: | --- | --- | ---: | --- | ---: |");
+  lines.push("", "## Final Findings", "", "| Rule(s) | Severity | Confidence | Agent | File | Line | Title | Tool Count | Evidence Contract |", "| --- | --- | ---: | --- | --- | ---: | --- | ---: | --- |");
   for (const finding of report.findings) {
     lines.push(
-      `| ${finding.covered_rules.join(", ") || "-"} | ${finding.severity} | ${finding.confidence} | ${finding.agent_id} | ${finding.file_path || "-"} | ${finding.line_start || "-"} | ${finding.title} | ${finding.tool_provenance_count} |`
+      `| ${finding.covered_rules.join(", ") || "-"} | ${finding.severity} | ${finding.confidence} | ${finding.agent_id} | ${finding.file_path || "-"} | ${finding.line_start || "-"} | ${finding.title} | ${finding.tool_provenance_count} | ${finding.evidence_contract_status}:${formatPercent(finding.evidence_contract_score)} |`
     );
   }
 
@@ -194,6 +201,8 @@ const findings = rows.map((finding) => {
   const coveredRules = asJson(finding.covered_rules_json, []).map(normalizeRule).filter(Boolean);
   const toolProvenance = asJson(finding.tool_provenance_json, []);
   const qualityTrace = asJson(finding.quality_trace_json, null);
+  const contract = evidenceContractFromTrace(qualityTrace);
+  const contractScore = Number(contract.score || 0);
   return {
     id: finding.id,
     agent_id: finding.agent_id,
@@ -214,6 +223,9 @@ const findings = rows.map((finding) => {
       ? [...new Set(toolProvenance.map((item) => item.tool || item.tool_name || item.name).filter(Boolean))]
       : [],
     has_quality_trace: qualityTrace !== null,
+    has_evidence_contract: Boolean(contract.version),
+    evidence_contract_status: contract.status || "missing",
+    evidence_contract_score: Number.isFinite(contractScore) ? contractScore : 0,
     has_suggested_code: hasActionableSuggestedCode(finding.suggested_code),
   };
 });
@@ -240,6 +252,11 @@ const ruleRecall = expectedRules.size ? ruleMatched.length / expectedRules.size 
 const ruleFpRate = findings.length ? ruleFalsePositiveFindings.length / findings.length : 0;
 const strictRecall = expectedRules.size ? strictMatched.length / expectedRules.size : 1;
 const strictFpRate = findings.length ? strictFalsePositiveFindings.length / findings.length : 0;
+const evidenceContractComplete = findings.every((item) => item.has_evidence_contract);
+const evidenceContractAverageScore = findings.length
+  ? findings.reduce((sum, item) => sum + item.evidence_contract_score, 0) / findings.length
+  : 1;
+const evidenceContractSummary = coverage.evidence_contracts || {};
 
 const report = {
   mr_id: DEFAULT_MR_ID,
@@ -259,6 +276,9 @@ const report = {
   strict_fp_rate: Number(strictFpRate.toFixed(4)),
   meets_target: strictRecall >= MIN_RECALL && strictFpRate <= MAX_FALSE_POSITIVE_RATE,
   trace_complete: findings.every((item) => item.has_quality_trace),
+  evidence_contract_complete: evidenceContractComplete,
+  evidence_contract_average_score: Number(evidenceContractAverageScore.toFixed(4)),
+  evidence_contract_summary: evidenceContractSummary,
   suggested_code_complete: findings.every((item) => item.has_suggested_code),
   rule_matched: ruleMatched,
   rule_missing: ruleMissing,
@@ -284,4 +304,5 @@ if (!TERMINAL_RUN_STATUSES.has(String(run.status))) throw new Error(`review run 
 if (strictRecall < MIN_RECALL) throw new Error(`complex MR strict recall below target: ${report.strict_recall}`);
 if (strictFpRate > MAX_FALSE_POSITIVE_RATE) throw new Error(`complex MR strict false positive rate above target: ${report.strict_fp_rate}`);
 if (!report.trace_complete) throw new Error("some findings lack quality trace");
+if (!report.evidence_contract_complete) throw new Error("some findings lack evidence contract");
 if (!report.suggested_code_complete) throw new Error("some findings lack suggested code");

@@ -70,6 +70,7 @@ RULE_CATEGORY_MAP = {
     "JOLT_JAVA_CATCH_EXCEPTION": "BROAD_EXCEPTION",
     "CODE-EXC-003": "BROAD_EXCEPTION",
     "BE-ERR-003": "BROAD_EXCEPTION",
+    "CODE-RESOURCE-005": "DB_CONNECTION_STATE_LEAK",
     "JOLT_JAVA_MISSING_TEST": "MISSING_TEST_COVERAGE",
     "TEST-COVER-001": "MISSING_TEST_COVERAGE",
     "jolt.test.skip-high-risk-path-tests": "MISSING_TEST_COVERAGE",
@@ -80,6 +81,8 @@ RULE_CATEGORY_MAP = {
     "DB-DDL-001": "DB_BREAKING_CHANGE",
     "JOLT_DB_NOT_NULL_NO_DEFAULT": "DB_NOT_NULL_NO_DEFAULT",
     "DB-NOTNULL-002": "DB_NOT_NULL_NO_DEFAULT",
+    "DB-NOTNULL-008": "DB_NOT_NULL_NO_DEFAULT",
+    "DB-COMPAT-009": "DB_NOT_NULL_NO_DEFAULT",
     "JOLT_CONFIG_ACTUATOR_EXPOSE_ALL": "SPRING_ACTUATOR_EXPOSED",
     "SEC-CONFIG-007": "SPRING_ACTUATOR_EXPOSED",
     "PERF-QUERY-001": "UNBOUNDED_QUERY",
@@ -87,6 +90,8 @@ RULE_CATEGORY_MAP = {
     "jolt.java.sql-leading-wildcard-like": "LIKE_LEADING_WILDCARD_INDEX_RISK",
     "PERF-MEM-004": "UNBOUNDED_RESULT_MEMORY",
     "CODE-NULL-001": "NULL_SAFETY",
+    "DB-MAP-004": "NULL_SAFETY",
+    "Backend Java Standard": "NULL_SAFETY",
     "jolt.java.loose-webhook-event-match": "STATE_MACHINE_INTEGRITY",
     "jolt.java.refund-allows-refunded-state": "STATE_MACHINE_INTEGRITY",
     "jolt.java.refund-reason-manual-override-bypass": "STATE_MACHINE_INTEGRITY",
@@ -116,6 +121,8 @@ RULE_CATEGORY_MAP = {
     "HW-SEC-001": "INSECURE_RANDOM",
     "HW-LAYER-001": "LAYER_VIOLATION",
     "HW-TX-001": "TRANSACTION_PROXY_INVALID",
+    "DB-CONN-010": "DB_CONNECTION_STATE_LEAK",
+    "LLDEF-RES-006": "DB_CONNECTION_STATE_LEAK",
     "jolt.java.threadlocal-set-without-remove": "THREADLOCAL_LEAK",
     "jolt.java.threadlocal-read-in-new-thread": "THREADLOCAL_LEAK",
     "jolt.java.static-mutable-collection": "THREAD_UNSAFE_SHARED_STATE",
@@ -258,6 +265,8 @@ def normalized_rule_category(rule_id: str | None, title: str | None = None) -> s
     raw = canonical_rule_id(rule_id or title or "GENERAL")
     title_text = (title or "").lower()
     if raw == "SEC-CONFIG-007":
+        if any(marker in title_text for marker in ["redis", "cache", "缓存", "ttl", "过期"]):
+            return "REDIS_MISSING_TTL"
         if any(marker in title_text for marker in ["sha-1", "sha1", "signature", "签名", "弱摘要", "hmac"]):
             return "WEAK_SIGNATURE_COMPARE"
         if any(marker in title_text for marker in ["debug", "调试", "内部状态", "runtime state"]):
@@ -314,6 +323,11 @@ def normalized_rule_category(rule_id: str | None, title: str | None = None) -> s
     if "jolt.java.transactional-self-invocation" in combined:
         return "TRANSACTION_PROXY_INVALID"
     if "jolt.java.jdbc-autocommit-not-restored" in combined:
+        return "DB_CONNECTION_STATE_LEAK"
+    if (
+        any(marker in combined for marker in ["statement", "resultset", "connection", "jdbc"])
+        and any(marker in combined for marker in ["未关闭", "not closed", "close", "resource leak", "try-with-resources", "资源"])
+    ):
         return "DB_CONNECTION_STATE_LEAK"
     if (
         "spel-injection" in combined
@@ -467,7 +481,7 @@ def normalize_tool_finding(finding: dict[str, Any]) -> dict[str, Any]:
     covered = item.get("covered_rules") if isinstance(item.get("covered_rules"), list) else []
     title_text = " ".join(
         str(item.get(key) or "")
-        for key in ["title", "problem_description", "recommendation", "evidence"]
+        for key in ["title", "problem_description", "recommendation", "evidence", "message"]
     ).lower()
     file_path_text = str(item.get("file_path") or "").replace("\\", "/").lower()
     ddd_context = (
@@ -480,6 +494,9 @@ def normalize_tool_finding(finding: dict[str, Any]) -> dict[str, Any]:
         or "aggregate" in title_text
         or "application service" in title_text
         or "repository" in title_text
+        or "infrastructure" in title_text
+        or "persistence" in title_text
+        or "interface layer" in title_text
         or "domain event" in title_text
         or "bounded context" in title_text
         or "tenant" in title_text
@@ -489,6 +506,10 @@ def normalize_tool_finding(finding: dict[str, Any]) -> dict[str, Any]:
         or "值对象" in title_text
         or "应用服务" in title_text
         or "仓储" in title_text
+        or "基础设施" in title_text
+        or "持久化" in title_text
+        or "接口层" in title_text
+        or "分层" in title_text
         or "领域事件" in title_text
         or "限界上下文" in title_text
         or "租户" in title_text
@@ -497,10 +518,51 @@ def normalize_tool_finding(finding: dict[str, Any]) -> dict[str, Any]:
     )
     if "redis" in title_text and "keys" in title_text and "REDIS-CMD-003" not in covered:
         covered = ["REDIS-CMD-003", *covered]
+    if (
+        "redis" in title_text
+        and any(marker in title_text for marker in ["ttl", "过期", "expire", "without ttl", "未设置ttl", "没有设置过期"])
+        and "REDIS-TTL-002" not in covered
+    ):
+        covered = ["REDIS-TTL-002", *covered]
+    if (
+        "sql" in title_text
+        and any(marker in title_text for marker in ["注入", "injection", "字符串拼接", "拼接构造", "直接拼接", "user input"])
+        and "SEC-INJECT-003" not in covered
+    ):
+        covered = ["SEC-INJECT-003", *covered]
+    if (
+        any(marker in title_text for marker in ["fastjson", "cve", "ghsa", "反序列化", "deserialization"])
+        and ("pom.xml" in file_path_text or "dependency" in title_text or "依赖" in title_text or "fastjson" in title_text)
+        and "DEP-CVE-001" not in covered
+    ):
+        covered = ["DEP-CVE-001", *covered]
     if ("drop column" in title_text or "drop-column" in title_text) and "DB-DDL-001" not in covered:
         covered = ["DB-DDL-001", *covered]
-    if "DDD-VO-002" in covered and not ddd_context:
-        covered = [rule for rule in covered if rule != "DDD-VO-002"]
+    if "DB-DDL-001" in covered and ("drop column" in title_text or "drop-column" in title_text):
+        covered = ["DB-DDL-001", *[rule for rule in covered if rule not in {"DB-DDL-001", "DB-NOTNULL-002"}]]
+    if (
+        any(rule in {"DB-NOTNULL-008", "DB-COMPAT-009"} for rule in covered)
+        or ("非空列" in title_text and "默认" in title_text)
+        or ("not null" in title_text and ("default" in title_text or "backfill" in title_text or "回填" in title_text))
+    ) and "DB-NOTNULL-002" not in covered:
+        covered = ["DB-NOTNULL-002", *covered]
+    if (
+        any(rule in {"DB-MAP-004", "Backend Java Standard"} for rule in covered)
+        or ("hashmap" in title_text and ("业务字段" in title_text or "map" in title_text))
+        or ("裸 map" in title_text and "业务" in title_text)
+        or ("string.valueof" in title_text and "payload.get" in title_text)
+    ) and "CODE-NULL-001" not in covered:
+        covered = ["CODE-NULL-001", *covered]
+    if (
+        any(rule in {"DB-CONN-010", "LLDEF-RES-006"} for rule in covered)
+        or (
+            any(marker in title_text for marker in ["statement", "resultset", "connection", "jdbc"])
+            and any(marker in title_text for marker in ["未关闭", "not closed", "close", "resource leak", "try-with-resources", "资源"])
+        )
+    ) and "CODE-RESOURCE-005" not in covered:
+        covered = ["CODE-RESOURCE-005", *covered]
+    if not ddd_context:
+        covered = [rule for rule in covered if not str(rule).startswith("DDD-")]
     if "map<string,object>" in title_text and ddd_context and "DDD-VO-002" not in covered:
         covered = ["DDD-VO-002", *covered]
     item["covered_rules"] = covered
@@ -515,9 +577,13 @@ def normalize_tool_finding(finding: dict[str, Any]) -> dict[str, Any]:
     rule_id = str(item.get("tool_rule_id") or item.get("rule_id") or specific_covered or item.get("title") or "")
     title = str(item.get("title") or rule_id or "tool finding")
     category = normalized_rule_category(rule_id, title)
+    if "CODE-NULL-001" in covered and "string.valueof" in title_text and "payload.get" in title_text:
+        category = "NULL_SAFETY"
     primary_rule = CATEGORY_PRIMARY_RULE.get(category)
-    if primary_rule and primary_rule not in covered:
-        covered = [*covered, primary_rule]
+    if primary_rule and str(primary_rule).startswith("DDD-") and not ddd_context:
+        primary_rule = None
+    if primary_rule:
+        covered = [primary_rule, *[rule for rule in covered if rule != primary_rule]]
         item["covered_rules"] = covered
     item["normalized_rule_category"] = category
     item["tool_rule_id"] = rule_id or category

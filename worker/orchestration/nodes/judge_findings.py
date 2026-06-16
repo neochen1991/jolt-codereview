@@ -411,6 +411,8 @@ def _dedupe_key(finding: dict[str, Any]) -> tuple[str, str, int]:
 
 
 def _semantic_category_group(category: str) -> str:
+    if category in {"SQL_INJECTION", "MYBATIS_SQL_INJECTION"}:
+        return "SQL_INJECTION"
     if category in {"UNBOUNDED_QUERY", "UNBOUNDED_RESULT_MEMORY", "DB_MAP_RESULT_TYPE", "IBATIS_MEMORY_PAGINATION"}:
         return "UNBOUNDED_DATA_ACCESS"
     if category in {"SECRET_LEAK"}:
@@ -430,6 +432,18 @@ def _text_blob(finding: dict[str, Any]) -> str:
 def _root_cause_signature(finding: dict[str, Any]) -> str | None:
     text = _text_blob(finding)
     path = str(finding.get("file_path") or "").replace("\\", "/").lower()
+    if "fastjson" in text and any(marker in text for marker in ["1.2.47", "cve", "ghsa", "反序列化", "deserialization"]):
+        return "DEPENDENCY_FASTJSON_CVE"
+    if "drop column" in text or "drop-column" in text or "直接删除生产列" in text or "破坏性 ddl" in text:
+        return "DB_DROP_COLUMN"
+    if "redis" in text and any(marker in text for marker in ["keys", "redis keys", "keys命令", "keys 命令"]):
+        return "REDIS_KEYS_COMMAND"
+    if "redis" in text and any(marker in text for marker in ["ttl", "过期", "without ttl", "没有设置过期", "未设置ttl"]):
+        return "REDIS_MISSING_TTL"
+    if "map<string" in text and any(marker in text for marker in ["domain", "aggregate", "领域", "聚合", "值对象"]):
+        return "DOMAIN_WEAK_MAP_STATE"
+    if "sql" in text and any(marker in text for marker in ["注入", "injection", "字符串拼接", "拼接构造", "直接拼接"]):
+        return "SQL_STRING_CONCAT_QUERY"
     if any(marker in text for marker in ["bulk-adjust", "bulkadjust", "批量", "list<", "数组", "requestbody", "@requestbody"]):
         if any(marker in text for marker in ["无上限", "规模", "数量", "超大", "长事务", "内存", "数据库压力", "size limit", "bounded"]):
             return "UNBOUNDED_REQUEST_BODY"
@@ -684,7 +698,9 @@ def _same_line_same_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
     right_normalized = normalize_tool_finding(right)
     left_rules = {str(rule) for rule in (left_normalized.get("covered_rules") or []) if rule}
     right_rules = {str(rule) for rule in (right_normalized.get("covered_rules") or []) if rule}
-    if left_rules & right_rules:
+    left_category = _selection_category_key(left_normalized)
+    right_category = _selection_category_key(right_normalized)
+    if left_rules & right_rules and left_category == right_category:
         return True
 
     left_root = _root_cause_signature(left_normalized)
@@ -697,10 +713,10 @@ def _same_line_same_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
     if left_typed and left_typed == right_typed:
         return True
 
-    if _selection_category_key(left_normalized) == _selection_category_key(right_normalized):
+    if left_category == right_category:
         return True
 
-    return _title_similarity(left_normalized, right_normalized) >= 0.62
+    return _title_similarity(left_normalized, right_normalized) >= 0.62 and left_category == right_category
 
 
 def dedupe_same_line_same_issue_findings(findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1210,13 +1226,13 @@ def _is_secondary_advisory_finding(finding: dict[str, Any]) -> bool:
     category = _selection_category_key(item)
     text = _text_blob(item)
     confidence = float(item.get("confidence") or 0)
-    if any(rule.startswith("TEST-") for rule in covered):
+    if any(rule.startswith("TEST-") for rule in covered) and (confidence < 0.85 or not finding.get("file_path")):
         return True
     if category in {"DDD_AGGREGATE_OWNERSHIP", "DDD_APP_003", "DDD_REPO_004"}:
         return True
     if any(rule in {"DDD-APP-003", "DDD-REPO-004"} for rule in covered):
         return True
-    if category == "DDD_VO_002" and "mutabletenantkey" not in text and "hash" not in text and "key" not in text:
+    if category == "DDD_VO_002" and confidence < 0.85 and "mutabletenantkey" not in text and "hash" not in text and "key" not in text:
         return True
     if category in {"SPRING_TRANSACTION"} and confidence <= 0.76:
         return True
@@ -1257,14 +1273,141 @@ def _is_weak_unbacked_ddd_design_finding(finding: dict[str, Any]) -> bool:
     return category in broad_design_categories or any(rule in {"DDD-CTX-005", "DDD-VO-002"} for rule in covered)
 
 
+def _has_domain_layer_context(finding: dict[str, Any]) -> bool:
+    path = str(finding.get("file_path") or "").replace("\\", "/").lower()
+    text = _text_blob(finding)
+    return any(marker in path for marker in ["/domain/", "/application/", "/service/", "/repository/", "/infrastructure/", "/infra/"]) or any(
+        marker in text
+        for marker in [
+            "domain model",
+            "aggregate",
+            "application service",
+            "repository",
+            "bounded context",
+            "domain event",
+            "领域模型",
+            "聚合",
+            "应用服务",
+            "仓储",
+            "限界上下文",
+            "领域事件",
+        ]
+    )
+
+
+def _is_low_precision_layer_finding(finding: dict[str, Any]) -> bool:
+    item = normalize_tool_finding(finding)
+    category = _selection_category_key(item)
+    covered = {str(rule) for rule in (item.get("covered_rules") or [])}
+    if category != "LAYER_VIOLATION" and not (covered & {"DDD-LAYER-001", "HW-LAYER-001"}):
+        return False
+    text = _text_blob(item)
+    path = str(item.get("file_path") or "").replace("\\", "/").lower()
+    controller_context = "controller" in path or "controller" in text or "控制器" in text
+    jdbc_context = any(marker in text for marker in ["jdbc", "statement", "resultset", "connection", "sql"])
+    if controller_context and jdbc_context:
+        return True
+    if _has_domain_layer_context(item):
+        return False
+    return False
+
+
+def _is_low_precision_ddd_context_finding(finding: dict[str, Any], source_observations: list[dict[str, Any]] | None = None) -> bool:
+    item = normalize_tool_finding(finding)
+    category = _selection_category_key(item)
+    covered = {str(rule) for rule in (item.get("covered_rules") or [])}
+    original_rule = str(finding.get("tool_rule_id") or finding.get("rule_id") or "")
+    path = str(item.get("file_path") or "").replace("\\", "/").lower()
+    text = _text_blob(item)
+    source_categories = {
+        normalized_rule_category(str(obs.get("rule_id") or ""), obs.get("message"))
+        for obs in (source_observations or [])
+        if obs.get("rule_id") or obs.get("message")
+    }
+    if (
+        str(item.get("agent_id") or "") == "ddd_agent"
+        and original_rule.startswith("DDD-")
+        and not any(str(category).startswith("DDD_") for category in source_categories)
+        and ("controller" in path or "controller" in text or "控制器" in text)
+        and any(marker in text for marker in ["sql", "jdbc", "redis", "password", "密码", "注入", "缓存", "keys"])
+    ):
+        return True
+    if not category.startswith("DDD_") and not any(rule.startswith("DDD-") for rule in covered):
+        return False
+    if category in {"DDD_VO_002", "DDD_AGGREGATE_OWNERSHIP", "DDD_POLICY_001"}:
+        return False
+    if _has_domain_layer_context(item):
+        return False
+    if "controller" not in path and "controller" not in text and "控制器" not in text:
+        return False
+    if any(str(category).startswith("DDD_") for category in source_categories):
+        return False
+    return any(marker in text for marker in ["sql", "jdbc", "redis", "password", "密码", "注入", "缓存", "keys"])
+
+
+def _has_exact_source_rule(source_observations: list[dict[str, Any]], rules: set[str]) -> bool:
+    return any(str(item.get("rule_id") or "") in rules for item in source_observations)
+
+
+def _is_low_precision_unbacked_advisory(finding: dict[str, Any], source_observations: list[dict[str, Any]]) -> bool:
+    item = normalize_tool_finding(finding)
+    covered = {str(rule) for rule in (item.get("covered_rules") or [])}
+    category = _selection_category_key(item)
+    text = _text_blob(item)
+    path = str(item.get("file_path") or "").replace("\\", "/").lower()
+    if covered & {"DB-IDX-003", "REDIS-KEY-001", "DB-LOCK-006"} and not _has_exact_source_rule(source_observations, covered):
+        return True
+    if covered & {"DEP-VERSION-003", "DEP-CONVERGE-004"} and not _has_exact_source_rule(source_observations, covered):
+        return True
+    if any(rule.startswith("TEST-") for rule in covered):
+        has_high_risk_test_tool = any(
+            str(item.get("rule_id") or "") == "jolt.test.skip-high-risk-path-tests"
+            for item in source_observations
+        )
+        non_test_rules = {rule for rule in covered if not rule.startswith("TEST-")}
+        has_core_rule = any(rule.startswith(("SEC-", "REDIS-", "DB-", "DDD-", "DEP-", "PERF-", "BE-", "CODE-", "ALI-", "HW-")) for rule in non_test_rules)
+        if not has_high_risk_test_tool and (not has_core_rule or str(item.get("agent_id") or "") == "test_agent"):
+            return True
+    if not source_observations and covered & {"BE-CONTRACT-005"}:
+        return True
+    if category == "BROAD_EXCEPTION" and not any(marker in text for marker in ["吞", "ignored", "静默", "伪造成功", "误以为成功", "swallow", "fallback", "兜底"]):
+        return True
+    if category in {"UNBOUNDED_QUERY", "UNBOUNDED_RESULT_MEMORY"} and ("/api/" in path or "controller" in path):
+        if not _has_exact_source_rule(source_observations, covered):
+            return True
+    if category == "DB_CONNECTION_STATE_LEAK" and any(marker in text for marker in ["超时", "timeout", "阻塞", "query timeout"]):
+        return True
+    if covered & {"LLDEF-EXC-005"} and any(marker in text for marker in ["业务上下文", "排查", "并发竞态", "线程安全"]):
+        return True
+    if any(rule.startswith("DDD-AGG-") for rule in covered) and not _has_exact_source_rule(source_observations, covered):
+        return True
+    controller_context = "controller" in path or "controller" in text or "控制器" in text
+    layer_text = any(marker in text for marker in ["绕过服务", "服务层", "分层", "直接执行数据库", "直接操作数据库", "直接操作数据库和缓存"])
+    if controller_context and layer_text and (covered & {"DB-SQL-001", "BE-TX-002"}):
+        return True
+    return False
+
+
 def _is_auxiliary_finding(finding: dict[str, Any]) -> bool:
     category = _selection_category_key(finding)
     covered = {str(rule) for rule in (finding.get("covered_rules") or [])}
     text = _text_blob(finding)
+    try:
+        confidence = float(finding.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if _is_low_precision_layer_finding(finding):
+        return True
+    if _is_low_precision_ddd_context_finding(finding):
+        return True
+    if confidence >= 0.7 and finding.get("file_path") and covered & PROMOTABLE_TOOL_RULES:
+        return False
     if category == "MISSING_APP_SERVICE_TEST_COVERAGE":
         return False
     if category == "MISSING_TEST_COVERAGE":
-        return True
+        return confidence < 0.85 or not finding.get("file_path")
+    if category == "DDD_VO_002":
+        return confidence < 0.85 or not finding.get("file_path")
     if category == "BROAD_EXCEPTION" and _business_subcategory(category, finding).startswith("SWALLOWED_EXCEPTION"):
         return False
     if category in {"IDEMPOTENCY_GUARD", "BROAD_EXCEPTION"} and not _is_tool_backed_finding(finding):
@@ -1272,6 +1415,13 @@ def _is_auxiliary_finding(finding: dict[str, Any]) -> bool:
     if any(rule.startswith("TEST-") for rule in covered) and not _is_tool_backed_finding(finding):
         return True
     return any(marker in text for marker in AUXILIARY_TITLE_MARKERS) and not _is_tool_backed_finding(finding)
+
+
+def _selection_threshold_for_finding(finding: dict[str, Any], default_threshold: float) -> float:
+    covered = {str(rule) for rule in (finding.get("covered_rules") or [])}
+    if finding.get("file_path") and covered & {"CODE-EXC-003", "TEST-COVER-001", "REDIS-CMD-003", "BE-IDEMP-004", "SEC-CONFIG-007"}:
+        return min(default_threshold, 0.7)
+    return default_threshold
 
 
 def _evidence_specificity_score(finding: dict[str, Any]) -> int:
@@ -1771,6 +1921,12 @@ try {
 
 def _drop_without_tool_support(finding: dict[str, Any], source_observations: list[dict[str, Any]]) -> bool:
     category = _selection_category_key(finding)
+    if _is_low_precision_layer_finding(finding):
+        return True
+    if _is_low_precision_ddd_context_finding(finding, source_observations):
+        return True
+    if _is_low_precision_unbacked_advisory(finding, source_observations):
+        return True
     if category in {"REDIS_MISSING_TTL", "REDIS_DANGEROUS_COMMAND"}:
         source_categories = {
             normalized_rule_category(str(item.get("rule_id") or ""), item.get("message"))
@@ -1820,6 +1976,34 @@ def _promotable_tool_observation(observation: dict[str, Any]) -> bool:
     rule_id = _canonical_tool_rule_id(observation)
     if rule_id not in PROMOTABLE_TOOL_RULES:
         return False
+    if rule_id.startswith("DDD-"):
+        path = str(observation.get("file_path") or "").replace("\\", "/").lower()
+        message = str(observation.get("message") or "").lower()
+        has_ddd_context = any(marker in path for marker in ["/domain/", "/application/", "/service/", "/repository/", "/event/"]) or any(
+            marker in message
+            for marker in [
+                "domain model",
+                "aggregate",
+                "value object",
+                "bounded context",
+                "repository",
+                "infrastructure",
+                "persistence",
+                "interface layer",
+                "layer",
+                "领域模型",
+                "聚合",
+                "值对象",
+                "限界上下文",
+                "仓储",
+                "基础设施",
+                "持久化",
+                "接口层",
+                "分层",
+            ]
+        )
+        if not has_ddd_context:
+            return False
     tool_name = str(observation.get("tool_name") or "").strip().lower()
     confidence = float(observation.get("confidence") or 0)
     has_location = bool(observation.get("file_path")) and _as_int(observation.get("line_start")) is not None
@@ -2126,13 +2310,72 @@ def reconcile_rules_with_tool_observations(
     return normalize_tool_finding(item)
 
 
+def _best_source_observation_for_rule(
+    source_observations: list[dict[str, Any]],
+    rule_id: str,
+) -> dict[str, Any] | None:
+    for observation in source_observations:
+        canonical = _canonical_tool_rule_id(observation)
+        category = normalized_rule_category(str(observation.get("rule_id") or ""), observation.get("message"))
+        if canonical == rule_id or CATEGORY_PRIMARY_RULE.get(category) == rule_id:
+            return observation
+    return None
+
+
+def _has_code_null_signal(finding: dict[str, Any]) -> bool:
+    text = _text_blob(finding)
+    return ("string.valueof" in text and "payload.get" in text) or "literal \"null\"" in text or "字面量 \"null\"" in text
+
+
+def align_finding_with_tool_observations(
+    finding: dict[str, Any],
+    source_observations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    item = normalize_tool_finding(finding)
+    covered = {str(rule) for rule in (item.get("covered_rules") or []) if rule}
+    if "CODE-NULL-001" not in covered:
+        return item
+
+    observation = _best_source_observation_for_rule(source_observations, "CODE-NULL-001")
+    if not observation:
+        return item
+    observation_text = str(observation.get("message") or "")
+    if "string.valueof" not in observation_text.lower() or "payload.get" not in observation_text.lower():
+        return item
+    if _has_code_null_signal(item):
+        return item
+
+    remediation = RULE_REMEDIATION.get("CODE-NULL-001", {})
+    aligned = dict(item)
+    aligned["title"] = remediation.get("title") or "Map 入参字段缺少显式空值和类型校验"
+    aligned["problem_description"] = (
+        f"工具证据显示新增代码使用 {observation_text}；字段缺失时会得到字面量 \"null\"，"
+        "绕过显式必填校验并进入后续查询或业务逻辑。"
+    )
+    aligned["evidence"] = observation_text
+    aligned["recommendation"] = remediation.get("recommendation") or aligned.get("recommendation")
+    aligned["suggested_code"] = remediation.get("suggested_code") or aligned.get("suggested_code")
+    aligned["line_start"] = _as_int(observation.get("line_start")) or aligned.get("line_start")
+    aligned["line_end"] = _as_int(observation.get("line_end")) or aligned.get("line_end") or aligned.get("line_start")
+    aligned["tool_rule_id"] = "CODE-NULL-001"
+    aligned["agent_id"] = _agent_for_rule("CODE-NULL-001")
+    aligned["verification_flags"] = [*(aligned.get("verification_flags") or []), "aligned_to_tool_observation"]
+    aligned["quality_trace"] = {
+        **(aligned.get("quality_trace") if isinstance(aligned.get("quality_trace"), dict) else {}),
+        "aligned_to_tool_rule": "CODE-NULL-001",
+        "aligned_to_tool_line": aligned.get("line_start"),
+    }
+    return normalize_tool_finding(aligned)
+
+
 def _has_text(value: Any) -> bool:
     return bool(str(value or "").strip())
 
 
 def build_evidence_contract(finding: dict[str, Any], source_observations: list[dict[str, Any]]) -> dict[str, Any]:
     rules = [str(rule) for rule in (finding.get("covered_rules") or []) if str(rule or "").strip()]
-    has_rule = bool(rules or _has_text(finding.get("tool_rule_id")) or _has_text(finding.get("rule_id")))
+    explicit_rule = str(finding.get("tool_rule_id") or finding.get("rule_id") or "").strip()
+    has_rule = bool(rules or re.fullmatch(r"[A-Z][A-Z0-9]+(?:-[A-Z0-9]+)+(?::[A-Z0-9_]+)?", explicit_rule))
     has_location = _has_text(finding.get("file_path")) and bool(_as_int(finding.get("line_start")))
     has_source_context = _has_text(finding.get("evidence")) or bool(source_observations)
     has_tool_evidence = bool(source_observations or _has_text(finding.get("tool_name")) or _has_text(finding.get("tool_rule_id")))
@@ -2155,12 +2398,29 @@ def build_evidence_contract(finding: dict[str, Any], source_observations: list[d
         status = "partial"
     else:
         status = "weak"
+    has_agent_source = _has_text(finding.get("agent_id"))
+    source_type = "hybrid" if has_agent_source and has_tool_evidence else "tool" if has_tool_evidence else "agent" if has_agent_source else "unknown"
+    decision_hint = "final_candidate" if status == "satisfied" else "needs_review" if status == "weak" else "advisory_candidate"
     return {
         "version": "evidence_contract_v1",
         **checks,
         "missing": missing,
         "score": score,
         "status": status,
+        "source_type": source_type,
+        "decision_hint": decision_hint,
+        "evidence_sources": [
+            source
+            for source, present in {
+                "rule": has_rule,
+                "location": has_location,
+                "source_context": has_source_context,
+                "tool": has_tool_evidence,
+                "recommendation": has_recommendation,
+                "suggested_code": has_suggested_code,
+            }.items()
+            if present
+        ],
     }
 
 
@@ -2204,6 +2464,13 @@ def build_quality_trace(finding: dict[str, Any], source_observations: list[dict[
             for item in source_observations
         ],
     }
+
+
+def is_publishable_evidence_contract(quality_trace: dict[str, Any]) -> bool:
+    contract = quality_trace.get("evidence_contract") if isinstance(quality_trace, dict) else None
+    if not isinstance(contract, dict):
+        return False
+    return contract.get("status") == "satisfied" and contract.get("decision_hint") == "final_candidate"
 
 
 def _tool_provenance(finding: dict[str, Any], source_observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2381,7 +2648,8 @@ def judge_candidate_findings(
         rejected.extend(fill_rejected)
 
     for item in selected:
-        item["selected"] = 1 if float(item.get("confidence") or 0) >= selection_confidence and item.get("severity") in SELECTABLE_SEVERITIES else 0
+        threshold = _selection_threshold_for_finding(item, selection_confidence)
+        item["selected"] = 1 if float(item.get("confidence") or 0) >= threshold and item.get("severity") in SELECTABLE_SEVERITIES else 0
 
     return selected, rejected
 
@@ -2454,7 +2722,8 @@ def make_judge_findings_node(
         final_findings = [ensure_actionable_suggested_code(item) for item in final_findings]
         for item in final_findings:
             flags = set(item.get("verification_flags") or [])
-            item["selected"] = 0 if "invalid_suggested_code" in flags else 1 if float(item.get("confidence") or 0) >= selection_confidence and item.get("severity") in SELECTABLE_SEVERITIES else 0
+            threshold = _selection_threshold_for_finding(item, selection_confidence)
+            item["selected"] = 0 if "invalid_suggested_code" in flags else 1 if float(item.get("confidence") or 0) >= threshold and item.get("severity") in SELECTABLE_SEVERITIES else 0
         final_selected_findings: list[dict[str, Any]] = []
         for item in final_findings:
             if item.get("selected", 0):
@@ -2512,6 +2781,7 @@ def make_judge_findings_node(
                 ):
                     source_observations.insert(0, own_trace)
             finding = reconcile_rules_with_tool_observations(finding, source_observations)
+            finding = align_finding_with_tool_observations(finding, source_observations)
             if _drop_without_tool_support(finding, source_observations):
                 judge_rejections.append({**finding, "rejected_reasons": ["unsupported_low_precision_llm_finding"]})
                 recorder.event(
@@ -2527,6 +2797,27 @@ def make_judge_findings_node(
             ]
             tool_provenance = _tool_provenance(finding, source_observations)
             quality_trace = build_quality_trace(finding, source_observations)
+            if not is_publishable_evidence_contract(quality_trace):
+                contract = quality_trace.get("evidence_contract") if isinstance(quality_trace, dict) else {}
+                rejected = {
+                    **finding,
+                    "quality_trace": quality_trace,
+                    "source_observations": source_observations,
+                    "tool_provenance": tool_provenance,
+                    "rejected_reasons": ["evidence_contract_not_satisfied"],
+                }
+                judge_rejections.append(rejected)
+                recorder.event(
+                    judge_span,
+                    "finding_dropped",
+                    f"{finding.get('title', 'candidate')} 被 Judge 过滤：evidence_contract_not_satisfied",
+                    {
+                        "dedupe_hash": finding.get("dedupe_hash"),
+                        "contract_status": contract.get("status") if isinstance(contract, dict) else None,
+                        "missing": contract.get("missing") if isinstance(contract, dict) else [],
+                    },
+                )
+                continue
             finding["source_observations"] = source_observations
             finding["tool_provenance"] = tool_provenance
             finding["quality_trace"] = quality_trace

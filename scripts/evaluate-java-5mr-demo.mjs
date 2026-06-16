@@ -27,6 +27,10 @@ function normalizeRule(rule) {
   return String(rule || "").trim();
 }
 
+function evidenceContract(finding) {
+  return asJson(finding.quality_trace_json, {})?.evidence_contract || {};
+}
+
 const mrIdsArg = process.argv.find((arg) => arg.startsWith("--mr-ids="));
 const mrIds = ((mrIdsArg ? mrIdsArg.slice("--mr-ids=".length) : process.env.MR_IDS) || DEFAULT_MR_IDS.join(","))
   .split(",")
@@ -64,8 +68,12 @@ for (const mrId of mrIds) {
     ORDER BY selected DESC, severity DESC, confidence DESC, created_at
   `).all(run.id);
   const coveredRules = new Set();
+  let evidenceScoreTotal = 0;
   const finalFindings = findings.map((finding) => {
     const rules = asJson(finding.covered_rules_json, []).map(normalizeRule).filter(Boolean);
+    const contract = evidenceContract(finding);
+    const score = Number(contract.score || 0);
+    if (Number.isFinite(score)) evidenceScoreTotal += score;
     for (const rule of rules) coveredRules.add(rule);
     return {
       id: finding.id,
@@ -77,6 +85,9 @@ for (const mrId of mrIds) {
       line_start: finding.line_start,
       covered_rules: rules,
       has_trace: asJson(finding.quality_trace_json, null) !== null,
+      has_evidence_contract: Boolean(contract.version),
+      evidence_contract_status: contract.status || "missing",
+      evidence_contract_score: Number.isFinite(score) ? score : 0,
       has_tools: asJson(finding.tool_provenance_json, []).length > 0,
       has_suggested_code: Boolean(String(finding.suggested_code || "").trim()),
     };
@@ -106,6 +117,12 @@ for (const mrId of mrIds) {
     missing,
     unknown_findings: unknown,
     trace_complete: finalFindings.every((item) => item.has_trace && item.has_suggested_code),
+    evidence_contract_complete: finalFindings.every((item) => item.has_evidence_contract),
+    evidence_contract_average_score: finalFindings.length ? Number((evidenceScoreTotal / finalFindings.length).toFixed(4)) : 1,
+    evidence_contract_status_counts: finalFindings.reduce((acc, item) => {
+      acc[item.evidence_contract_status] = (acc[item.evidence_contract_status] || 0) + 1;
+      return acc;
+    }, {}),
     tool_trace_count: finalFindings.filter((item) => item.has_tools).length,
   });
 }
@@ -121,6 +138,10 @@ const report = {
   false_positive_total: falsePositiveTotal,
   recall: expectedTotal ? Number((matchedTotal / expectedTotal).toFixed(4)) : 1,
   fp_rate: findingTotal ? Number((falsePositiveTotal / findingTotal).toFixed(4)) : 0,
+  evidence_contract_complete: perMr.every((item) => item.evidence_contract_complete),
+  evidence_contract_average_score: perMr.length
+    ? Number((perMr.reduce((sum, item) => sum + item.evidence_contract_average_score, 0) / perMr.length).toFixed(4))
+    : 1,
   unique_matched_rules: [...aggregateMatchedRules].sort(),
   unique_missing_rules: [...aggregateMissingRules].sort(),
   unknown_findings: aggregateUnknown,
@@ -131,3 +152,4 @@ console.log(JSON.stringify(report, null, 2));
 if (report.recall < 0.9) throw new Error(`5MR recall below target: ${report.recall}`);
 if (report.fp_rate > 0.1) throw new Error(`5MR false positive rate above target: ${report.fp_rate}`);
 if (!perMr.every((item) => item.trace_complete)) throw new Error("some findings lack trace or suggested code");
+if (!report.evidence_contract_complete) throw new Error("some findings lack evidence contract");

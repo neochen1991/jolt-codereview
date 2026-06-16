@@ -160,7 +160,9 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
             "related_context": {
                 "format": related_context.get("format") or "related_context_v1",
                 "status": related_context.get("status") or "unavailable",
+                "changed_symbols": _compact_json_value(related_context.get("changed_symbols") or [], text_limit=700, list_limit=20),
                 "modified_symbols": _compact_json_value(related_context.get("modified_symbols") or [], text_limit=800, list_limit=20),
+                "related_tests": _compact_json_value(related_context.get("related_tests") or [], text_limit=240, list_limit=20),
                 "usage_policy": "用于理解定义、调用方、测试覆盖和跨文件影响；finding 的精确位置仍必须落在当前 MR diff 行。",
             },
             "static_tool_scan_findings": static_tool_scan_findings,

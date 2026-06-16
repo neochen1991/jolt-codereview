@@ -116,6 +116,9 @@ def summarize_evidence_contracts(final_findings: list[dict[str, Any]]) -> dict[s
             missing_counts[key] = missing_counts.get(key, 0) + 1
 
     complete_contract_rate = round(status_counts.get("satisfied", 0) / len(contracts), 4) if contracts else 0
+    weak_contract_count = status_counts.get("weak", 0)
+    partial_contract_count = status_counts.get("partial", 0)
+    quality_risk = "needs_attention" if weak_contract_count else "watch" if partial_contract_count else "ok"
     return {
         "version": "evidence_contract_summary_v1",
         "finding_count": len(final_findings),
@@ -124,6 +127,9 @@ def summarize_evidence_contracts(final_findings: list[dict[str, Any]]) -> dict[s
         "missing_counts": missing_counts,
         "average_score": round(score_total / len(contracts), 4) if contracts else 0,
         "complete_contract_rate": complete_contract_rate,
+        "weak_contract_count": weak_contract_count,
+        "partial_contract_count": partial_contract_count,
+        "quality_risk": quality_risk,
         "findings_missing_rule": missing_counts.get("has_rule", 0),
         "findings_missing_tool_evidence": missing_counts.get("has_tool_evidence", 0),
         "findings_missing_suggested_code": missing_counts.get("has_suggested_code", 0),
@@ -199,7 +205,7 @@ def make_finalize_node(
         agent_rows = conn.execute(
             """
             SELECT s.agent_id, COUNT(*) AS starts
-            FROM agent_trace_spans
+            FROM agent_trace_spans s
             JOIN agent_trace_events e ON e.span_id = s.id
             WHERE review_run_id = ? AND agent_id IS NOT NULL AND agent_id <> ''
               AND e.event_type = 'agent_started'

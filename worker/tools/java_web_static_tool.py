@@ -414,6 +414,30 @@ while (rs.next() && count++ < pageSize) {
                 rule_id="PERF-MEM-004",
             )
         )
+    if (
+        ("createstatement(" in lowered_content or "executequery(" in lowered_content or "executestatement(" in lowered_content)
+        and "try (" not in lowered_content
+        and "try(" not in lowered_content
+    ):
+        line_no = next((no for no, line in lines if "createStatement(" in line or "executeQuery(" in line), 1)
+        findings.append(
+            _finding(
+                agent_id="coding_agent",
+                severity="medium",
+                confidence=0.82,
+                file_path=file_path,
+                line=line_no,
+                title="JDBC 资源未使用 try-with-resources 关闭",
+                description="新增 JDBC Statement/ResultSet 使用后没有 try-with-resources 管理，异常路径可能泄漏数据库资源。",
+                recommendation="使用 try-with-resources 包裹 Statement、ResultSet、Connection，确保异常路径也能关闭资源。",
+                suggested_code='''try (Statement statement = connection.createStatement();
+     ResultSet rs = statement.executeQuery(sql)) {
+    // consume result set
+}''',
+                evidence="JDBC createStatement/executeQuery 未看到 try-with-resources。",
+                rule_id="CODE-RESOURCE-005",
+            )
+        )
     return findings
 
 

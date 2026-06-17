@@ -288,7 +288,6 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
         const rootDenied = ensureRoot(actorId);
         if (rootDenied) return rootDenied;
       }
-      const maxUses = Math.max(1, Math.min(500, Number(input.max_uses || 1)));
       const expiresAt = String(input.expires_at || "").trim() || null;
       const inviteCode = `jolt-${randomBytes(9).toString("base64url")}`;
       const invitation = projectRepository.createInvitation({
@@ -298,7 +297,7 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
         role,
         createdBy: actorId,
         expiresAt,
-        maxUses
+        maxUses: 0
       });
       auditLog({ userId: actorId, projectId: params.projectId, action: "project.invitation.create", resourceType: "project_invitation", resourceId: String((invitation as { id?: string })?.id || ""), summary: `created invitation role=${role}` });
       return { invitation, invite_code: inviteCode };

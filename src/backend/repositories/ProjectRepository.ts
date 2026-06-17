@@ -399,7 +399,7 @@ export class ProjectRepository {
       input.role,
       input.createdBy,
       input.expiresAt ?? null,
-      input.maxUses ?? 1
+      input.maxUses ?? 0
     );
     return this.db.prepare("SELECT * FROM project_invitations WHERE id = ?").get(input.id);
   }
@@ -424,8 +424,8 @@ export class ProjectRepository {
       WHERE invite_code_hash = ?
         AND status = 'active'
         AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
-        AND used_count < max_uses
-    `).get(input.inviteCodeHash) as { id: string; project_id: string; role: string; used_count: number } | undefined;
+        AND (max_uses = 0 OR used_count < max_uses)
+    `).get(input.inviteCodeHash) as { id: string; project_id: string; role: string; used_count: number; max_uses: number } | undefined;
     if (!invitation) return null;
     const memberId = `member_${invitation.project_id}_${input.userId}`.replace(/[^a-zA-Z0-9_]+/g, "_").slice(0, 80);
     this.db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND id <> ?")
@@ -438,7 +438,7 @@ export class ProjectRepository {
     this.db.prepare(`
       UPDATE project_invitations
       SET used_count = used_count + 1,
-          status = CASE WHEN used_count + 1 >= max_uses THEN 'used' ELSE status END
+          status = CASE WHEN max_uses > 0 AND used_count + 1 >= max_uses THEN 'used' ELSE status END
       WHERE id = ?
     `).run(invitation.id);
     return this.findProjectById(invitation.project_id);

@@ -2888,7 +2888,6 @@ function ConfigWorkspace({
   const [memberRoleDrafts, setMemberRoleDrafts] = useState<Record<string, string>>({});
   const [invitations, setInvitations] = useState<Record<string, unknown>[]>([]);
   const [inviteRole, setInviteRole] = useState("developer");
-  const [inviteMaxUses, setInviteMaxUses] = useState("1");
   const [agentTab, setAgentTab] = useState<"create" | "list">("create");
   const [ruleContent, setRuleContent] = useState("只报告有证据、有行号、可修复的高置信问题。");
   const [ruleDocName, setRuleDocName] = useState("项目代码规范.md");
@@ -3366,12 +3365,12 @@ function ConfigWorkspace({
   async function createInvitation() {
     const result = await api<{ invite_code: string }>(`/api/projects/${projectId}/invitations`, {
       method: "POST",
-      body: JSON.stringify({ role: inviteRole, max_uses: positiveNumber(inviteMaxUses, 1, 500) })
+      body: JSON.stringify({ role: inviteRole })
     });
     setSuccessNotice({
       title: "邀请码已创建",
       message: result.invite_code,
-      detail: "邀请码只展示一次，请发送给需要加入项目的用户。"
+      detail: "邀请码不限制使用次数，只展示一次，请发送给需要加入项目的用户。"
     });
     await loadConfigView();
   }
@@ -3930,6 +3929,28 @@ function ConfigWorkspace({
             <>
               <div className="join-request-section">
                 <div className="setting-form-head">
+                  <strong>项目邀请码</strong>
+                  <span>创建不限次数的邀请码，用户可在项目选择页直接加入。</span>
+                </div>
+                <div className="invite-create-row">
+                  <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)} disabled={!canEdit}>
+                    <option value="developer">developer</option>
+                    <option value="reviewer">reviewer</option>
+                    <option value="observer">observer</option>
+                    {canManageSystem && <option value="project_admin">project_admin</option>}
+                  </select>
+                  <button type="button" onClick={createInvitation} disabled={!canEdit}>创建邀请码</button>
+                </div>
+                <ConfigTable
+                  rows={invitations.map((item) => ({
+                    ...item,
+                    usage_limit: Number(item.max_uses) === 0 ? "不限" : String(item.max_uses ?? "--")
+                  }))}
+                  columns={["role", "status", "used_count", "usage_limit", "created_by_username", "created_at"]}
+                />
+              </div>
+              <div className="join-request-section">
+                <div className="setting-form-head">
                   <strong>加入申请</strong>
                   <span>普通用户提交加入项目申请后，项目管理员在这里审批。</span>
                 </div>
@@ -3959,23 +3980,6 @@ function ConfigWorkspace({
                   </article>
                 ))}
                 {!joinRequests.length && <div className="config-table-empty">暂无加入申请</div>}
-              </div>
-              <div className="join-request-section">
-                <div className="setting-form-head">
-                  <strong>项目邀请码</strong>
-                  <span>创建一次性或多次使用的邀请码，用户可在项目选择页直接加入。</span>
-                </div>
-                <div className="invite-create-row">
-                  <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)} disabled={!canEdit}>
-                    <option value="developer">developer</option>
-                    <option value="reviewer">reviewer</option>
-                    <option value="observer">observer</option>
-                    {canManageSystem && <option value="project_admin">project_admin</option>}
-                  </select>
-                  <input type="number" min="1" max="500" value={inviteMaxUses} onChange={(event) => setInviteMaxUses(event.target.value)} disabled={!canEdit} />
-                  <button type="button" onClick={createInvitation} disabled={!canEdit}>创建邀请码</button>
-                </div>
-                <ConfigTable rows={invitations} columns={["role", "status", "used_count", "max_uses", "created_by_username", "created_at"]} />
               </div>
             </>
           )}

@@ -66,7 +66,7 @@ export function migrate(db: Db) {
       role TEXT NOT NULL DEFAULT 'developer',
       created_by TEXT NOT NULL,
       expires_at TEXT,
-      max_uses INTEGER NOT NULL DEFAULT 1,
+      max_uses INTEGER NOT NULL DEFAULT 0,
       used_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

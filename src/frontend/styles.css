@@ -359,7 +359,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .invite-create-row {
-  grid-template-columns: 160px 120px auto;
+  grid-template-columns: 180px auto;
+  justify-content: start;
 }
 
 .invite-redeem-row input,

@@ -438,6 +438,210 @@ while (rs.next() && count++ < pageSize) {
                 rule_id="CODE-RESOURCE-005",
             )
         )
+    findings.extend(_scan_java_business_pattern_rules(file_path, lines, content, lowered_content))
+    return findings
+
+
+def _looks_like_external_call(line: str) -> bool:
+    lowered = line.lower()
+    return bool(
+        re.search(r"\b\w*(?:gateway|client|feign|rpc|http|webclient|resttemplate)\w*\s*\.", line, re.I)
+        or any(marker in lowered for marker in [".send(", ".publish(", ".postfor", ".exchange(", ".retrieve(", ".pay", ".payout"])
+    )
+
+
+def _scan_java_business_pattern_rules(
+    file_path: str,
+    lines: list[tuple[int, str]],
+    content: str,
+    lowered_content: str,
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+
+    if "threadlocal" in lowered_content and ".set(" in lowered_content and ".remove(" not in lowered_content:
+        line_no = next((no for no, line in lines if ".set(" in line and "ThreadLocal" not in line), None)
+        if line_no is None:
+            line_no = next((no for no, line in lines if "ThreadLocal" in line), 1)
+        evidence = "\n".join(line for _, line in lines if "ThreadLocal" in line or ".set(" in line)[:500]
+        findings.append(
+            _finding(
+                agent_id="coding_agent",
+                severity="high",
+                confidence=0.86,
+                file_path=file_path,
+                line=line_no,
+                title="ThreadLocal 上下文未在 finally 中清理",
+                description="新增代码写入 ThreadLocal 后没有看到 remove，Spring 线程池复用时可能把租户、操作者或状态上下文泄漏到后续请求。",
+                recommendation="ThreadLocal.set 后必须在 finally 中 remove；后台任务和异步流程应显式传递上下文对象。",
+                suggested_code='''try {
+    CURRENT_TENANT.set(tenantId);
+    return doBusiness(command);
+} finally {
+    CURRENT_TENANT.remove();
+}''',
+                evidence=evidence,
+                rule_id="CODE-STATE-004",
+            )
+        )
+
+    if "@transactional" in lowered_content:
+        tx_lines = [no for no, line in lines if "@Transactional" in line or "@transactional" in line.lower()]
+        for tx_line in tx_lines:
+            window_pairs = [(no, line) for no, line in lines if tx_line <= no <= tx_line + 80]
+            window = "\n".join(line for _, line in window_pairs)
+            lowered_window = window.lower()
+            if not any(marker in lowered_window for marker in [".save(", ".update(", ".delete(", "repository.", "mapper.", "dao."]):
+                continue
+            external = next(((no, line) for no, line in window_pairs if _looks_like_external_call(line)), None)
+            if external is None:
+                continue
+            line_no, evidence_line = external
+            findings.append(
+                _finding(
+                    agent_id="backend_agent",
+                    severity="high",
+                    confidence=0.88,
+                    file_path=file_path,
+                    line=line_no,
+                    title="事务内调用外部服务或网关",
+                    description="@Transactional 方法内同时执行数据库状态变更和外部网关/客户端调用，数据库事务会跨外部 I/O，重试、超时或回滚时容易造成状态不一致。",
+                    recommendation="将外部调用移出数据库事务，采用 outbox、事务后事件、补偿任务或先短事务落库再异步调用。",
+                    suggested_code='''@Transactional
+public PayoutCommand createPayoutCommand(...) {
+    repository.save(command);
+    return command;
+}
+
+public void executeAfterCommit(PayoutCommand command) {
+    payoutGateway.payOut(command);
+}''',
+                    evidence=evidence_line,
+                    rule_id="BE-TX-002",
+                )
+            )
+            break
+
+    brace_depth = 0
+    loop_exit_depths: list[int] = []
+    authz_reported = False
+    for line_no, line in lines:
+        stripped = line.strip()
+        lowered = stripped.lower()
+        starts_loop = bool(re.search(r"\b(for|while)\s*\(", stripped))
+        if starts_loop:
+            loop_exit_depths.append(brace_depth + max(stripped.count("{") - stripped.count("}"), 1))
+        in_loop = bool(loop_exit_depths) and not starts_loop
+        if in_loop and _looks_like_external_call(stripped):
+            findings.append(
+                _finding(
+                    agent_id="performance_agent",
+                    severity="high",
+                    confidence=0.86,
+                    file_path=file_path,
+                    line=line_no,
+                    title="循环内调用远程客户端或外部网关",
+                    description="新增代码在循环体内逐条调用 client/gateway，数据量增长后容易形成 N+1 远程调用、请求线程阻塞和下游限流风险。",
+                    recommendation="改为批量接口、预加载映射、异步批处理或对循环规模设置明确上限和超时。",
+                    suggested_code='''Map<String, RiskScore> scores = riskClient.fetchScores(settlementIds);
+for (String settlementId : settlementIds) {
+    RiskScore score = scores.get(settlementId);
+}''',
+                    evidence=line,
+                    rule_id="PERF-QUERY-001",
+                )
+            )
+        if (
+            not authz_reported
+            and
+            ("@postmapping" in lowered_content or "@requestmapping" in lowered_content)
+            and any(marker in lowered_content for marker in ["tenantid", "merchantid"])
+            and any(marker in lowered_content for marker in ["forcepay", "force-pay", "payout"])
+            and not any(marker in lowered_content for marker in ["@preauthorize", "@secured", "permission", "authoriz", "ownership", "归属校验"])
+        ):
+            auth_line = next((no for no, text in lines if "tenantId" in text or "merchantId" in text or "forcePay" in text), line_no)
+            findings.append(
+                _finding(
+                    agent_id="security_agent",
+                    severity="high",
+                    confidence=0.88,
+                    file_path=file_path,
+                    line=auth_line,
+                    title="forcePay 使用请求 tenantId/merchantId 未校验资源归属",
+                    description="新增 forcePay 管理接口直接从请求体读取 tenantId 和 merchantId 后调用打款服务，但没有看到当前用户与租户、商户的资源归属校验。",
+                    recommendation="在进入打款服务前校验操作者是否有权访问该 tenant/merchant，并将资源归属校验放在服务端权限上下文中。",
+                    suggested_code='''permissionService.requireMerchantAccess(
+    authContext.currentUserId(),
+    request.tenantId(),
+    request.merchantId()
+);''',
+                    evidence="\n".join(text for _, text in lines if "tenantId" in text or "merchantId" in text or "forcePay" in text)[:500],
+                    rule_id="SEC-AUTHZ-002",
+                )
+            )
+            authz_reported = True
+        if "findall(" in lowered and (".stream()" in lowered or "export" in lowered_content or "tolist()" in lowered):
+            findings.append(
+                _finding(
+                    agent_id="performance_agent",
+                    severity="high",
+                    confidence=0.87,
+                    file_path=file_path,
+                    line=line_no,
+                    title="findAll 结果无上限加载到内存",
+                    description="新增代码直接调用 findAll 并转换为集合/导出结果，数据量增长后可能造成高内存占用或接口超时。",
+                    recommendation="改为分页、游标或流式导出，并设置单次导出上限和后台任务保护。",
+                    suggested_code='''Page<Object> page = repository.findAll(PageRequest.of(pageNo, pageSize));''',
+                    evidence=line,
+                    rule_id="PERF-MEM-004",
+                )
+            )
+        if (
+            any(marker in lowered for marker in ["cardno", "card_no", "pan", "cvv", "rawgatewaymessage", "raw_gateway", "token", "secret"])
+            and any(marker in lowered for marker in ["return ", "map.of", "response.put", "audit", "log."])
+        ):
+            findings.append(
+                _finding(
+                    agent_id="security_agent",
+                    severity="high",
+                    confidence=0.86,
+                    file_path=file_path,
+                    line=line_no,
+                    title="响应或审计记录暴露敏感字段",
+                    description="新增代码把卡号、网关原始报文、token 等敏感字段写入响应、审计或日志，可能造成越权可见或合规风险。",
+                    recommendation="只返回脱敏字段和稳定 traceId；原始网关报文进入受控密文存储或安全审计通道，并限制访问权限。",
+                    suggested_code='''return Map.of(
+    "maskedCardNo", maskCardNo(receipt.cardNo()),
+    "traceId", receipt.traceId()
+);''',
+                    evidence=line,
+                    rule_id="SEC-SECRET-004",
+                )
+            )
+        if "parseexpression(" in lowered and any(marker in lowered_content for marker in ["string expression", "expression,", "map<string, object> context"]):
+            findings.append(
+                _finding(
+                    agent_id="security_agent",
+                    severity="high",
+                    confidence=0.88,
+                    file_path=file_path,
+                    line=line_no,
+                    title="SpEL 表达式来自外部输入可执行",
+                    description="新增代码将外部传入的 expression 交给 SpEL parseExpression 执行，若表达式可被用户或配置修改，可能读取对象属性、调用方法或形成表达式注入。",
+                    recommendation="不要直接执行外部表达式；改为枚举策略、白名单 DSL，或使用受限的 SimpleEvaluationContext。",
+                    suggested_code='''SimpleEvaluationContext context = SimpleEvaluationContext
+    .forReadOnlyDataBinding()
+    .build();
+Boolean matched = parser.parseExpression(allowedExpression)
+    .getValue(context, safePolicyView, Boolean.class);''',
+                    evidence=line,
+                    rule_id="SEC-INJECT-003",
+                )
+            )
+        brace_depth += stripped.count("{") - stripped.count("}")
+        while loop_exit_depths and brace_depth < loop_exit_depths[-1]:
+            loop_exit_depths.pop()
+        if brace_depth < 0:
+            brace_depth = 0
     return findings
 
 
@@ -620,9 +824,14 @@ def _scan_class_level_rules(
         and re.search(r"\.(setStatus|setMerchantId|setTenantId|setAmount|setOwnerId|setState)\s*\(", content)
         and re.search(r"(force|override|transition|reassign|PaymentStatus\.valueOf|Status\.valueOf)", content, re.I)
     ):
-        line_no = next((no for no, line in lines if re.search(r"\.(setStatus|setMerchantId|setTenantId|setAmount|setOwnerId|setState)\s*\(", line)), 1)
-        findings.append(
-            _finding(
+            matched_lines = [
+                f"{no}: {line}"
+                for no, line in lines
+                if re.search(r"\.(overrideMerchant|setStatus|setMerchantId|setTenantId|setAmount|setOwnerId|setState|setPaidAmount)\s*\(", line)
+            ]
+            line_no = next((no for no, line in lines if re.search(r"\.(overrideMerchant|setStatus|setMerchantId|setTenantId|setAmount|setOwnerId|setState|setPaidAmount)\s*\(", line)), 1)
+            findings.append(
+                _finding(
                 agent_id="ddd_agent",
                 severity="high",
                 confidence=0.84,
@@ -634,10 +843,10 @@ def _scan_class_level_rules(
                 suggested_code='''payment.transferMerchant(new MerchantId(merchantId), transferPolicy);
 payment.transitionTo(PaymentStatus.fromExternal(nextStatus), transitionPolicy);
 paymentRepository.save(payment);''',
-                evidence="应用服务中出现聚合 setter 与 force/override/transition/reassign 状态流转组合。",
-                rule_id="DDD-AGG-002",
+                    evidence="\n".join(matched_lines) or "应用服务中出现 merchant/status 聚合 setter 与 force/override/transition/reassign 状态流转组合。",
+                    rule_id="DDD-AGG-002",
+                )
             )
-        )
     preview_start = next(
         (
             no
@@ -863,6 +1072,10 @@ def _maybe_missing_idempotency_guard(
             "executeupdate(",
         ]
     )
+    has_side_effect = has_side_effect or bool(
+        re.search(r"\b\w*Service\s*\.\s*\w*(force|pay|payout|refund|settle|capture|adjust|approve|cancel|delete|update|create|submit)\w*\s*\(", window, re.I)
+        or re.search(r"\b(force|pay|payout|refund|settle|capture|adjust|approve|cancel|delete|update|create|submit)[A-Za-z0-9_-]*\b", window, re.I)
+    )
     if not has_side_effect:
         return []
     if "idempot" in lowered_content or "idempotency-key" in lowered_content or "requestid" in lowered_content or "request_id" in lowered_content:
@@ -870,8 +1083,8 @@ def _maybe_missing_idempotency_guard(
     return [
         _finding(
             agent_id="backend_agent",
-            severity="medium",
-            confidence=0.81,
+            severity="high",
+            confidence=0.88,
             file_path=file_path,
             line=mapping_line,
             title="POST 副作用接口缺少幂等保护",

@@ -33,6 +33,7 @@ RULE_CATEGORY_MAP = {
     "BE-API-001": "SPRING_VALIDATION",
     "JOLT_JAVA_MISSING_TRANSACTION": "SPRING_TRANSACTION",
     "BE-TX-002": "SPRING_TRANSACTION",
+    "BE-INTEGRATION-006": "SPRING_TRANSACTION",
     "JOLT_JAVA_REDIS_KEYS": "REDIS_DANGEROUS_COMMAND",
     "jolt.java.redis.keys": "REDIS_DANGEROUS_COMMAND",
     "REDIS-CMD-003": "REDIS_DANGEROUS_COMMAND",
@@ -186,6 +187,7 @@ CATEGORY_PRIMARY_RULE = {
     "DB_BREAKING_CHANGE": "DB-DDL-001",
     "DB_NOT_NULL_NO_DEFAULT": "DB-NOTNULL-002",
     "SPRING_VALIDATION": "BE-API-001",
+    "SPRING_TRANSACTION": "BE-TX-002",
     "ERROR_INFORMATION_LEAK": "SEC-SECRET-004:ERROR_RESPONSE",
     "BROAD_EXCEPTION": "CODE-EXC-003",
     "SECRET_LEAK": "SEC-SECRET-004",
@@ -553,6 +555,22 @@ def normalize_tool_finding(finding: dict[str, Any]) -> dict[str, Any]:
         or ("string.valueof" in title_text and "payload.get" in title_text)
     ) and "CODE-NULL-001" not in covered:
         covered = ["CODE-NULL-001", *covered]
+    if (
+        any(rule in {"BE-INTEGRATION-006"} for rule in covered)
+        or (
+            any(marker in title_text for marker in ["@transactional", "transactional", "事务内", "事务中"])
+            and any(marker in title_text for marker in ["gateway", "client", "http", "rpc", "mq", "pay", "payout", "外部", "网关"])
+        )
+    ) and "BE-TX-002" not in covered:
+        covered = ["BE-TX-002", *covered]
+    if (
+        any(rule in {"ALI-CONCURRENCY-003"} for rule in covered)
+        or "threadlocal" in title_text
+        or "thread local" in title_text
+    ) and any(marker in title_text for marker in ["remove", "清理", "泄漏", "leak", "not followed"]) and "CODE-STATE-004" not in covered:
+        covered = ["CODE-STATE-004", *covered]
+    if any(rule in {"DDD-AGG-002", "DDD-AGG-004"} for rule in covered) and "DDD-AGG-001" not in covered:
+        covered = ["DDD-AGG-001", *covered]
     if (
         any(rule in {"DB-CONN-010", "LLDEF-RES-006"} for rule in covered)
         or (

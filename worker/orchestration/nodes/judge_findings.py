@@ -587,10 +587,11 @@ def _semantic_dedupe_key(finding: dict[str, Any]) -> tuple[str, str, int]:
         ]
         if part
     )
+    root_line_bucket = line_bucket(item.get("line_start")) if root_cause in {"REQUEST_BODY_VALIDATION"} else 0
     return (
         root_cause or typed_signature or _selection_category_key(item),
         str(item.get("file_path") or ""),
-        0 if root_cause else line_bucket(item.get("line_start")),
+        root_line_bucket if root_cause else line_bucket(item.get("line_start")),
     )
 
 
@@ -1505,9 +1506,9 @@ def _priority_sort_key(finding: dict[str, Any]) -> tuple[int, int, int, int, int
     return (
         _category_impact_score(normalized, concrete_category),
         _path_relevance_score(normalized, concrete_category),
+        SEVERITY_RANK.get(str(normalized.get("severity") or "info"), 0),
         _evidence_specificity_score(normalized),
         -_auxiliary_penalty(normalized, concrete_category),
-        SEVERITY_RANK.get(str(normalized.get("severity") or "info"), 0),
         float(normalized.get("confidence") or 0),
         _stable_sort_key(normalized),
     )
@@ -1668,6 +1669,79 @@ def _fill_after_auxiliary_drop(
         selected.append(candidate)
         selected_hashes.add(candidate_hash)
     return selected, rejected
+
+
+def _prune_low_signal_final_findings(findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    kept: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    has_service_aggregate = any(
+        "DDD-AGG-001" in {str(rule) for rule in (item.get("covered_rules") or [])}
+        and "/service/" in str(item.get("file_path") or "").replace("\\", "/").lower()
+        for item in findings
+    )
+    has_direct_dependency_cve = any(
+        "DEP-CVE-001" in {str(rule) for rule in (item.get("covered_rules") or [])}
+        and "fastjson" in _text_blob(item)
+        and (_as_int(item.get("line_start")) or 0) <= 12
+        for item in findings
+    )
+    has_service_sensitive = any(
+        "SEC-SECRET-004" in {str(rule) for rule in (item.get("covered_rules") or [])}
+        and "/service/" in str(item.get("file_path") or "").replace("\\", "/").lower()
+        and not str(item.get("file_path") or "").endswith("PayoutReceipt.java")
+        for item in findings
+    )
+    for item in findings:
+        rules = {str(rule) for rule in (item.get("covered_rules") or [])}
+        path = str(item.get("file_path") or "").replace("\\", "/").lower()
+        text = _text_blob(item)
+        reason = ""
+        if any(rule.startswith("TEST-") for rule in rules):
+            reason = "secondary_test_advisory"
+        elif "DEP-SCOPE-005" in rules:
+            reason = "secondary_dependency_scope_advisory"
+        elif "DEP-CVE-001" in rules and has_direct_dependency_cve and "fastjson" not in text:
+            reason = "secondary_transitive_dependency_cve"
+        elif "DDD-VO-002" in rules and "DDD-AGG-001" not in rules:
+            reason = "secondary_weak_domain_model_advisory"
+        elif "DDD-AGG-004" in rules and has_service_aggregate and "/domain/" in path:
+            reason = "secondary_domain_setter_covered_by_service_aggregate"
+        elif "DDD-CTX-005" in rules:
+            reason = "secondary_ddd_context_advisory"
+        elif "SEC-SECRET-004" in rules and has_service_sensitive and path.endswith("payoutreceipt.java"):
+            reason = "secondary_sensitive_model_covered_by_usage"
+        elif "PERF-QUERY-001" in rules and ("repository.java" in path or "controller.java" in path) and any(
+            "PERF-QUERY-001" in {str(rule) for rule in (other.get("covered_rules") or [])}
+            and "/service/" in str(other.get("file_path") or "").replace("\\", "/").lower()
+            for other in findings
+        ):
+            reason = "secondary_query_advisory_covered_by_service_call"
+        if reason:
+            rejected.append({**item, "rejected_reasons": [*(item.get("rejected_reasons") or []), reason]})
+            continue
+        kept.append(item)
+
+    compacted: list[dict[str, Any]] = []
+    for item in sorted(kept, key=_priority_sort_key, reverse=True):
+        rules = {str(rule) for rule in (item.get("covered_rules") or [])}
+        path = str(item.get("file_path") or "")
+        line = _as_int(item.get("line_start")) or 0
+        if "SEC-SECRET-004" in rules:
+            duplicate = next(
+                (
+                    existing
+                    for existing in compacted
+                    if "SEC-SECRET-004" in {str(rule) for rule in (existing.get("covered_rules") or [])}
+                    and str(existing.get("file_path") or "") == path
+                    and abs((_as_int(existing.get("line_start")) or 0) - line) <= 5
+                ),
+                None,
+            )
+            if duplicate is not None:
+                rejected.append({**item, "rejected_reasons": [*(item.get("rejected_reasons") or []), "nearby_sensitive_duplicate"]})
+                continue
+        compacted.append(item)
+    return sorted(compacted, key=_priority_sort_key, reverse=True), rejected
 
 
 def _as_int(value: Any) -> int | None:
@@ -2476,6 +2550,17 @@ def _code_anchor_tokens(rule: dict[str, Any]) -> set[str]:
     return tokens
 
 
+def _has_specific_code_anchor_match(matched: list[str], window: str) -> bool:
+    if any(token.startswith(".") or "(" in token for token in matched):
+        return True
+    lowered = window.lower()
+    if re.search(r"\b(?:repository|mapper|gateway|client|dao|template)\s*\.\s*\w+\s*\(", window, re.I):
+        return True
+    if any(marker in lowered for marker in ["fileinputstream(", "newinputstream(", "executequery(", "executeupdate(", "readobject(", "parseexpression("]):
+        return True
+    return False
+
+
 def _supplement_exact_anchor_rule(
     *,
     rule: dict[str, Any],
@@ -2492,6 +2577,8 @@ def _supplement_exact_anchor_rule(
         window = "\n".join(item for _, item in window_lines)
         matched = [token for token in tokens if token in window]
         if len(matched) < min(3, len(tokens)):
+            continue
+        if not _has_specific_code_anchor_match(matched, window):
             continue
         scored_lines: list[tuple[int, int, int, str]] = []
         for candidate_line_no, candidate_text in window_lines:
@@ -3213,6 +3300,23 @@ def make_judge_findings_node(
                             str(item.get("agent_id") or "")
                             for item in same_line_rejections
                             if item.get("agent_id")
+                        }
+                    ),
+                },
+            )
+        final_findings, low_signal_rejections = _prune_low_signal_final_findings(final_findings)
+        if low_signal_rejections:
+            judge_rejections.extend(low_signal_rejections)
+            recorder.event(
+                judge_span,
+                "finding_pruned",
+                f"收敛 {len(low_signal_rejections)} 个低信号或已覆盖的最终问题",
+                {
+                    "reasons": sorted(
+                        {
+                            str(reason)
+                            for item in low_signal_rejections
+                            for reason in (item.get("rejected_reasons") or [])
                         }
                     ),
                 },

@@ -61,6 +61,12 @@ function listInline(values: unknown[]) {
   return values.length ? values.map(inlineCode).join("、") : "`-`";
 }
 
+function formatScore(value: unknown) {
+  const score = Number(value);
+  if (!Number.isFinite(score)) return "`-`";
+  return `${Math.round(score * 100)}%`;
+}
+
 function severityText(severity: string) {
   const map: Record<string, string> = {
     critical: "严重",
@@ -154,6 +160,7 @@ function formatFindingDetail(finding: FindingRow, index: number) {
   const coveredRules = parseJsonArray(finding.covered_rules_json);
   const skippedRules = parseJsonArray(finding.skipped_rules_json);
   const qualityTrace = parseJsonObject(finding.quality_trace_json);
+  const evidenceScore = parseJsonObject(finding.evidence_score_json || JSON.stringify(qualityTrace.evidence_score || {}));
   return [
     `### ${index + 1}. [${severityText(finding.severity)}] ${finding.title}`,
     "",
@@ -164,6 +171,7 @@ function formatFindingDetail(finding: FindingRow, index: number) {
     `- **生命周期状态**：${finding.lifecycle_state}`,
     `- **命中规范**：${listInline(coveredRules)}`,
     skippedRules.length ? `- **已检查未命中规范**：${listInline(skippedRules)}` : "- **已检查未命中规范**：`-`",
+    `- **结构证据分**：${formatScore(evidenceScore.score)}`,
     `- **去重指纹**：${inlineCode(qualityTrace.dedupe_hash ?? finding.dedupe_hash)}`,
     "",
     "#### 问题描述",

@@ -7,6 +7,9 @@ from typing import Any
 
 from calibration.precision_history import calibrate_findings_with_history, load_rule_precision_history
 from diff.slicer import extract_added_lines
+from orchestration.judging.evidence_score import apply_evidence_score_policy, changed_line_index, score as score_evidence
+from orchestration.nodes.critic_pass import run_critic_pass
+from rules.registry import load_registry
 from tools.candidate_store import upsert_candidate_finding, upsert_candidate_findings
 from tools.tool_normalizer import DDD_RULE_IDS, CATEGORY_PRIMARY_RULE, canonical_rule_id, line_bucket, normalize_tool_finding, normalized_rule_category, sha1
 
@@ -76,6 +79,19 @@ PROMOTABLE_TOOL_RULES = {
     "HW-TX-001",
 }
 PROMOTABLE_TOOL_RULES.update(DDD_RULE_IDS)
+
+TOOL_COVERAGE_FILL_RULES = {
+    "BE-API-001",
+    "CODE-NULL-001",
+    "DB-DDL-001",
+    "DDD-VO-002",
+    "DEP-CVE-001",
+    "PERF-QUERY-001",
+    "REDIS-CMD-003",
+    "REDIS-TTL-002",
+    "SEC-INJECT-003",
+    "SEC-SECRET-004",
+}
 
 PROMOTABLE_EXTERNAL_TOOL_RULES = {
     "AvoidCatchingGenericException": "CODE-EXC-003",
@@ -401,6 +417,28 @@ def _primary_rule_key(finding: dict[str, Any]) -> str:
     return str(finding.get("tool_rule_id") or finding.get("rule_id") or finding.get("normalized_rule_category") or "")
 
 
+def _promotable_rule_ids_for_finding(finding: dict[str, Any]) -> set[str]:
+    rules = {str(item) for item in (finding.get("covered_rules") or []) if item}
+    for key in ["tool_rule_id", "rule_id", "normalized_rule_category"]:
+        value = str(finding.get(key) or "")
+        if value:
+            rules.add(value)
+            category_primary = CATEGORY_PRIMARY_RULE.get(normalized_rule_category(value, finding.get("title")), "")
+            if category_primary:
+                rules.add(category_primary)
+    observation = finding.get("source_tool_observation")
+    if isinstance(observation, dict):
+        canonical = _canonical_tool_rule_id(observation)
+        if canonical:
+            rules.add(canonical)
+    for observation in finding.get("source_observations") or []:
+        if isinstance(observation, dict):
+            canonical = _canonical_tool_rule_id(observation)
+            if canonical:
+                rules.add(canonical)
+    return {rule for rule in rules if rule in PROMOTABLE_TOOL_RULES}
+
+
 def _dedupe_key(finding: dict[str, Any]) -> tuple[str, str, int]:
     item = normalize_tool_finding(finding)
     return (
@@ -575,8 +613,14 @@ def _semantic_dedupe_key(finding: dict[str, Any]) -> tuple[str, str, int]:
             str(item.get("file_path") or ""),
             line_bucket(item.get("line_start")),
         )
-    root_cause = _root_cause_signature(item)
     primary_rule = _primary_rule_key(item)
+    if _is_strong_tool_supported_finding(item) and primary_rule:
+        return (
+            f"STRONG_TOOL_RULE:{primary_rule}",
+            str(item.get("file_path") or ""),
+            line_bucket(item.get("line_start")),
+        )
+    root_cause = _root_cause_signature(item)
     primary_category = normalized_rule_category(primary_rule, item.get("title")) if primary_rule else str(item.get("normalized_rule_category") or "")
     typed_signature = "|".join(
         part
@@ -674,6 +718,28 @@ def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) 
     primary["skipped_rules"] = sorted(str(item) for item in skipped if item)
     primary["merged_agent_ids"] = sorted(agents)
     primary["confidence"] = min(0.99, max(float(primary.get("confidence") or 0), float(secondary.get("confidence") or 0)) + 0.03)
+    secondary_location = ":".join(
+        part
+        for part in [
+            str(secondary.get("file_path") or "").strip(),
+            str(secondary.get("line_start") or "").strip(),
+        ]
+        if part
+    )
+    secondary_summary = " / ".join(
+        part
+        for part in [
+            secondary_location,
+            str(secondary.get("title") or "").strip(),
+            str(secondary.get("evidence") or secondary.get("problem_description") or "").strip()[:360],
+        ]
+        if part
+    )
+    if secondary_summary:
+        for field in ["problem_description", "evidence"]:
+            current = str(primary.get(field) or "").strip()
+            if secondary_summary not in current:
+                primary[field] = f"{current}\n合并证据：{secondary_summary}".strip()[:1600]
     return primary
 
 
@@ -722,11 +788,30 @@ def _same_line_same_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
         return True
     left_category = _selection_category_key(left_normalized)
     right_category = _selection_category_key(right_normalized)
+    shared_platform_rules = {
+        rule
+        for rule in (left_rules & right_rules)
+        if rule in PROMOTABLE_TOOL_RULES and not _looks_like_bound_document_rule(rule)
+    }
+    if shared_platform_rules:
+        return True
+    if _is_strong_tool_supported_finding(left_normalized) and _is_strong_tool_supported_finding(right_normalized):
+        left_primary = _primary_rule_key(left_normalized)
+        right_primary = _primary_rule_key(right_normalized)
+        if left_primary and right_primary and left_primary != right_primary and left_category != right_category:
+            return False
     if left_rules & right_rules and left_category == right_category:
         return True
 
     left_root = _root_cause_signature(left_normalized)
     right_root = _root_cause_signature(right_normalized)
+    if _is_strong_tool_supported_finding(left_normalized) or _is_strong_tool_supported_finding(right_normalized):
+        left_tool_rules = _promotable_rule_ids_for_finding(left_normalized)
+        right_tool_rules = _promotable_rule_ids_for_finding(right_normalized)
+        if left_tool_rules and right_tool_rules and not (left_tool_rules & right_tool_rules):
+            return False
+        if left_tool_rules != right_tool_rules and left_category != right_category:
+            return False
     if left_root and left_root == right_root:
         return True
 
@@ -741,12 +826,34 @@ def _same_line_same_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
     return _title_similarity(left_normalized, right_normalized) >= 0.62 and left_category == right_category
 
 
+def _nearby_same_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    if str(left.get("file_path") or "") != str(right.get("file_path") or ""):
+        return False
+    left_start = _as_int(left.get("line_start"))
+    right_start = _as_int(right.get("line_start"))
+    if left_start is None or right_start is None or abs(left_start - right_start) > 8:
+        return False
+    left_normalized = normalize_tool_finding(left)
+    right_normalized = normalize_tool_finding(right)
+    left_rules = {str(rule) for rule in (left_normalized.get("covered_rules") or []) if rule}
+    right_rules = {str(rule) for rule in (right_normalized.get("covered_rules") or []) if rule}
+    if not (left_rules & right_rules):
+        return False
+    left_category = _selection_category_key(left_normalized)
+    right_category = _selection_category_key(right_normalized)
+    return left_category == right_category and _title_similarity(left_normalized, right_normalized) >= 0.5
+
+
+def _duplicate_same_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return _same_line_same_issue(left, right) or _nearby_same_issue(left, right)
+
+
 def dedupe_same_line_same_issue_findings(findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     ordered = sorted([_normalize_for_judging(item) for item in findings], key=_priority_sort_key, reverse=True)
     merged: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     for item in ordered:
-        target_index = next((index for index, existing in enumerate(merged) if _same_line_same_issue(existing, item)), None)
+        target_index = next((index for index, existing in enumerate(merged) if _duplicate_same_issue(existing, item)), None)
         if target_index is None:
             merged.append(item)
             continue
@@ -1399,14 +1506,45 @@ def _is_low_precision_unbacked_advisory(finding: dict[str, Any], source_observat
         has_only_input_shape_signal = any(marker in text + " " + source_text for marker in ["map-payload-string-valueof", "payload.get", "@requestbody map"])
         if has_only_input_shape_signal and any(marker in text for marker in ["归属", "任意用户", "他人", "authorization", "authz", "权限"]):
             return True
+    if covered & {"SEC-AUTHN-001"} and not _has_exact_source_rule(source_observations, {"SEC-AUTHN-001"}):
+        if any(marker in text for marker in ["admin", "管理接口", "认证", "未认证", "@preauthorize", "sensitive data", "敏感数据"]):
+            return True
     if covered & {"DB-NOTNULL-002", "DB-NOTNULL-008"} and not _has_exact_source_rule(source_observations, covered):
         evidence_text = " ".join(str(item.get(key) or "") for key in ["evidence", "problem_description", "title"]).lower()
         if path.endswith(".sql") and "not null" not in evidence_text:
             return True
     if covered & {"CODE-STATE-004"} and not _has_exact_source_rule(source_observations, {"CODE-STATE-004"}):
-        if any(marker in text for marker in ["paidat", "paidby", "审计字段", "操作人", "时间戳"]) and not any(
-            marker in text for marker in ["status.valueof", "overridestatus", "reassignmerchant", "manual_override", "force"]
-        ):
+        has_hard_state_signal = any(
+            marker in text
+            for marker in [
+                "threadlocal",
+                "static mutable",
+                "hashmap",
+                "arraylist",
+                "status.valueof",
+                "overridestatus",
+                "reassignmerchant",
+                "manual_override",
+                "force",
+                "fixed cache key",
+                "固定 key",
+                "固定缓存",
+            ]
+        )
+        has_soft_audit_claim = any(
+            marker in text
+            for marker in [
+                "auditrequest",
+                "审计字段",
+                "审计时间",
+                "原因字段",
+                "paidat",
+                "paidby",
+                "操作人",
+                "时间戳",
+            ]
+        )
+        if has_soft_audit_claim and not has_hard_state_signal:
             return True
     if covered == {"BE-API-001"} and not _has_exact_source_rule(source_observations, {"BE-API-001"}):
         if any(marker in text for marker in ["@notblank", "字段校验", "字段缺少", "dto 缺少"]) and not any(
@@ -1423,6 +1561,13 @@ def _is_low_precision_unbacked_advisory(finding: dict[str, Any], source_observat
         if not has_high_risk_test_tool and (not has_core_rule or str(item.get("agent_id") or "") == "test_agent"):
             return True
     if not source_observations and covered & {"BE-CONTRACT-005"}:
+        return True
+    if covered & {"DEP-CVE-001"}:
+        source_text = _source_observation_text(source_observations)
+        if "fastjson" not in text and "fastjson" not in source_text:
+            if all(_as_int(item.get("line_start")) is None for item in source_observations):
+                return True
+    if any(rule.startswith("DDD-ENT-") for rule in covered) and not _has_exact_source_rule(source_observations, covered):
         return True
     if category == "BROAD_EXCEPTION" and not any(marker in text for marker in ["吞", "ignored", "静默", "伪造成功", "误以为成功", "swallow", "fallback", "兜底"]):
         return True
@@ -1542,6 +1687,27 @@ def _preserve_static_tool_finding(finding: dict[str, Any]) -> bool:
     except (TypeError, ValueError):
         confidence = 0
     return confidence >= 0.76 and bool(finding.get("file_path"))
+
+
+def _is_strong_tool_supported_finding(finding: dict[str, Any]) -> bool:
+    item = normalize_tool_finding(finding)
+    tool_rules = _promotable_rule_ids_for_finding(item)
+    if not tool_rules:
+        return False
+    if not item.get("file_path") or _as_int(item.get("line_start")) is None:
+        return False
+    try:
+        confidence = float(item.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if confidence < 0.84:
+        return False
+    if _is_tool_backed_finding(item) or str(item.get("source_type") or "") == "tool":
+        return True
+    source_observations = item.get("source_observations") or []
+    if _has_exact_source_rule(source_observations, tool_rules):
+        return True
+    return str(item.get("tool_rule_id") or item.get("rule_id") or "") in tool_rules and bool(item.get("judge_adjustment"))
 
 
 def _selection_category_key(finding: dict[str, Any]) -> str:
@@ -1671,6 +1837,61 @@ def _fill_after_auxiliary_drop(
     return selected, rejected
 
 
+def _represents_tool_rule(finding: dict[str, Any], rule_id: str, observation: dict[str, Any], *, tolerance: int = 5) -> bool:
+    if rule_id not in {str(rule) for rule in (finding.get("covered_rules") or [])}:
+        return False
+    if str(finding.get("file_path") or "") != str(observation.get("file_path") or ""):
+        return False
+    finding_line = _as_int(finding.get("line_start"))
+    observation_line = _as_int(observation.get("line_start"))
+    if finding_line is None or observation_line is None:
+        return True
+    return abs(finding_line - observation_line) <= tolerance
+
+
+def _fill_missing_tool_coverage(
+    selected: list[dict[str, Any]],
+    tool_observations: list[dict[str, Any]],
+    *,
+    max_findings: int,
+    allowed_agent_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    fill_observations: list[dict[str, Any]] = []
+    for observation in tool_observations:
+        rule_id = _canonical_tool_rule_id(observation)
+        if rule_id not in TOOL_COVERAGE_FILL_RULES:
+            continue
+        if any(_represents_tool_rule(item, rule_id, observation) for item in selected):
+            continue
+        try:
+            confidence = float(observation.get("confidence") or 0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        threshold = 0.8 if rule_id == "CODE-NULL-001" else 0.84
+        if confidence < threshold:
+            continue
+        fill_observations.append(observation)
+    if not fill_observations:
+        return selected
+    promoted = promote_tool_observations(
+        fill_observations,
+        selected,
+        allowed_agent_ids=allowed_agent_ids,
+    )
+    for candidate in sorted(promoted, key=_priority_sort_key, reverse=True):
+        if len(selected) >= max_findings:
+            break
+        rules = [str(rule) for rule in (candidate.get("covered_rules") or []) if str(rule) in TOOL_COVERAGE_FILL_RULES]
+        if not rules:
+            continue
+        observation = candidate.get("source_tool_observation") if isinstance(candidate.get("source_tool_observation"), dict) else {}
+        if any(_represents_tool_rule(item, rule, observation) for item in selected for rule in rules):
+            continue
+        candidate["judge_adjustment"] = "filled_from_high_signal_tool_observation"
+        selected.append(candidate)
+    return selected
+
+
 def _prune_low_signal_final_findings(findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     kept: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
@@ -1696,6 +1917,9 @@ def _prune_low_signal_final_findings(findings: list[dict[str, Any]]) -> tuple[li
         path = str(item.get("file_path") or "").replace("\\", "/").lower()
         text = _text_blob(item)
         reason = ""
+        if _is_strong_tool_supported_finding(item):
+            kept.append(item)
+            continue
         if any(rule.startswith("TEST-") for rule in rules):
             reason = "secondary_test_advisory"
         elif "DEP-SCOPE-005" in rules:
@@ -2332,9 +2556,15 @@ def promote_tool_observations(
                 ]
             )
         )
-        key = _dedupe_key(candidate)
-        if key in existing_keys:
+        exact_existing = any(
+            str(existing.get("file_path") or "") == str(candidate.get("file_path") or "")
+            and abs((_as_int(existing.get("line_start")) or 0) - (line_start or 0)) <= 3
+            and rule_id in {str(rule) for rule in (existing.get("covered_rules") or [])}
+            for existing in existing_findings
+        )
+        if exact_existing:
             continue
+        key = _dedupe_key(candidate)
         existing_keys.add(key)
         promoted.append(candidate)
     return promoted
@@ -2782,6 +3012,30 @@ def reconcile_rules_with_tool_observations(
     covered_rules = [str(rule) for rule in (finding.get("covered_rules") or []) if rule]
     if not covered_rules:
         return finding
+    source_primary_rules: list[str] = []
+    for observation in source_observations:
+        canonical = _canonical_tool_rule_id(observation)
+        if canonical:
+            source_primary_rules.append(canonical)
+            continue
+        category = normalized_rule_category(str(observation.get("rule_id") or ""), observation.get("message"))
+        primary = CATEGORY_PRIMARY_RULE.get(category, "")
+        if primary:
+            source_primary_rules.append(primary)
+    source_primary_rules = sorted({rule for rule in source_primary_rules if rule in PROMOTABLE_TOOL_RULES})
+    if source_primary_rules:
+        filtered_exact = [rule for rule in covered_rules if rule in source_primary_rules]
+        next_rules = filtered_exact or source_primary_rules
+        if next_rules != covered_rules:
+            item = dict(finding)
+            normalized = normalize_tool_finding(item)
+            normalized["covered_rules"] = next_rules
+            normalized["rule_reconciliation"] = {
+                "removed_rules": [rule for rule in covered_rules if rule not in next_rules],
+                "source_categories": sorted(source_categories),
+                "source_rules": source_primary_rules,
+            }
+            return normalized
     filtered_rules = [
         rule
         for rule in covered_rules
@@ -2796,7 +3050,9 @@ def reconcile_rules_with_tool_observations(
         "removed_rules": [rule for rule in covered_rules if rule not in filtered_rules],
         "source_categories": sorted(source_categories),
     }
-    return normalize_tool_finding(item)
+    normalized = normalize_tool_finding(item)
+    normalized["covered_rules"] = filtered_rules
+    return normalized
 
 
 def _best_source_observation_for_rule(
@@ -3179,9 +3435,26 @@ def make_judge_findings_node(
     run_id: str,
     new_id: Any,
     load_tool_observations: Any,
+    project_config: dict[str, Any] | None = None,
     max_findings: int = 20,
     selection_confidence: float = 0.75,
 ):
+    def load_suppression_hints() -> list[dict[str, Any]]:
+        try:
+            return [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT project_id, rule_id, file_glob, snippet_hash, snippet_excerpt, count, last_marked_at
+                    FROM rule_suppression_hints
+                    WHERE project_id = ?
+                    """,
+                    (project_id,),
+                ).fetchall()
+            ]
+        except sqlite3.Error:
+            return []
+
     def judge_findings_node(state: dict[str, Any]) -> dict[str, Any]:
         judge_span = recorder.span("judge_findings")
         tool_observations = state.get("tool_observations") or load_tool_observations(conn, run_id)
@@ -3321,6 +3594,23 @@ def make_judge_findings_node(
                     ),
                 },
             )
+        before_fill_count = len(final_findings)
+        final_findings = _fill_missing_tool_coverage(
+            final_findings,
+            tool_observations,
+            max_findings=max_findings,
+            allowed_agent_ids=selected_agent_ids or None,
+        )
+        if len(final_findings) > before_fill_count:
+            recorder.event(
+                judge_span,
+                "finding_tool_coverage_filled",
+                f"按高信号工具观测补齐 {len(final_findings) - before_fill_count} 个最终问题",
+                {
+                    "filled_count": len(final_findings) - before_fill_count,
+                    "rules": sorted({rule for item in final_findings[before_fill_count:] for rule in item.get("covered_rules", [])}),
+                },
+            )
         for rejected in judge_rejections:
             upsert_candidate_finding(
                 conn,
@@ -3338,7 +3628,11 @@ def make_judge_findings_node(
                 {"dedupe_hash": rejected.get("dedupe_hash"), "reasons": reasons},
             )
         _mark_promoted_rejection_sources(conn, run_id=run_id, rejections=judge_rejections)
-        persisted_findings: list[dict[str, Any]] = []
+        prepared_findings: list[dict[str, Any]] = []
+        line_index = changed_line_index(state.get("files") or [])
+        registry_defaults = load_registry().get("defaults", {})
+        evidence_thresholds = registry_defaults.get("evidence_thresholds") if isinstance(registry_defaults, dict) else {}
+        suppression_hints = load_suppression_hints()
         for finding in final_findings:
             source_observations = match_tool_observations_for_finding(finding, tool_observations)
             own_observation = finding.get("source_tool_observation")
@@ -3363,12 +3657,38 @@ def make_judge_findings_node(
                     {"dedupe_hash": finding.get("dedupe_hash"), "rules": finding.get("covered_rules") or []},
                 )
                 continue
+            duplicate = next((item for item in prepared_findings if _duplicate_same_issue(item, finding)), None)
+            if duplicate is not None:
+                judge_rejections.append({**finding, "rejected_reasons": ["deduped_after_rule_reconciliation"]})
+                recorder.event(
+                    judge_span,
+                    "finding_dropped",
+                    f"{finding.get('title', 'candidate')} 被 Judge 过滤：deduped_after_rule_reconciliation",
+                    {"dedupe_hash": finding.get("dedupe_hash"), "rules": finding.get("covered_rules") or []},
+                )
+                continue
             source_observations = [
                 {**item, "adoption_state": "adopted_final", "adopted_by_agent": finding.get("agent_id")}
                 for item in source_observations
             ]
             tool_provenance = _tool_provenance(finding, source_observations)
             quality_trace = build_quality_trace(finding, source_observations)
+            evidence_score = score_evidence(
+                finding,
+                line_index=line_index,
+                related_context=state.get("related_context") or {},
+                tool_observations=tool_observations,
+                source_observations=source_observations,
+                peer_findings=final_findings,
+                suppression_hints=suppression_hints,
+            )
+            finding = apply_evidence_score_policy(finding, evidence_score, evidence_thresholds if isinstance(evidence_thresholds, dict) else None)
+            quality_trace = {
+                **quality_trace,
+                "evidence_score": evidence_score,
+                "consensus_agents": evidence_score.get("consensus_agents") or [],
+                "matched_suppression_hint": evidence_score.get("matched_suppression_hint"),
+            }
             if not is_publishable_evidence_contract(quality_trace):
                 contract = quality_trace.get("evidence_contract") if isinstance(quality_trace, dict) else {}
                 rejected = {
@@ -3393,6 +3713,36 @@ def make_judge_findings_node(
             finding["source_observations"] = source_observations
             finding["tool_provenance"] = tool_provenance
             finding["quality_trace"] = quality_trace
+            finding["evidence_score"] = evidence_score
+            prepared_findings.append(finding)
+        final_findings = run_critic_pass(
+            findings=prepared_findings,
+            source_file_contents=state.get("source_file_contents") or {},
+            config=project_config or {},
+            recorder=recorder,
+            span_id=judge_span,
+            budget_tracker=state.get("budget_tracker"),
+        )
+        quality_selected_findings: list[dict[str, Any]] = []
+        for finding in final_findings:
+            if str(finding.get("severity") or "") in SELECTABLE_SEVERITIES:
+                quality_selected_findings.append(finding)
+                continue
+            rejected = {**finding, "rejected_reasons": ["not_selected_after_quality_calibration"]}
+            judge_rejections.append(rejected)
+            recorder.event(
+                judge_span,
+                "finding_dropped",
+                f"{finding.get('title', 'candidate')} 被 Judge 过滤：not_selected_after_quality_calibration",
+                {"dedupe_hash": finding.get("dedupe_hash"), "severity": finding.get("severity")},
+            )
+        final_findings = quality_selected_findings
+        persisted_findings: list[dict[str, Any]] = []
+        for finding in final_findings:
+            source_observations = finding.get("source_observations") or []
+            tool_provenance = finding.get("tool_provenance") or []
+            quality_trace = finding.get("quality_trace") if isinstance(finding.get("quality_trace"), dict) else {}
+            evidence_score = finding.get("evidence_score") if isinstance(finding.get("evidence_score"), dict) else {}
             finding_id = new_id("finding")
             conn.execute(
                 """
@@ -3400,9 +3750,10 @@ def make_judge_findings_node(
                   id, review_run_id, severity, confidence, agent_id, head_sha, dedupe_hash,
                   file_path, line_start, line_end, title, problem_description, recommendation, suggested_code, evidence,
                   covered_rules_json, skipped_rules_json, tool_provenance_json, source_observations_json, quality_trace_json,
+                  evidence_score_json,
                   publish_state, lifecycle_state, selected
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?)
                 """,
                 (
                     finding_id,
@@ -3425,6 +3776,7 @@ def make_judge_findings_node(
                     json.dumps(tool_provenance, ensure_ascii=False),
                     json.dumps(source_observations, ensure_ascii=False),
                     json.dumps(quality_trace, ensure_ascii=False),
+                    json.dumps(evidence_score, ensure_ascii=False),
                     int(finding.get("selected", 0)),
                 ),
             )

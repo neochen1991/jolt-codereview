@@ -1,0 +1,19 @@
+{
+  "exported_findings": 9,
+  "per_mr": [
+    {
+      "mr_id": "mr_repo_github_java_complex_10file_9301",
+      "title": "复杂支付项目 MR：10 文件 10 个预埋问题",
+      "run_id": "run_aa8c4d1f2a1f43ce",
+      "run_status": "waiting_confirmation",
+      "skipped_unusable_runs": [
+        {
+          "id": "run_02052269fb544a04",
+          "status": "failed",
+          "report_summary": "cannot access local variable 'persisted_findings' where it is not associated with a value"
+        }
+      ],
+      "finding_count": 9
+    }
+  ]
+}

@@ -412,6 +412,26 @@ ResultSet rs = ps.executeQuery();""",
                         raw_artifact_id=raw_artifact_id,
                     )
                 )
+            if "executequery" in lowered and _has_unbounded_select_context(function_context):
+                findings.append(
+                    _finding(
+                        agent_id="performance_agent",
+                        rule_id="PERF-QUERY-001",
+                        severity="medium",
+                        confidence=0.86,
+                        file_path=file_path,
+                        line=line,
+                        title="SQL 查询缺少分页或结果上限",
+                        description="tree-sitter 代码图谱发现新增 JDBC 查询执行 SELECT 时没有 LIMIT、分页参数或游标边界，数据量增长后可能形成无界结果集和内存压力。",
+                        recommendation="为查询增加 LIMIT/OFFSET、Pageable、游标或业务上限，并在入口参数校验最大 pageSize。",
+                        suggested_code="""String sql = "select id, order_no, amount from payments where user_id = ? order by created_at desc limit ?";
+PreparedStatement ps = connection.prepareStatement(sql);
+ps.setString(1, userId);
+ps.setInt(2, Math.min(size, 100));""",
+                        evidence=f"{file_path}:{line} unbounded SQL query context: {function_context[:260]}",
+                        raw_artifact_id=raw_artifact_id,
+                    )
+                )
         if callee == "set" and "redis" in context_lowered and "opsforvalue" in context_lowered and not _has_ttl_context(function_context):
             findings.append(
                 _finding(
@@ -490,6 +510,15 @@ def _is_mutating_repository_call(callee: str, snippet: str) -> bool:
 def _has_sql_concat_context(context: str) -> bool:
     lowered = context.lower()
     return bool(("select " in lowered or "update " in lowered or "delete " in lowered or "insert " in lowered) and "+" in context)
+
+
+def _has_unbounded_select_context(context: str) -> bool:
+    lowered = context.lower()
+    if "select " not in lowered:
+        return False
+    if any(marker in lowered for marker in [" limit ", " offset ", "pageable", "pagesize", "page_size", "setmaxrows", "fetchsize", "cursor"]):
+        return False
+    return True
 
 
 def _has_ttl_context(context: str) -> bool:

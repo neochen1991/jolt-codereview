@@ -314,7 +314,30 @@ P2 告警：
 - trace 写入 P95 > 500ms。
 - gold set 周评测未执行。
 
-## 10. 降级策略
+## 10. 检视质量 SLO
+
+真实任务评估门禁：
+
+- `npm run verify:real-prs` precision >= 0.70。
+- `npm run verify:real-prs` recall >= 0.60。
+- negative set false positive count = 0。
+- `npm run verify:gold-eval` 不低于既有阈值。
+
+运营反馈指标：
+
+- finding acceptance rate >= 0.40。
+- false positive rate <= 0.20。
+- high-severity accuracy >= 0.60。
+- 指标通过 `/api/projects/:projectId/review-quality/metrics` 与 `/api/observability/review-quality?project_id=` 输出。
+
+校准策略：
+
+- `rule_precision_history` 同时保留累计计数和近期计数。
+- 近期计数由 `npm run maintenance:recalc-recent-precision -- --window-days=90` 定时重算，写反馈时只更新累计计数。
+- 近期样本数 >= 5 且 precision < 0.30 时触发 `auto_suppress`。
+- `auto_suppress` 默认只降权；仅当 finding confidence < 0.5 时硬拒绝。
+
+## 11. 降级策略
 
 按优先级依次降级：
 
@@ -332,7 +355,7 @@ P2 告警：
 - `review_runs.report_summary`。
 - `review_runs.budget_used_json.truncated_reason`。
 
-## 11. 验收清单
+## 12. 验收清单
 
 上线前必须满足：
 

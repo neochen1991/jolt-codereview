@@ -1,0 +1,3613 @@
+{
+  "defaults": {
+    "evidence_thresholds": {
+      "downgrade_below": 0.5,
+      "drop_below": 0.35
+    },
+    "signature_keys": [
+      "covered_rules",
+      "file_path",
+      "line_bucket",
+      "primary_symbol"
+    ]
+  },
+  "generated_from": [
+    "worker/orchestration/nodes/judge_findings.py",
+    "worker/tools/tool_normalizer.py"
+  ],
+  "rules": [
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "BIGDECIMAL_PRECISION",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-BIGDECIMAL-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-BIGDECIMAL-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "config.static-rules.semgrep.java.jolt.jolt.java.bigdecimal-getter-equals-money"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.bigdecimal-double-constructor"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.bigdecimal-equals-money"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.bigdecimal-floating-literal-constructor"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.bigdecimal-getter-equals-money"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "performance_agent"
+      ],
+      "category": "UNBOUNDED_EXECUTOR",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-CONCURRENCY-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-CONCURRENCY-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.new-thread-in-spring-code"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "THREAD_UNSAFE_DATE_FORMAT",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-CONCURRENCY-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-CONCURRENCY-002"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.static-mutable-collection"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.static-simpledateformat"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "THREADLOCAL_LEAK",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-CONCURRENCY-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-CONCURRENCY-003"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.threadlocal-read-in-new-thread"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.threadlocal-set-without-remove"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "database_agent"
+      ],
+      "category": "DB_MAP_RESULT_TYPE",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-DB-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-DB-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "database_agent"
+      ],
+      "category": "IBATIS_MEMORY_PAGINATION",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-DB-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-DB-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "EQUALS_HASHCODE_CONTRACT",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-EQUALS-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-EQUALS-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "PRINT_STACK_TRACE",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-EXC-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-EXC-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "SYSTEM_OUT_LOGGING",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-LOG-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-LOG-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "MYBATIS_SQL_INJECTION",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-MYBATIS-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-MYBATIS-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "JAVA_NAMING",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-NAMING-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-NAMING-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-NAMING-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "ALI-NAMING-002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-NAMING-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": []
+    },
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "NULL_RETURN_COLLECTION",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "ALI-RETURN-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "ALI-RETURN-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "backend_agent"
+      ],
+      "category": "SPRING_VALIDATION",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "BE-API-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "BE-API-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_JAVA_MISSING_VALID"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.spring.missing-valid-request-body"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "backend_agent"
+      ],
+      "category": "IDEMPOTENCY_GUARD",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "BE-IDEMP-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "BE-IDEMP-004"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.localdatetime-now-idempotency-window"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.webhook-dedupe-key-composite-change"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "backend_agent"
+      ],
+      "category": "SPRING_TRANSACTION",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "BE-TX-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "BE-INTEGRATION-006"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "BE-TX-002"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_JAVA_MISSING_TRANSACTION"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "BROAD_EXCEPTION",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "CODE-EXC-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "BE-ERR-003"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "CODE-EXC-003"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_JAVA_CATCH_EXCEPTION"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "AvoidCatchingGenericException"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "NULL_SAFETY",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "CODE-NULL-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "Backend Java Standard"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "CODE-NULL-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DB-MAP-004"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.map-payload-string-valueof"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.payment-status-valueof-unvalidated"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.refund-reason-startswith-null"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "DB_CONNECTION_STATE_LEAK",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "CODE-RESOURCE-005",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "CODE-RESOURCE-005"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DB-CONN-010"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "LLDEF-RES-006"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.jdbc-autocommit-not-restored"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.zip-parent-mkdirs-unchecked"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.zipinputstream-without-try-resources"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "CloseResource"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "coding_agent"
+      ],
+      "category": "STATE_MACHINE_INTEGRITY",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "CODE-STATE-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "CODE-STATE-004"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.default-charset-csv-io"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.fixed-active-cache-key"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.force-capture-state-bypass"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.localdatetime-now-export-audit"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.loose-webhook-event-match"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.override-status-bypass"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.refund-allows-refunded-state"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.refund-reason-manual-override-bypass"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.return-internal-mutable-collection"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "database_agent"
+      ],
+      "category": "DB_BREAKING_CHANGE",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DB-DDL-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DB-DDL-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_DB_DROP_COLUMN"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.db.drop-column"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "database_agent"
+      ],
+      "category": "DB_NOT_NULL_NO_DEFAULT",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DB-NOTNULL-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DB-COMPAT-009"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DB-NOTNULL-002"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DB-NOTNULL-008"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_DB_NOT_NULL_NO_DEFAULT"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_AGGREGATE_OWNERSHIP",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-AGG-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-AGG-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.reassign-merchant-ownership"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_AGG_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-AGG-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-AGG-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_AGG_003",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-AGG-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-AGG-003"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_AGG_004",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-AGG-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-AGG-004"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_AGG_005",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-AGG-005",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-AGG-005"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_AGG_006",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-AGG-006",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-AGG-006"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_AGG_007",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-AGG-007",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-AGG-007"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_AGG_008",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-AGG-008",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-AGG-008"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_AGG_009",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-AGG-009",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-AGG-009"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_AGG_010",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-AGG-010",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-AGG-010"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_APP_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-APP-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-APP-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_APP_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-APP-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-APP-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_APP_003",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-APP-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-APP-003"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_APP_004",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-APP-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-APP-004"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_APP_005",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-APP-005",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-APP-005"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_CQRS_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-CQRS-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-CQRS-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_CQRS_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-CQRS-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-CQRS-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_CQRS_003",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-CQRS-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-CQRS-003"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_CQRS_004",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-CQRS-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-CQRS-004"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_CTX_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-CTX-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-CTX-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_CTX_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-CTX-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-CTX-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_CTX_003",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-CTX-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-CTX-003"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_CTX_004",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-CTX-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-CTX-004"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_CTX_005",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-CTX-005",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-CTX-005"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_DOM_SVC_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-DOM-SVC-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-DOM-SVC-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_DOM_SVC_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-DOM-SVC-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-DOM-SVC-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_ENT_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-ENT-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-ENT-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_ENT_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-ENT-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-ENT-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_EVENT_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-EVENT-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-EVENT-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_EVENT_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-EVENT-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-EVENT-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_EVENT_003",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-EVENT-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-EVENT-003"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_EVENT_004",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-EVENT-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-EVENT-004"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_EVENT_005",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-EVENT-005",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-EVENT-005"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_EVENT_006",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-EVENT-006",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-EVENT-006"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_EVO_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-EVO-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-EVO-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_EVO_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-EVO-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-EVO-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_EVO_003",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-EVO-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-EVO-003"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_EVO_004",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-EVO-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-EVO-004"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_INFRA_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-INFRA-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-INFRA-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_INFRA_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-INFRA-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-INFRA-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_INFRA_003",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-INFRA-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-INFRA-003"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_LAYER_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-LAYER-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-LAYER-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_LAYER_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-LAYER-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-LAYER-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_LAYER_003",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-LAYER-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-LAYER-003"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_LAYER_004",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-LAYER-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-LAYER-004"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_LAYER_005",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-LAYER-005",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-LAYER-005"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_POLICY_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-POLICY-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-POLICY-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "config.static-rules.semgrep.java.jolt.jolt.java.policy-priority-stored-not-selected"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.policy-priority-stored-not-selected"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_REPO_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-REPO-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-REPO-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_REPO_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-REPO-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-REPO-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_REPO_003",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-REPO-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-REPO-003"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_REPO_004",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-REPO-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-REPO-004"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_RULE_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-RULE-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-RULE-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_RULE_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-RULE-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-RULE-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_RULE_003",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-RULE-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-RULE-003"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_RULE_004",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-RULE-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-RULE-004"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_RULE_005",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-RULE-005",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-RULE-005"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_RULE_006",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-RULE-006",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-RULE-006"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_TENANT_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-TENANT-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-TENANT-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_TENANT_002",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-TENANT-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-TENANT-002"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_TENANT_003",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-TENANT-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-TENANT-003"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_VO_001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-VO-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-VO-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_WEAK_DOMAIN_MODEL",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-VO-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-VO-002"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.domain-map-string-object"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_VO_003",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-VO-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-VO-003"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_VO_004",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-VO-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-VO-004"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_VO_005",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-VO-005",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-VO-005"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_VO_006",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-VO-006",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-VO-006"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "ddd_agent"
+      ],
+      "category": "DDD_VO_007",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DDD-VO-007",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DDD-VO-007"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "dependency_agent"
+      ],
+      "category": "DEPENDENCY_CVE",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DEP-CVE-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "DEP-CVE-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_DEP_HIGH_CVE"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "dependency_agent"
+      ],
+      "category": "DEPENDENCY_SCOPE",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "DEP-SCOPE-005",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": []
+    },
+    {
+      "agent_owners": [
+        "backend_agent"
+      ],
+      "category": "LAYER_VIOLATION",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "HW-LAYER-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "HW-LAYER-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "performance_agent"
+      ],
+      "category": "REQUEST_THREAD_BLOCKING",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "HW-PERF-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "HW-PERF-001"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "INSECURE_RANDOM",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "HW-SEC-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "HW-SEC-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "config.static-rules.semgrep.java.jolt.jolt.java.secure-random-fixed-seed"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.random-in-risk-or-security-decision"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.secure-random-fixed-seed"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "backend_agent"
+      ],
+      "category": "TRANSACTION_PROXY_INVALID",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "HW-TX-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "HW-TX-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.transactional-self-invocation"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "performance_agent"
+      ],
+      "category": "LIKE_LEADING_WILDCARD_INDEX_RISK",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "PERF-LIKE-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.sql-leading-wildcard-like"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "performance_agent"
+      ],
+      "category": "UNBOUNDED_RESULT_MEMORY",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "PERF-MEM-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "PERF-MEM-004"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.zip-processing-without-size-limit"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "performance_agent"
+      ],
+      "category": "UNBOUNDED_QUERY",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "PERF-QUERY-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "PERF-QUERY-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.sql-query-without-limit"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "redis_agent"
+      ],
+      "category": "REDIS_DANGEROUS_COMMAND",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "REDIS-CMD-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_JAVA_REDIS_KEYS"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "REDIS-CMD-003"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.redis.keys"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "redis_agent"
+      ],
+      "category": "REDIS_MISSING_TTL",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "REDIS-TTL-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "medium",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_JAVA_REDIS_MISSING_TTL"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "REDIS-TTL-002"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.redis.set-without-ttl"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "SEC-AUTHN-001",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "SEC-AUTHN-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": []
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "AUTHORIZATION_BYPASS",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "SEC-AUTHZ-002",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "SEC-AUTHN-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "SEC-AUTHZ-002"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "config.static-rules.semgrep.java.jolt.jolt.java.preview-findall-cross-tenant-leak"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.admin-mutation-endpoint"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.preview-findall-cross-tenant-leak"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "SPRING_ACTUATOR_EXPOSED",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "SEC-CONFIG-007",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_CONFIG_ACTUATOR_EXPOSE_ALL"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "SEC-CONFIG-007"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.config.jpa-show-sql-enabled"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "WEAK_SIGNATURE_COMPARE",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "SEC-CRYPTO-010",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "SEC-CRYPTO-010"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.signature-string-equals"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "WEAK_SIGNATURE_ALGORITHM",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "SEC-CRYPTO-011",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "SEC-CRYPTO-011"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "config.static-rules.semgrep.java.lang.security.audit.crypto.use-of-sha1"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "java.lang.security.audit.crypto.use-of-sha1"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "DEBUG_ENDPOINT_EXPOSURE",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "SEC-DEBUG-011",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "SEC-DEBUG-011"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.spring-debug-endpoint-method"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "SQL_INJECTION",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "SEC-INJECT-003",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_JAVA_SQL_CONCAT"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "SEC-INJECT-003"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "SQL_INJECTION_JDBC"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "SpringInjection"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "config.static-rules.semgrep.java.jolt.jolt.java.spel-executable-default-expression"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "config.static-rules.semgrep.java.lang.security.audit.object-deserialization"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "config.static-rules.semgrep.java.lang.security.audit.unsafe-reflection"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "config.static-rules.semgrep.java.spring.security.audit.spel-injection"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "java.lang.security.audit.sqli.jdbc-sqli"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.content-disposition-unsanitized-filename"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.csv-response-without-escaping"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.objectinputstream-readobject"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.serializable-command-without-filter"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.spel-executable-default-expression"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.spel-standard-evaluation-context"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.zip-entry-write-without-normalize-guard"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "lang.security.audit.object-deserialization"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "lang.security.audit.unsafe-reflection"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "object-deserialization"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "spel-injection"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "spring.security.audit.spel-injection"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "unsafe-reflection"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "UNTRUSTED_FORWARDED_HEADER",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "SEC-RISK-006",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "config.static-rules.semgrep.java.lang.security.java-pattern-from-string-parameter"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "java-pattern-from-string-parameter"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.client-controlled-risk-bypass"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.failure-default-allow"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.predictable-temp-file"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.regex-pattern-compile-user-input"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.trust-x-forwarded-for"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "lang.security.java-pattern-from-string-parameter"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "SECRET_LEAK",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "SEC-SECRET-004",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_JAVA_HARDCODED_SECRET"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "SEC-SECRET-004"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "config.static-rules.semgrep.java.jolt.jolt.java.sensitive-request-param-secret"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.config.hardcoded-password"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.hardcoded-password"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.sensitive-audit-write"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.sensitive-data-logging"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.sensitive-payment-field"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.sensitive-request-param-secret"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.sensitive-response-field"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "ERROR_INFORMATION_LEAK",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "SEC-SECRET-004:ERROR_RESPONSE",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_JAVA_EXCEPTION_MESSAGE_RESPONSE"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "SEC-SECRET-004:ERROR_RESPONSE"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.config.stacktrace-enabled"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.stacktrace-response"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "SSRF_CALLBACK",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "SEC-SSRF-009",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.untrusted-callback-url-invocation"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "security_agent"
+      ],
+      "category": "WEAK_WEBHOOK_TRUST",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "SEC-WEBHOOK-008",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "high",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.java.weak-webhook-signature-match"
+        }
+      ]
+    },
+    {
+      "agent_owners": [
+        "test_agent"
+      ],
+      "category": "MISSING_TEST_COVERAGE",
+      "evidence_requirements": {
+        "min_evidence_components": 3,
+        "requires_line": true
+      },
+      "id": "TEST-COVER-001",
+      "is_bound_document_rule": false,
+      "promote_from_tool": true,
+      "severity_floor": "low",
+      "signature_keys": [
+        "covered_rules",
+        "file_path",
+        "line_bucket",
+        "primary_symbol"
+      ],
+      "tool_sources": [
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "JOLT_JAVA_MISSING_TEST"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "TEST-COVER-001"
+        },
+        {
+          "min_confidence": 0.0,
+          "tool": "*",
+          "tool_rule_id": "jolt.test.skip-high-risk-path-tests"
+        }
+      ]
+    }
+  ]
+}

@@ -3,8 +3,7 @@
     "default_provider": "dashscope-openai-compatible",
     "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
     "default_model": "MiniMax-M2.7",
-    "default_api_key_env": null,
-    "default_api_key": "<LOCAL_ONLY_API_KEY>",
+    "default_api_key_env": "MINIMAX_API_KEY",
     "request_timeout_seconds": 120,
     "max_output_tokens": 8192
   },
@@ -36,6 +35,14 @@
   },
   "review_policy": {
     "max_added_lines_per_mr": 2000
+  },
+  "agent_policy": {
+    "deepagents": {
+      "enabled": false,
+      "enable_for_deep_effort": true,
+      "enable_for_required_agents": true,
+      "enable_for_skill_bundle": true
+    }
   },
   "queue_policy": {
     "poll_interval_seconds": 300,

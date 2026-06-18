@@ -11,6 +11,8 @@ class BudgetTracker:
     max_llm_calls: int
     started_at: float = field(default_factory=time.monotonic)
     llm_calls: int = 0
+    acc_input_tokens: int = 0
+    acc_output_tokens: int = 0
     truncated_reason: str | None = None
 
     @classmethod
@@ -22,6 +24,8 @@ class BudgetTracker:
 
     def charge_llm(self, model: str, in_tokens: int, out_tokens: int) -> None:
         self.llm_calls += 1
+        self.acc_input_tokens += max(0, int(in_tokens or 0))
+        self.acc_output_tokens += max(0, int(out_tokens or 0))
         self.should_stop()
 
     def should_stop(self) -> bool:
@@ -41,5 +45,7 @@ class BudgetTracker:
             "max_llm_calls": self.max_llm_calls,
             "wall_seconds": round(max(0.0, time.monotonic() - self.started_at), 3),
             "llm_calls": self.llm_calls,
+            "acc_input_tokens": self.acc_input_tokens,
+            "acc_output_tokens": self.acc_output_tokens,
             "truncated_reason": self.truncated_reason,
         }

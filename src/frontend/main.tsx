@@ -200,6 +200,7 @@ type Finding = {
   tool_provenance_json?: string;
   source_observations_json?: string;
   quality_trace_json?: string;
+  evidence_score_json?: string;
   selected: number;
   publish_state: string;
   lifecycle_state: string;
@@ -284,7 +285,6 @@ type LlmSettingsForm = {
   default_base_url: string;
   default_model: string;
   default_api_key_env: string;
-  default_api_key: string;
   request_timeout_seconds: string;
   max_output_tokens: string;
   enable_stream: boolean;
@@ -2828,12 +2828,10 @@ function ConfigWorkspace({
     default_base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
     default_model: "MiniMax-M2.7",
     default_api_key_env: "",
-    default_api_key: "",
     request_timeout_seconds: "120",
     max_output_tokens: "8192",
     enable_stream: true
   });
-  const [llmStoredApiKey, setLlmStoredApiKey] = useState("");
   const [projectVcsForm, setProjectVcsForm] = useState<ProjectVcsSettingsForm>({
     codehub_token: "",
     codehub_token_env: "",
@@ -3021,12 +3019,10 @@ function ConfigWorkspace({
         default_base_url: String(llm.default_base_url ?? "https://ark.cn-beijing.volces.com/api/coding/v3"),
         default_model: String(llm.default_model ?? "MiniMax-M2.7"),
         default_api_key_env: String(llm.default_api_key_env ?? ""),
-        default_api_key: "",
         request_timeout_seconds: String(llm.request_timeout_seconds ?? "120"),
         max_output_tokens: String(llm.max_output_tokens ?? "8192"),
         enable_stream: llm.enable_stream !== false
       });
-      setLlmStoredApiKey(String(llm.default_api_key ?? ""));
       setProjectVcsForm({
         codehub_token: "",
         codehub_token_env: String(vcsPolicy.codehub_token_env ?? recordValue(effectiveRoot.codehub).default_token_env ?? ""),
@@ -3394,7 +3390,6 @@ function ConfigWorkspace({
       default_base_url: llmForm.default_base_url.trim(),
       default_model: llmForm.default_model.trim(),
       default_api_key_env: llmForm.default_api_key_env.trim() || null,
-      default_api_key: llmForm.default_api_key.trim() || llmStoredApiKey || null,
       request_timeout_seconds: clampLlmTimeout(llmForm.request_timeout_seconds),
       max_output_tokens: clampLlmOutputTokens(llmForm.max_output_tokens),
       enable_stream: llmForm.enable_stream
@@ -3422,7 +3417,6 @@ function ConfigWorkspace({
           default_base_url: llmForm.default_base_url.trim(),
           default_model: llmForm.default_model.trim(),
           default_api_key_env: llmForm.default_api_key_env.trim() || null,
-          default_api_key: llmForm.default_api_key.trim() || llmStoredApiKey || null,
           request_timeout_seconds: clampLlmTimeout(llmForm.request_timeout_seconds),
           max_output_tokens: clampLlmOutputTokens(llmForm.max_output_tokens),
           enable_stream: llmForm.enable_stream
@@ -4078,8 +4072,8 @@ function ConfigWorkspace({
                 <SettingField label="API Key 环境变量">
                   <input value={llmForm.default_api_key_env} onChange={(event) => setLlmForm({ ...llmForm, default_api_key_env: event.target.value })} placeholder="例如 MINIMAX_API_KEY" disabled={!canEdit} />
                 </SettingField>
-                <SettingField label="API Key">
-                  <input type="password" value={llmForm.default_api_key} onChange={(event) => setLlmForm({ ...llmForm, default_api_key: event.target.value })} placeholder={llmStoredApiKey ? "已配置，留空不修改" : "本机调试可直接填写"} disabled={!canEdit} />
+                <SettingField label="密钥来源">
+                  <div className="setting-static-text">模型密钥只从服务端环境变量读取，页面不保存明文 API Key。</div>
                 </SettingField>
               </div>
               <div className="setting-actions">
@@ -6184,6 +6178,7 @@ function FindingDetailModal({
   const sourceObservations = parseJsonObjectArray(finding.source_observations_json);
   const toolProvenance = parseJsonObjectArray(finding.tool_provenance_json);
   const qualityTrace = safeJson(String(finding.quality_trace_json || "{}"));
+  const evidenceScore = safeJson(String(finding.evidence_score_json || JSON.stringify(qualityTrace.evidence_score || {})));
   const evidenceContract = (
     qualityTrace.evidence_contract && typeof qualityTrace.evidence_contract === "object"
       ? qualityTrace.evidence_contract
@@ -6398,6 +6393,14 @@ function FindingDetailModal({
               <div>
                 <dt>证据分</dt>
                 <dd>{formatEvidenceContractScore(evidenceContract)}</dd>
+              </div>
+              <div>
+                <dt>结构证据</dt>
+                <dd>{formatEvidenceScore(evidenceScore)}</dd>
+              </div>
+              <div>
+                <dt>证据组件</dt>
+                <dd>{formatEvidenceScoreComponents(evidenceScore)}</dd>
               </div>
               <div>
                 <dt>缺失项</dt>
@@ -6993,6 +6996,30 @@ function formatEvidenceContractScore(contract: Record<string, unknown>) {
   const score = Number(contract.score);
   if (!Number.isFinite(score)) return "--";
   return `${Math.round(score * 100)}%`;
+}
+
+function formatEvidenceScore(score: Record<string, unknown>) {
+  const value = Number(score.score);
+  if (!Number.isFinite(value)) return "--";
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatEvidenceScoreComponents(score: Record<string, unknown>) {
+  const components = score.components && typeof score.components === "object"
+    ? score.components as Record<string, unknown>
+    : {};
+  const labels: Record<string, string> = {
+    tool_backing: "工具",
+    snippet_quote: "源码",
+    line_precision: "行号",
+    rule_alignment: "规则",
+    symbol_alignment: "符号",
+    consensus: "共识"
+  };
+  const active = Object.entries(components)
+    .filter(([, value]) => Number(value) > 0)
+    .map(([key, value]) => `${labels[key] || key} ${Math.round(Number(value) * 100)}%`);
+  return active.length ? active.join("、") : "未命中结构组件";
 }
 
 function formatEvidenceContractMissing(contract: Record<string, unknown>) {

@@ -27,7 +27,6 @@ def candidate_providers(llm_config: dict[str, Any], *, required_context: int, vi
                 "base_url": llm_config.get("default_base_url") or "",
                 "model": llm_config.get("default_model") or "MiniMax-M2.7",
                 "api_key_env": llm_config.get("default_api_key_env"),
-                "api_key": llm_config.get("default_api_key"),
                 "tier": llm_config.get("default_tier"),
                 "context": llm_config.get("default_context"),
             }
@@ -46,7 +45,7 @@ def candidate_providers(llm_config: dict[str, Any], *, required_context: int, vi
         if vision and not bool(raw.get("vision", caps.get("vision"))):
             continue
         api_key_env = raw.get("api_key_env")
-        api_key = os.environ.get(str(api_key_env)) if api_key_env else raw.get("api_key")
+        api_key = os.environ.get(str(api_key_env)) if api_key_env else None
         result.append(
             {
                 "provider": name,

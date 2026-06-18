@@ -124,6 +124,7 @@ export interface FindingRow {
   tool_provenance_json?: string;
   source_observations_json?: string;
   quality_trace_json?: string;
+  evidence_score_json?: string;
   publish_state: string;
   lifecycle_state: string;
   selected: number;

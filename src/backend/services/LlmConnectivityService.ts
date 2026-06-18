@@ -5,6 +5,7 @@ export type LlmTestInput = {
   default_base_url?: string;
   default_model?: string;
   default_api_key_env?: string | null;
+  /** @deprecated Plaintext API keys are intentionally ignored. Use default_api_key_env. */
   default_api_key?: string | null;
   request_timeout_seconds?: number;
   enable_stream?: boolean;
@@ -18,7 +19,7 @@ function openAiCompatibleChatUrl(baseUrl: string) {
 function resolveLlmApiKey(input: LlmTestInput) {
   const envName = typeof input.default_api_key_env === "string" ? input.default_api_key_env.trim() : "";
   if (envName && process.env[envName]) return process.env[envName] ?? "";
-  return typeof input.default_api_key === "string" ? input.default_api_key.trim() : "";
+  return "";
 }
 
 export function compactLlmTestInput(input: LlmTestInput) {
@@ -78,7 +79,7 @@ export async function testOpenAiCompatibleLlm(input: LlmTestInput) {
   const apiKey = resolveLlmApiKey(input);
   if (!baseUrl) return badRequest("LLM base url is required");
   if (!model) return badRequest("LLM model is required");
-  if (!apiKey) return badRequest("LLM api key or api key env is required");
+  if (!apiKey) return badRequest("LLM api key env is required and must point to a non-empty environment variable");
 
   const started = Date.now();
   const controller = new AbortController();

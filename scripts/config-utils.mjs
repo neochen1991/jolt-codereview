@@ -26,7 +26,7 @@ function deepMerge(base, override) {
 export function resolveLlmApiKey(config) {
   const envName = config.llm?.default_api_key_env;
   if (envName && process.env[envName]) return process.env[envName];
-  return config.llm?.default_api_key || null;
+  return null;
 }
 
 export function chatCompletionsUrl(baseUrl) {

@@ -1,0 +1,14 @@
+{
+  "tp": 10,
+  "fp": 0,
+  "fn": 0,
+  "precision": 1.0,
+  "recall": 1.0,
+  "high_recall": 1.0,
+  "gold_count": 10,
+  "finding_count": 9,
+  "negative_mr_count": 0,
+  "negative_false_positive_count": 0,
+  "missed_gold_ids": [],
+  "false_positive_findings": []
+}

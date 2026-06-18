@@ -146,7 +146,9 @@ def _scan_java_file(file_path: str, lines: list[tuple[int, str]], content: str) 
             findings.extend(_maybe_missing_valid(file_path, lines, line_no))
             findings.extend(_maybe_missing_idempotency_guard(file_path, lines, content, line_no))
         if "statement.executequery(" in lowered or "statement.executeupdate(" in lowered:
-            if "+" in line:
+            sql_window = "\n".join(text for no, text in lines if line_no - 8 <= no <= line_no)
+            lowered_sql_window = sql_window.lower()
+            if "+" in line or (("select " in lowered_sql_window or "update " in lowered_sql_window or "delete " in lowered_sql_window) and "+" in sql_window):
                 findings.append(
                     _finding(
                         agent_id="security_agent",
@@ -166,7 +168,7 @@ ResultSet rs = ps.executeQuery();''',
                         rule_id="SEC-INJECT-003",
                     )
                 )
-            if "select" in lowered and " limit " not in lowered and " pageable" not in lowered_content:
+            if "select" in lowered_sql_window and " limit " not in lowered_sql_window and " pageable" not in lowered_content:
                 findings.append(
                     _finding(
                         agent_id="performance_agent",
@@ -182,7 +184,7 @@ ResultSet rs = ps.executeQuery();''',
 );
 ps.setString(1, userId);
 ps.setInt(2, pageSize);''',
-                        evidence=line,
+                        evidence=sql_window,
                         rule_id="PERF-QUERY-001",
                     )
                 )

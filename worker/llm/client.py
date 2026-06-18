@@ -7,9 +7,15 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from db_compat import open_app_database
 from llm_router import candidate_providers
+from llm.retry import call_with_retry
 from prompts.builder import build_prompt
 from prompts.system import REVIEW_SYSTEM_PROMPT
+
+LLM_REVIEW_SEED = 13
+LLM_REVIEW_SCHEMA_NAME = "review_findings_v1"
+LLM_REVIEW_FALLBACK_SCHEMA_NAME = "review_findings_v1_unstructured"
 
 
 def sha1(value: str) -> str:
@@ -23,18 +29,29 @@ def chat_completions_url(base_url: str) -> str:
     return f"{base}/chat/completions"
 
 
-def llm_request_timeout_seconds(llm: dict[str, Any] | None) -> int:
+def estimate_tokens(text: str) -> int:
+    cjk = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+    non_cjk = max(0, len(text) - cjk)
+    return max(1, int(cjk * 0.6 + non_cjk / 4) + 1)
+
+
+def llm_request_timeout_seconds(llm: dict[str, Any] | None, operation: str = "default") -> int:
     config = llm or {}
+    defaults = {"router": 60, "debate": 60, "summary": 60, "expert": 120, "deepagents": 240, "default": 120}
+    timeouts = config.get("timeouts") if isinstance(config.get("timeouts"), dict) else {}
     configured = (
-        config.get("request_timeout_seconds")
+        timeouts.get(operation)
+        or timeouts.get("default")
+        or config.get("request_timeout_seconds")
         or config.get("timeout_seconds")
         or config.get("default_timeout_seconds")
-        or 120
+        or defaults.get(operation)
+        or defaults["default"]
     )
     try:
         return max(1, min(600, int(configured)))
     except (TypeError, ValueError):
-        return 120
+        return defaults.get(operation) or defaults["default"]
 
 
 def llm_stream_enabled(llm: dict[str, Any] | None) -> bool:
@@ -192,6 +209,155 @@ def llm_max_output_tokens(llm: dict[str, Any] | None) -> int:
         return max(1024, min(12000, int(configured)))
     except (TypeError, ValueError):
         return 8192
+
+
+def review_findings_response_format() -> dict[str, Any]:
+    finding_schema = {
+        "type": "object",
+        "additionalProperties": True,
+        "required": [
+            "severity",
+            "confidence",
+            "file_path",
+            "line_start",
+            "line_end",
+            "title",
+            "problem_description",
+            "recommendation",
+            "suggested_code",
+            "evidence",
+            "covered_rules",
+            "skipped_rules",
+        ],
+        "properties": {
+            "severity": {"type": "string"},
+            "confidence": {"type": "number"},
+            "file_path": {"type": "string"},
+            "line_start": {"type": "integer"},
+            "line_end": {"type": "integer"},
+            "title": {"type": "string"},
+            "problem_description": {"type": "string"},
+            "recommendation": {"type": "string"},
+            "suggested_code": {"type": "string"},
+            "evidence": {"type": "string"},
+            "covered_rules": {"type": "array", "items": {"type": "string"}},
+            "skipped_rules": {"type": "array", "items": {"type": "string"}},
+        },
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": LLM_REVIEW_SCHEMA_NAME,
+            "strict": True,
+            "schema": {
+                "type": "array",
+                "items": finding_schema,
+            },
+        },
+    }
+
+
+def llm_cache_key(provider: str, model: str, prompt: str, *, seed: int, schema_name: str) -> str:
+    return sha1(json.dumps(
+        {
+            "provider": provider,
+            "model": model,
+            "prompt": prompt,
+            "seed": seed,
+            "schema_name": schema_name,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    ))
+
+
+def _ensure_llm_cache_schema(conn: Any) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_response_cache (
+          cache_key TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          model TEXT NOT NULL,
+          schema_name TEXT NOT NULL,
+          seed INTEGER NOT NULL,
+          prompt_hash TEXT NOT NULL,
+          response_json TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def _read_cached_llm_response(config: dict[str, Any], cache_key: str) -> dict[str, Any] | None:
+    if (config.get("llm") or {}).get("enable_response_cache") is False:
+        return None
+    conn = None
+    try:
+        conn = open_app_database(config)
+        _ensure_llm_cache_schema(conn)
+        row = conn.execute("SELECT response_json FROM llm_response_cache WHERE cache_key = ?", (cache_key,)).fetchone()
+        if not row:
+            return None
+        raw = row["response_json"] if hasattr(row, "keys") else row[0]
+        parsed = json.loads(str(raw or "{}"))
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _write_cached_llm_response(
+    config: dict[str, Any],
+    *,
+    cache_key: str,
+    provider: str,
+    model: str,
+    schema_name: str,
+    seed: int,
+    prompt: str,
+    response: dict[str, Any],
+) -> None:
+    if (config.get("llm") or {}).get("enable_response_cache") is False:
+        return
+    conn = None
+    try:
+        conn = open_app_database(config)
+        _ensure_llm_cache_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO llm_response_cache (
+              cache_key, provider, model, schema_name, seed, prompt_hash, response_json, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(cache_key) DO UPDATE SET
+              response_json = excluded.response_json,
+              updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                cache_key,
+                provider,
+                model,
+                schema_name,
+                seed,
+                sha1(prompt),
+                json.dumps(response, ensure_ascii=False),
+            ),
+        )
+        conn.commit()
+    except Exception:
+        return
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _extract_json_objects(content: str) -> list[dict[str, Any]]:
@@ -442,7 +608,8 @@ def summarize_pr_with_llm(
         },
         ensure_ascii=False,
     )
-    providers = candidate_providers(llm, required_context=max(1, len(prompt) // 4))
+    prompt_tokens = estimate_tokens(prompt)
+    providers = candidate_providers(llm, required_context=prompt_tokens)
     first_provider = providers[0] if providers else {
         "provider": llm.get("default_provider") or "dashscope-openai-compatible",
         "model": llm.get("default_model") or "MiniMax-M2.7",
@@ -450,10 +617,10 @@ def summarize_pr_with_llm(
     provider = str(first_provider.get("provider"))
     model = str(first_provider.get("model"))
     if budget_tracker and budget_tracker.should_stop():
-        recorder.llm_call(span_id, provider, model, prompt, f"skipped_by_budget:{budget_tracker.truncated_reason}", 0, len(prompt) // 4, 0)
+        recorder.llm_call(span_id, provider, model, prompt, f"skipped_by_budget:{budget_tracker.truncated_reason}", 0, prompt_tokens, 0)
         return normalize_pr_summary({}, {**fallback, "source": "fallback", "skipped": True, "skip_reason": str(budget_tracker.truncated_reason)})
     if not providers:
-        recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, len(prompt) // 4, 0)
+        recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, prompt_tokens, 0)
         return normalize_pr_summary({}, {**fallback, "source": "fallback", "skipped": True, "skip_reason": "no_api_key"})
 
     last_error: Exception | None = None
@@ -463,7 +630,7 @@ def summarize_pr_with_llm(
         base_url = str(candidate.get("base_url") or "").rstrip("/")
         api_key = candidate.get("api_key")
         if not base_url or not api_key:
-            recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, len(prompt) // 4, 0)
+            recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, prompt_tokens, 0)
             continue
         started = time.time()
         messages = [
@@ -477,25 +644,27 @@ def summarize_pr_with_llm(
             },
             {"role": "user", "content": prompt},
         ]
-        timeout_seconds = llm_request_timeout_seconds(llm)
+        timeout_seconds = llm_request_timeout_seconds(llm, "summary")
         stream_enabled = llm_stream_enabled(llm)
         try:
-            response = http_json(
-                chat_completions_url(base_url),
-                {"Authorization": f"Bearer {api_key}"},
-                method="POST",
-                body={
-                    "model": model,
-                    "messages": messages,
-                    "temperature": 0.1,
-                    "max_tokens": min(2048, llm_max_output_tokens(llm)),
-                },
-                timeout_seconds=timeout_seconds,
-                stream=stream_enabled,
+            response = call_with_retry(
+                lambda: http_json(
+                    chat_completions_url(base_url),
+                    {"Authorization": f"Bearer {api_key}"},
+                    method="POST",
+                    body={
+                        "model": model,
+                        "messages": messages,
+                        "temperature": 0.1,
+                        "max_tokens": min(2048, llm_max_output_tokens(llm)),
+                    },
+                    timeout_seconds=timeout_seconds,
+                    stream=stream_enabled,
+                )
             )
             duration_ms = int((time.time() - started) * 1000)
             usage = response.get("usage") or {}
-            input_tokens = int(usage.get("prompt_tokens", len(prompt) // 4))
+            input_tokens = int(usage.get("prompt_tokens", prompt_tokens))
             output_tokens = int(usage.get("completion_tokens", 0))
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "{}")
             response_debug_text = json.dumps({"content": content, "stream": response.get("_jolt_stream") or {"enabled": False}}, ensure_ascii=False)
@@ -519,7 +688,7 @@ def summarize_pr_with_llm(
             last_error = exc
             duration_ms = int((time.time() - started) * 1000)
             error_text = json.dumps({"error": str(exc), "timeout_seconds": timeout_seconds, "stream": stream_enabled}, ensure_ascii=False)
-            recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, len(prompt) // 4, 0, None, messages, error_text)
+            recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, prompt_tokens, 0, None, messages, error_text)
             if index < len(providers) - 1:
                 recorder.event(span_id, "pr_summary_llm_failover", f"{provider} 摘要调用失败，尝试下一个 provider", {"error": str(exc)[:300]})
                 continue
@@ -539,7 +708,8 @@ def call_llm(
     llm = config.get("llm", {})
     budget_tracker = agent.get("budget_tracker")
     prompt, safety = build_prompt(agent, files, skill_summary)
-    providers = candidate_providers(llm, required_context=max(1, len(prompt) // 4))
+    prompt_tokens = estimate_tokens(prompt)
+    providers = candidate_providers(llm, required_context=prompt_tokens)
     first_provider = providers[0] if providers else {
         "provider": llm.get("default_provider") or "dashscope-openai-compatible",
         "model": llm.get("default_model") or "MiniMax-M2.7",
@@ -547,11 +717,11 @@ def call_llm(
     provider = str(first_provider.get("provider"))
     model = str(first_provider.get("model"))
     if budget_tracker and budget_tracker.should_stop():
-        recorder.llm_call(span_id, provider, model, prompt, f"skipped_by_budget:{budget_tracker.truncated_reason}", 0, len(prompt) // 4, 0)
+        recorder.llm_call(span_id, provider, model, prompt, f"skipped_by_budget:{budget_tracker.truncated_reason}", 0, prompt_tokens, 0)
         recorder.event(span_id, "llm_skipped_by_budget", f"预算已触发熔断：{budget_tracker.truncated_reason}", budget_tracker.snapshot())
         return []
     if not files:
-        recorder.llm_call(span_id, provider, model, prompt, "skipped_no_llm_allowed_files", 0, len(prompt) // 4, 0)
+        recorder.llm_call(span_id, provider, model, prompt, "skipped_no_llm_allowed_files", 0, prompt_tokens, 0)
         recorder.event(span_id, "llm_skipped_by_data_policy", "没有可进入 LLM 的变更文件，按数据策略跳过模型调用")
         return []
     if safety["injection_patterns"]:
@@ -559,7 +729,7 @@ def call_llm(
     if safety["redactions"]:
         recorder.event(span_id, "redaction_applied", "送入 LLM 前完成敏感片段脱敏", safety)
     if not providers:
-        recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, len(prompt) // 4, 0)
+        recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, prompt_tokens, 0)
         return []
 
     last_error: Exception | None = None
@@ -569,7 +739,7 @@ def call_llm(
         base_url = str(candidate.get("base_url") or "").rstrip("/")
         api_key = candidate.get("api_key")
         if not base_url or not api_key:
-            recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, len(prompt) // 4, 0)
+            recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, prompt_tokens, 0)
             continue
         started = time.time()
         messages = [
@@ -581,23 +751,96 @@ def call_llm(
             "messages": messages,
             "temperature": 0.1,
             "max_tokens": llm_max_output_tokens(llm),
+            "seed": LLM_REVIEW_SEED,
+            "response_format": review_findings_response_format(),
         }
-        timeout_seconds = llm_request_timeout_seconds(llm)
+        schema_name = LLM_REVIEW_SCHEMA_NAME
+        cache_key = llm_cache_key(provider, model, prompt, seed=LLM_REVIEW_SEED, schema_name=schema_name)
+        cached = _read_cached_llm_response(config, cache_key)
+        if cached is not None:
+            usage = cached.get("usage") if isinstance(cached.get("usage"), dict) else {}
+            content = cached.get("choices", [{}])[0].get("message", {}).get("content", "[]")
+            recorder.llm_call(
+                span_id,
+                provider,
+                model,
+                prompt,
+                "cache_hit",
+                0,
+                int(usage.get("prompt_tokens", prompt_tokens)),
+                int(usage.get("completion_tokens", 0)),
+                str(cached.get("id") or ""),
+                messages,
+                json.dumps({"content": content, "cache_key": cache_key}, ensure_ascii=False),
+            )
+            try:
+                max_findings = int(agent.get("max_findings_per_mr") or agent.get("max_findings") or 32)
+            except (TypeError, ValueError):
+                max_findings = 32
+            return parse_llm_findings(agent_id, str(content), files, max_findings=max_findings)
+        timeout_seconds = llm_request_timeout_seconds(llm, "expert")
         stream_enabled = llm_stream_enabled(llm)
         try:
-            response = http_json(
-                chat_completions_url(base_url),
-                {"Authorization": f"Bearer {api_key}"},
-                method="POST",
-                body=payload,
-                timeout_seconds=timeout_seconds,
-                stream=stream_enabled,
-            )
+            try:
+                response = call_with_retry(
+                    lambda: http_json(
+                        chat_completions_url(base_url),
+                        {"Authorization": f"Bearer {api_key}"},
+                        method="POST",
+                        body=payload,
+                        timeout_seconds=timeout_seconds,
+                        stream=stream_enabled,
+                    )
+                )
+            except (urllib.error.HTTPError, json.JSONDecodeError) as schema_exc:
+                fallback_payload = {key: value for key, value in payload.items() if key != "response_format"}
+                fallback_schema_name = LLM_REVIEW_FALLBACK_SCHEMA_NAME
+                fallback_cache_key = llm_cache_key(provider, model, prompt, seed=LLM_REVIEW_SEED, schema_name=fallback_schema_name)
+                cached_fallback = _read_cached_llm_response(config, fallback_cache_key)
+                if cached_fallback is not None:
+                    response = cached_fallback
+                    schema_name = fallback_schema_name
+                    cache_key = fallback_cache_key
+                    recorder.event(
+                        span_id,
+                        "llm_schema_cache_fallback",
+                        "strict JSON schema 响应不可用，命中无 schema 降级缓存",
+                        {"provider": provider, "model": model, "error": type(schema_exc).__name__},
+                    )
+                else:
+                    recorder.event(
+                        span_id,
+                        "llm_schema_downgraded",
+                        "provider 不支持 strict JSON schema，本次调用降级为普通 JSON 输出",
+                        {"provider": provider, "model": model, "error": str(schema_exc)[:300]},
+                    )
+                    response = call_with_retry(
+                        lambda: http_json(
+                            chat_completions_url(base_url),
+                            {"Authorization": f"Bearer {api_key}"},
+                            method="POST",
+                            body=fallback_payload,
+                            timeout_seconds=timeout_seconds,
+                            stream=stream_enabled,
+                        )
+                    )
+                    schema_name = fallback_schema_name
+                    cache_key = fallback_cache_key
             duration_ms = int((time.time() - started) * 1000)
             usage = response.get("usage") or {}
-            input_tokens = int(usage.get("prompt_tokens", len(prompt) // 4))
+            input_tokens = int(usage.get("prompt_tokens", prompt_tokens))
             output_tokens = int(usage.get("completion_tokens", 0))
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "[]")
+            _write_cached_llm_response(
+                config,
+                cache_key=cache_key,
+                provider=provider,
+                model=model,
+                schema_name=schema_name,
+                seed=LLM_REVIEW_SEED,
+                prompt=prompt,
+                response=response,
+            )
             response_debug_text = json.dumps({"content": content, "stream": response.get("_jolt_stream") or {"enabled": False}}, ensure_ascii=False)
             recorder.llm_call(
                 span_id,
@@ -625,7 +868,7 @@ def call_llm(
             last_error = exc
             duration_ms = int((time.time() - started) * 1000)
             error_text = json.dumps({"error": str(exc), "timeout_seconds": timeout_seconds, "stream": stream_enabled}, ensure_ascii=False)
-            recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, len(prompt) // 4, 0, None, messages, error_text)
+            recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, prompt_tokens, 0, None, messages, error_text)
             if index < len(providers) - 1:
                 recorder.event(span_id, "llm_failover", f"{provider} 调用失败，尝试下一个 provider：{type(exc).__name__}", {"error": str(exc)[:300]})
                 continue

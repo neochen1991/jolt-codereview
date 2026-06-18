@@ -14,8 +14,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "default_provider": "dashscope-openai-compatible",
         "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
         "default_model": "MiniMax-M2.7",
-        "default_api_key_env": None,
-        "default_api_key": None,
+        "default_api_key_env": "MINIMAX_API_KEY",
         "request_timeout_seconds": 120,
         "max_output_tokens": 8192,
         "enable_stream": True,
@@ -61,6 +60,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "review_policy": {
         "max_added_lines_per_mr": 2000,
+    },
+    "agent_policy": {
+        "deepagents": {
+            "enabled": False,
+            "enable_for_deep_effort": True,
+            "enable_for_required_agents": True,
+            "enable_for_skill_bundle": True,
+        },
     },
     "queue_policy": {
         "poll_interval_seconds": 300,

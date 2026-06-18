@@ -12,7 +12,8 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
-from llm.client import collect_openai_sse_response, llm_stream_enabled, parse_openai_response_text
+from llm.client import collect_openai_sse_response, estimate_tokens, llm_request_timeout_seconds, llm_stream_enabled, parse_openai_response_text
+from llm.retry import call_with_retry
 
 
 class OpenAICompatibleToolChatModel(BaseChatModel):
@@ -63,14 +64,17 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
         )
         started = time.time()
         prompt_text = json.dumps(payload["messages"], ensure_ascii=False)
+        prompt_tokens = estimate_tokens(prompt_text)
         try:
-            with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
-                headers = getattr(response, "headers", {})
-                content_type = str(headers.get("Content-Type") if hasattr(headers, "get") else "").lower()
-                if self.enable_stream and "text/event-stream" in content_type:
-                    data = collect_openai_sse_response(response, started)
-                else:
-                    data = parse_openai_response_text(response.read().decode("utf-8", errors="replace"), started)
+            def execute_request() -> dict[str, Any]:
+                with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
+                    headers = getattr(response, "headers", {})
+                    content_type = str(headers.get("Content-Type") if hasattr(headers, "get") else "").lower()
+                    if self.enable_stream and "text/event-stream" in content_type:
+                        return collect_openai_sse_response(response, started)
+                    return parse_openai_response_text(response.read().decode("utf-8", errors="replace"), started)
+
+            data = call_with_retry(execute_request)
         except Exception as exc:
             self._trace_llm_call(
                 {
@@ -78,7 +82,7 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
                     "request_messages": payload["messages"],
                     "status": f"failed:{type(exc).__name__}",
                     "duration_ms": int((time.time() - started) * 1000),
-                    "input_tokens": max(1, len(prompt_text) // 4),
+                    "input_tokens": prompt_tokens,
                     "output_tokens": 0,
                     "request_id": None,
                     "response_text": json.dumps({"error": str(exc), "timeout_seconds": self.request_timeout_seconds, "stream": self.enable_stream}, ensure_ascii=False),
@@ -102,7 +106,7 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
                 "request_messages": payload["messages"],
                 "status": "completed",
                 "duration_ms": int((time.time() - started) * 1000),
-                "input_tokens": int(usage.get("prompt_tokens", max(1, len(prompt_text) // 4))),
+                "input_tokens": int(usage.get("prompt_tokens", prompt_tokens)),
                 "output_tokens": int(usage.get("completion_tokens", 0)),
                 "request_id": str(data.get("id") or ""),
                 "response_text": response_text,
@@ -152,13 +156,10 @@ def run_bounded_deepagent(
     model_name = str(llm_config.get("default_model") or "MiniMax-M2.7")
     base_url = str(llm_config.get("default_base_url") or "").rstrip("/")
     key_env = llm_config.get("default_api_key_env")
-    api_key = os.environ.get(str(key_env)) if key_env else llm_config.get("default_api_key")
+    api_key = os.environ.get(str(key_env)) if key_env else None
     if not base_url or not api_key:
-        raise RuntimeError("DeepAgents requires a real OpenAI-compatible base_url and api_key")
-    try:
-        request_timeout_seconds = max(1, min(600, int(llm_config.get("request_timeout_seconds") or llm_config.get("timeout_seconds") or 120)))
-    except (TypeError, ValueError):
-        request_timeout_seconds = 120
+        raise RuntimeError("DeepAgents requires a real OpenAI-compatible base_url and api_key_env")
+    request_timeout_seconds = llm_request_timeout_seconds(llm_config, "deepagents")
     enable_stream = llm_stream_enabled(llm_config)
 
     def inspect_agent_rules() -> str:

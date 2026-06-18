@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any, Callable
 
 from orchestration.deepagents_runner import run_bounded_deepagent
+from prompts.example_retriever import retrieve_examples
 
 
 def _builtin_java_heuristics_enabled(project_config: dict[str, Any]) -> bool:
@@ -15,6 +17,120 @@ def _builtin_java_heuristics_enabled(project_config: dict[str, Any]) -> bool:
         or policy.get("enable_jolt_builtin_rules")
         or runner_cfg.get("enabled") is True
     )
+
+
+def _deepagents_policy(project_config: dict[str, Any]) -> dict[str, Any]:
+    agent_policy = project_config.get("agent_policy") if isinstance(project_config.get("agent_policy"), dict) else {}
+    policy = agent_policy.get("deepagents") if isinstance(agent_policy.get("deepagents"), dict) else {}
+    return {
+        "enabled": bool(policy.get("enabled")),
+        "enable_for_deep_effort": policy.get("enable_for_deep_effort") is not False,
+        "enable_for_required_agents": policy.get("enable_for_required_agents") is not False,
+        "enable_for_skill_bundle": policy.get("enable_for_skill_bundle") is not False,
+    }
+
+
+def _deepagents_enabled_for_agent(project_config: dict[str, Any], *, effort: str, agent: dict[str, Any], has_skill_bundle: bool) -> tuple[bool, str]:
+    policy = _deepagents_policy(project_config)
+    if not policy["enabled"]:
+        return False, "disabled_by_project_policy"
+    if effort == "deep" and policy["enable_for_deep_effort"]:
+        return True, "deep_effort"
+    if agent.get("requires_deepagents") and policy["enable_for_required_agents"]:
+        return True, "agent_requires_deepagents"
+    if has_skill_bundle and policy["enable_for_skill_bundle"]:
+        return True, "skill_bundle"
+    return False, "no_enabled_trigger"
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    try:
+        return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    except sqlite3.Error:
+        return set()
+
+
+def _project_id_for_job(conn: sqlite3.Connection, job: Any) -> str:
+    try:
+        row = conn.execute(
+            """
+            SELECT r.project_id AS project_id
+            FROM review_jobs rj
+            JOIN merge_requests mr ON mr.id = rj.merge_request_id
+            JOIN repositories r ON r.id = mr.repository_id
+            WHERE rj.id = ?
+            """,
+            (job["id"],),
+        ).fetchone()
+        return str(row["project_id"] or "") if row else ""
+    except sqlite3.Error:
+        return ""
+
+
+def _first_rule_id(row: sqlite3.Row) -> str:
+    if "covered_rules_json" not in row.keys():
+        return ""
+    try:
+        values = json.loads(str(row["covered_rules_json"] or "[]"))
+    except (TypeError, ValueError):
+        values = []
+    return str(values[0]) if isinstance(values, list) and values else ""
+
+
+def _load_feedback_examples(conn: sqlite3.Connection, project_id: str, agent_id: str) -> list[dict[str, Any]]:
+    if not project_id or not agent_id:
+        return []
+    finding_columns = _table_columns(conn, "review_findings")
+    if not {"id", "review_run_id", "agent_id", "file_path", "lifecycle_state"}.issubset(finding_columns):
+        return []
+    optional = {
+        "line_start": "rf.line_start",
+        "severity": "rf.severity",
+        "title": "rf.title",
+        "problem_description": "rf.problem_description",
+        "evidence": "rf.evidence",
+        "covered_rules_json": "rf.covered_rules_json",
+    }
+    select_parts = [
+        "rf.agent_id AS agent_id",
+        "rf.file_path AS file_path",
+        "rf.lifecycle_state AS lifecycle_state",
+        "uf.feedback_type AS feedback_type",
+        "uf.created_at AS created_at",
+    ]
+    for column, expression in optional.items():
+        select_parts.append(f"{expression} AS {column}" if column in finding_columns else f"'' AS {column}")
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT {", ".join(select_parts)}
+            FROM user_feedback uf
+            JOIN review_findings rf ON rf.id = uf.finding_id
+            JOIN review_runs rr ON rr.id = rf.review_run_id
+            JOIN review_jobs rj ON rj.id = rr.review_job_id
+            JOIN merge_requests mr ON mr.id = rj.merge_request_id
+            JOIN repositories r ON r.id = mr.repository_id
+            WHERE r.project_id = ?
+              AND rf.agent_id = ?
+              AND (
+                uf.feedback_type = 'false_positive'
+                OR rf.lifecycle_state IN ('false_positive', 'rejected_false_positive', 'judge_rejected')
+              )
+              AND uf.created_at >= datetime('now', '-90 days')
+            ORDER BY uf.created_at DESC
+            LIMIT 50
+            """,
+            (project_id, agent_id),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    examples = []
+    for row in rows:
+        item = {key: row[key] for key in row.keys()}
+        item["label"] = "skip_false_positive"
+        item["rule_id"] = _first_rule_id(row)
+        examples.append(item)
+    return examples
 
 
 def make_run_experts_node(
@@ -39,6 +155,7 @@ def make_run_experts_node(
         llm_files = state.get("llm_files") or []
         effort = state["effort"]
         selected_agents = state["selected_agents"]
+        project_id = _project_id_for_job(conn, job)
         conn.execute("UPDATE review_jobs SET status = 'reviewing', heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?", (job["id"],))
         conn.execute(
             "UPDATE merge_requests SET review_status = 'reviewing' WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
@@ -107,6 +224,20 @@ def make_run_experts_node(
                 "related_context": state.get("related_context") or {},
                 "budget_tracker": budget_tracker,
             }
+            feedback_examples = _load_feedback_examples(conn, project_id, agent_id)
+            learned_examples = retrieve_examples(agent_id, llm_files or files, feedback_rows=feedback_examples, k=3)
+            if learned_examples:
+                agent_context["learned_examples"] = learned_examples
+                recorder.event(
+                    span,
+                    "learned_examples_loaded",
+                    f"{agent_id} 注入 {len(learned_examples)} 条自检索样例",
+                    {
+                        "project_id": project_id,
+                        "sources": sorted({str(item.get("source") or "") for item in learned_examples}),
+                        "labels": sorted({str(item.get("label") or "") for item in learned_examples}),
+                    },
+                )
             recorder.message(
                 span,
                 "system",
@@ -155,7 +286,25 @@ def make_run_experts_node(
             else:
                 static_items = []
             has_skill_bundle = bool(agent.get("custom_skills") or agent.get("skill_assets"))
-            if effort == "deep" or agent.get("requires_deepagents") or has_skill_bundle:
+            deepagents_allowed, deepagents_reason = _deepagents_enabled_for_agent(
+                project_config,
+                effort=effort,
+                agent=agent,
+                has_skill_bundle=has_skill_bundle,
+            )
+            recorder.event(
+                span,
+                "deepagents_policy_evaluated",
+                "DeepAgents 子图已按项目显式配置门控",
+                {
+                    "allowed": deepagents_allowed,
+                    "reason": deepagents_reason,
+                    "effort": effort,
+                    "requires_deepagents": bool(agent.get("requires_deepagents")),
+                    "has_skill_bundle": has_skill_bundle,
+                },
+            )
+            if deepagents_allowed:
                 try:
                     max_tool_calls = int(agent.get("max_tool_calls") or 12)
                     if has_skill_bundle:

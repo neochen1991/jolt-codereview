@@ -29,7 +29,8 @@ from context.repo_index import build_repo_index
 from context.snapshot import build_code_context_snapshot
 from context.symbol_resolver import resolve_diff_symbols
 from diff.slicer import build_diff_slices, diff_hunks_by_file, extract_added_lines, source_snippet_loader_for_files
-from llm.client import call_llm, chat_completions_url, http_json as llm_http_json, llm_request_timeout_seconds, llm_stream_enabled, normalize_confidence, normalize_line_number, parse_llm_findings, summarize_pr_with_llm
+from llm.client import call_llm, chat_completions_url, estimate_tokens, http_json as llm_http_json, llm_request_timeout_seconds, llm_stream_enabled, normalize_confidence, normalize_line_number, parse_llm_findings, summarize_pr_with_llm
+from llm.retry import call_with_retry
 from llm_router import candidate_providers
 from orchestration.graph import invoke_review_graph
 from orchestration.nodes.build_context import make_build_context_node
@@ -89,9 +90,12 @@ def ensure_worker_schema(conn: sqlite3.Connection) -> None:
     add_column_if_missing("review_findings", "tool_provenance_json", "TEXT NOT NULL DEFAULT '[]'")
     add_column_if_missing("review_findings", "source_observations_json", "TEXT NOT NULL DEFAULT '[]'")
     add_column_if_missing("review_findings", "quality_trace_json", "TEXT NOT NULL DEFAULT '{}'")
+    add_column_if_missing("review_findings", "evidence_score_json", "TEXT NOT NULL DEFAULT '{}'")
     add_column_if_missing("review_jobs", "pr_summary", "TEXT NOT NULL DEFAULT '{}'")
     add_column_if_missing("review_jobs", "requested_by", "TEXT")
     add_column_if_missing("review_runs", "coverage_json", "TEXT NOT NULL DEFAULT '{}'")
+    add_column_if_missing("rule_precision_history", "recent_accepted_count", "INTEGER NOT NULL DEFAULT 0")
+    add_column_if_missing("rule_precision_history", "recent_rejected_count", "INTEGER NOT NULL DEFAULT 0")
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS mr_finding_history (
@@ -109,6 +113,27 @@ def ensure_worker_schema(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_mr_finding_history_mr_status
           ON mr_finding_history(merge_request_id, status);
+        CREATE TABLE IF NOT EXISTS rule_suppression_hints (
+          project_id TEXT NOT NULL,
+          rule_id TEXT NOT NULL,
+          file_glob TEXT NOT NULL,
+          snippet_hash TEXT NOT NULL,
+          snippet_excerpt TEXT NOT NULL,
+          count INTEGER NOT NULL DEFAULT 1,
+          last_marked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (project_id, rule_id, file_glob, snippet_hash)
+        );
+        CREATE TABLE IF NOT EXISTS llm_response_cache (
+          cache_key TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          model TEXT NOT NULL,
+          schema_name TEXT NOT NULL,
+          seed INTEGER NOT NULL,
+          prompt_hash TEXT NOT NULL,
+          response_json TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         CREATE TABLE IF NOT EXISTS candidate_findings (
           id TEXT PRIMARY KEY,
           review_run_id TEXT NOT NULL,
@@ -171,6 +196,8 @@ def ensure_worker_schema(conn: sqlite3.Connection) -> None:
           rule_id TEXT NOT NULL,
           accepted_count INTEGER NOT NULL DEFAULT 0,
           rejected_count INTEGER NOT NULL DEFAULT 0,
+          recent_accepted_count INTEGER NOT NULL DEFAULT 0,
+          recent_rejected_count INTEGER NOT NULL DEFAULT 0,
           auto_suppress INTEGER NOT NULL DEFAULT 0,
           last_updated TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           UNIQUE(project_id, agent_id, rule_id)
@@ -4000,14 +4027,15 @@ def route_agents_with_llm(
         },
         ensure_ascii=False,
     )
-    providers = candidate_providers(llm, required_context=max(1, len(prompt) // 4))
+    prompt_tokens = estimate_tokens(prompt)
+    providers = candidate_providers(llm, required_context=prompt_tokens)
     provider = str((providers[0] if providers else {}).get("provider") or llm.get("default_provider") or "dashscope-openai-compatible")
     model = str((providers[0] if providers else {}).get("model") or llm.get("default_model") or "MiniMax-M2.7")
     if budget_tracker and budget_tracker.should_stop():
-        recorder.llm_call(span_id, provider, model, prompt, f"skipped_by_budget:{budget_tracker.truncated_reason}", 0, len(prompt) // 4, 0)
+        recorder.llm_call(span_id, provider, model, prompt, f"skipped_by_budget:{budget_tracker.truncated_reason}", 0, prompt_tokens, 0)
         return []
     if not providers:
-        recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, len(prompt) // 4, 0)
+        recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, prompt_tokens, 0)
         return []
     valid_ids = {str(agent.get("agent_id")) for agent in agent_configs}
     for index, candidate in enumerate(providers):
@@ -4016,7 +4044,7 @@ def route_agents_with_llm(
         base_url = str(candidate.get("base_url") or "").rstrip("/")
         api_key = candidate.get("api_key")
         if not base_url or not api_key:
-            recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, len(prompt) // 4, 0)
+            recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, prompt_tokens, 0)
             continue
         started = time.time()
         messages = [
@@ -4029,24 +4057,26 @@ def route_agents_with_llm(
             },
             {"role": "user", "content": prompt},
         ]
-        timeout_seconds = llm_request_timeout_seconds(llm)
+        timeout_seconds = llm_request_timeout_seconds(llm, "router")
         stream_enabled = llm_stream_enabled(llm)
         try:
-            response = llm_http_json(
-                chat_completions_url(base_url),
-                {"Authorization": f"Bearer {api_key}"},
-                method="POST",
-                body={
-                    "model": model,
-                    "messages": messages,
-                    "temperature": 0.0,
-                },
-                timeout_seconds=timeout_seconds,
-                stream=stream_enabled,
+            response = call_with_retry(
+                lambda: llm_http_json(
+                    chat_completions_url(base_url),
+                    {"Authorization": f"Bearer {api_key}"},
+                    method="POST",
+                    body={
+                        "model": model,
+                        "messages": messages,
+                        "temperature": 0.0,
+                    },
+                    timeout_seconds=timeout_seconds,
+                    stream=stream_enabled,
+                )
             )
             duration_ms = int((time.time() - started) * 1000)
             usage = response.get("usage") or {}
-            input_tokens = int(usage.get("prompt_tokens", len(prompt) // 4))
+            input_tokens = int(usage.get("prompt_tokens", prompt_tokens))
             output_tokens = int(usage.get("completion_tokens", 0))
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "[]")
             response_debug_text = json.dumps({"content": content, "stream": response.get("_jolt_stream") or {"enabled": False}}, ensure_ascii=False)
@@ -4061,7 +4091,7 @@ def route_agents_with_llm(
             return []
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
             error_text = json.dumps({"error": str(exc), "timeout_seconds": timeout_seconds, "stream": stream_enabled}, ensure_ascii=False)
-            recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", int((time.time() - started) * 1000), len(prompt) // 4, 0, None, messages, error_text)
+            recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", int((time.time() - started) * 1000), prompt_tokens, 0, None, messages, error_text)
             if index < len(providers) - 1:
                 recorder.event(span_id, "router_llm_failover", f"{provider} 路由失败，尝试下一个 provider", {"error": str(exc)[:300]})
             else:
@@ -4160,7 +4190,10 @@ def route_agents(
         return []
     text = added_text(files)
     matched = [agent for agent in agent_configs if agent_matches_files(agent, files, text)]
-    should_llm_route = effort != "fast" and (not matched or len(matched) >= 5)
+    routing_config = project_config.get("routing") if isinstance(project_config, dict) and isinstance(project_config.get("routing"), dict) else {}
+    enable_llm_router = bool(routing_config.get("enable_llm_router"))
+    languages = {language_for_file(changed.filename) for changed in files if language_for_file(changed.filename)}
+    should_llm_route = enable_llm_router and effort != "fast" and not matched and len(languages) >= 3
     routed_by_llm = False
     if should_llm_route and project_config and recorder and span_id:
         routed_ids = route_agents_with_llm(project_config, recorder, span_id, agent_configs, files, budget_tracker)
@@ -4171,6 +4204,22 @@ def route_agents(
             recorder.event(span_id, "router_llm_selected", f"LLM Router 选择 {len(matched)} 个 Agent", {"agents": routed_ids})
     if not matched:
         matched = [agent for agent in agent_configs if agent["agent_id"] in {"coding_agent", "security_agent", "test_agent"}]
+    all_agents_by_id = {agent["agent_id"]: agent for agent in agent_configs}
+    selected_ids = {agent["agent_id"] for agent in matched}
+    appended_required: list[str] = []
+    for agent_id in required_java_agent_ids(files, text):
+        if agent_id in selected_ids or agent_id not in all_agents_by_id:
+            continue
+        matched.append(all_agents_by_id[agent_id])
+        selected_ids.add(agent_id)
+        appended_required.append(agent_id)
+    if appended_required and recorder and span_id:
+        recorder.event(
+            span_id,
+            "router_java_required_experts_appended",
+            f"追加 {len(appended_required)} 个 Java 必要专家兜底",
+            {"agents": appended_required, "reason": "rule_router_with_java_domain_coverage_guard"},
+        )
     if effort == "fast":
         priority = {"security_agent", "coding_agent", "test_agent", "frontend_agent", "redis_agent"}
         return [agent for agent in matched if agent["agent_id"] in priority][:3]
@@ -4190,23 +4239,6 @@ def route_agents(
         by_id = {agent["agent_id"]: agent for agent in matched}
         ordered = [by_id[agent_id] for agent_id in preferred_order if agent_id in by_id]
         ordered.extend(agent for agent in matched if agent.get("agent_id") not in set(preferred_order))
-        if routed_by_llm:
-            all_agents_by_id = {agent["agent_id"]: agent for agent in agent_configs}
-            selected_ids = {agent["agent_id"] for agent in ordered}
-            appended: list[str] = []
-            for agent_id in required_java_agent_ids(files, text):
-                if agent_id in selected_ids or agent_id not in all_agents_by_id:
-                    continue
-                ordered.append(all_agents_by_id[agent_id])
-                selected_ids.add(agent_id)
-                appended.append(agent_id)
-            if appended and recorder and span_id:
-                recorder.event(
-                    span_id,
-                    "router_java_required_experts_appended",
-                    f"追加 {len(appended)} 个 Java 必要专家兜底",
-                    {"agents": appended, "reason": "llm_router_primary_with_java_domain_coverage_guard"},
-                )
         return ordered[:10]
     return matched
 
@@ -4685,6 +4717,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
             run_id=run_id,
             new_id=new_id,
             load_tool_observations=load_tool_observations,
+            project_config=project_config,
             max_findings=40,
             selection_confidence=0.75,
         )

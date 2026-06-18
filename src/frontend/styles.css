@@ -2387,6 +2387,19 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   height: 16px;
 }
 
+.setting-static-text {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px 10px;
+  background: #f7f9fc;
+  color: #52657e;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .setting-actions {
   min-width: 0;
   display: flex;

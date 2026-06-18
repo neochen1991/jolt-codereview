@@ -5,7 +5,8 @@ import time
 import urllib.error
 from typing import Any
 
-from llm.client import chat_completions_url, http_json, llm_request_timeout_seconds, llm_stream_enabled
+from llm.client import chat_completions_url, estimate_tokens, http_json, llm_request_timeout_seconds, llm_stream_enabled
+from llm.retry import call_with_retry
 from llm_router import candidate_providers
 
 SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
@@ -211,7 +212,8 @@ def run_targeted_debate_with_llm(
             continue
         fallback = _fallback_verdict(conflict)
         prompt = _build_debate_prompt(conflict, related, files, tool_observations)
-        providers = candidate_providers(llm, required_context=max(1, len(prompt) // 4))
+        prompt_tokens = estimate_tokens(prompt)
+        providers = candidate_providers(llm, required_context=prompt_tokens)
         first_provider = providers[0] if providers else {
             "provider": llm.get("default_provider") or "dashscope-openai-compatible",
             "model": llm.get("default_model") or "MiniMax-M2.7",
@@ -219,10 +221,10 @@ def run_targeted_debate_with_llm(
         provider = str(first_provider.get("provider"))
         model = str(first_provider.get("model"))
         if budget_tracker and budget_tracker.should_stop():
-            recorder.llm_call(span_id, provider, model, prompt, f"skipped_by_budget:{budget_tracker.truncated_reason}", 0, len(prompt) // 4, 0)
+            recorder.llm_call(span_id, provider, model, prompt, f"skipped_by_budget:{budget_tracker.truncated_reason}", 0, prompt_tokens, 0)
             verdict = {**fallback, "source": "fallback", "skip_reason": budget_tracker.truncated_reason}
         elif not providers:
-            recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, len(prompt) // 4, 0)
+            recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, prompt_tokens, 0)
             verdict = {**fallback, "source": "fallback", "skip_reason": "no_api_key"}
         else:
             verdict = fallback
@@ -232,7 +234,7 @@ def run_targeted_debate_with_llm(
                 base_url = str(candidate.get("base_url") or "").rstrip("/")
                 api_key = candidate.get("api_key")
                 if not base_url or not api_key:
-                    recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, len(prompt) // 4, 0)
+                    recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, prompt_tokens, 0)
                     continue
                 started = time.time()
                 messages = [
@@ -246,24 +248,26 @@ def run_targeted_debate_with_llm(
                     },
                     {"role": "user", "content": prompt},
                 ]
-                timeout_seconds = llm_request_timeout_seconds(llm)
+                timeout_seconds = llm_request_timeout_seconds(llm, "debate")
                 stream_enabled = llm_stream_enabled(llm)
                 try:
-                    response = http_json(
-                        chat_completions_url(base_url),
-                        {"Authorization": f"Bearer {api_key}"},
-                        method="POST",
-                        body={
-                            "model": model,
-                            "messages": messages,
-                            "temperature": 0.1,
-                        },
-                        timeout_seconds=timeout_seconds,
-                        stream=stream_enabled,
+                    response = call_with_retry(
+                        lambda: http_json(
+                            chat_completions_url(base_url),
+                            {"Authorization": f"Bearer {api_key}"},
+                            method="POST",
+                            body={
+                                "model": model,
+                                "messages": messages,
+                                "temperature": 0.1,
+                            },
+                            timeout_seconds=timeout_seconds,
+                            stream=stream_enabled,
+                        )
                     )
                     duration_ms = int((time.time() - started) * 1000)
                     usage = response.get("usage") or {}
-                    input_tokens = int(usage.get("prompt_tokens", len(prompt) // 4))
+                    input_tokens = int(usage.get("prompt_tokens", prompt_tokens))
                     output_tokens = int(usage.get("completion_tokens", 0))
                     content = response.get("choices", [{}])[0].get("message", {}).get("content", "{}")
                     response_debug_text = json.dumps({"content": content, "stream": response.get("_jolt_stream") or {"enabled": False}}, ensure_ascii=False)
@@ -275,7 +279,7 @@ def run_targeted_debate_with_llm(
                 except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
                     duration_ms = int((time.time() - started) * 1000)
                     error_text = json.dumps({"error": str(exc), "timeout_seconds": timeout_seconds, "stream": stream_enabled}, ensure_ascii=False)
-                    recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, len(prompt) // 4, 0, None, messages, error_text)
+                    recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, prompt_tokens, 0, None, messages, error_text)
                     if index < len(providers) - 1:
                         recorder.event(span_id, "debate_llm_failover", f"{provider} 辩论调用失败，尝试下一个 provider", {"error": str(exc)[:300]})
                     else:

@@ -194,6 +194,7 @@ export function migrate(db: Db) {
       tool_provenance_json TEXT NOT NULL DEFAULT '[]',
       source_observations_json TEXT NOT NULL DEFAULT '[]',
       quality_trace_json TEXT NOT NULL DEFAULT '{}',
+      evidence_score_json TEXT NOT NULL DEFAULT '{}',
       publish_state TEXT NOT NULL DEFAULT 'pending',
       lifecycle_state TEXT NOT NULL DEFAULT 'pending',
       selected INTEGER NOT NULL DEFAULT 1,
@@ -259,6 +260,8 @@ export function migrate(db: Db) {
       rule_id TEXT NOT NULL,
       accepted_count INTEGER NOT NULL DEFAULT 0,
       rejected_count INTEGER NOT NULL DEFAULT 0,
+      recent_accepted_count INTEGER NOT NULL DEFAULT 0,
+      recent_rejected_count INTEGER NOT NULL DEFAULT 0,
       auto_suppress INTEGER NOT NULL DEFAULT 0,
       last_updated TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(project_id, agent_id, rule_id)
@@ -567,6 +570,29 @@ export function migrate(db: Db) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS rule_suppression_hints (
+      project_id TEXT NOT NULL,
+      rule_id TEXT NOT NULL,
+      file_glob TEXT NOT NULL,
+      snippet_hash TEXT NOT NULL,
+      snippet_excerpt TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 1,
+      last_marked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (project_id, rule_id, file_glob, snippet_hash)
+    );
+
+    CREATE TABLE IF NOT EXISTS llm_response_cache (
+      cache_key TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      schema_name TEXT NOT NULL,
+      seed INTEGER NOT NULL,
+      prompt_hash TEXT NOT NULL,
+      response_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS review_jobs_dead_letter (
       id TEXT PRIMARY KEY,
       review_job_id TEXT NOT NULL,
@@ -670,6 +696,7 @@ export function migrate(db: Db) {
       tool_provenance_json TEXT NOT NULL DEFAULT '[]',
       source_observations_json TEXT NOT NULL DEFAULT '[]',
       quality_trace_json TEXT NOT NULL DEFAULT '{}',
+      evidence_score_json TEXT NOT NULL DEFAULT '{}',
       lifecycle_state TEXT NOT NULL DEFAULT 'pending',
       selected INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -684,9 +711,12 @@ export function migrate(db: Db) {
   addColumnIfMissing(db, "review_findings", "tool_provenance_json", "TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing(db, "review_findings", "source_observations_json", "TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing(db, "review_findings", "quality_trace_json", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(db, "review_findings", "evidence_score_json", "TEXT NOT NULL DEFAULT '{}'");
   addColumnIfMissing(db, "agent_configs", "requires_deepagents", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "review_jobs", "pr_summary", "TEXT NOT NULL DEFAULT '{}'");
   addColumnIfMissing(db, "review_jobs", "requested_by", "TEXT");
+  addColumnIfMissing(db, "rule_precision_history", "recent_accepted_count", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "rule_precision_history", "recent_rejected_count", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "users", "password_hash", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "users", "password_salt", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "users", "global_role", "TEXT NOT NULL DEFAULT 'user'");

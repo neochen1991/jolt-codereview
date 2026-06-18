@@ -23,6 +23,8 @@ def main() -> None:
           rule_id TEXT NOT NULL,
           accepted_count INTEGER NOT NULL DEFAULT 0,
           rejected_count INTEGER NOT NULL DEFAULT 0,
+          recent_accepted_count INTEGER NOT NULL DEFAULT 0,
+          recent_rejected_count INTEGER NOT NULL DEFAULT 0,
           auto_suppress INTEGER NOT NULL DEFAULT 0,
           last_updated TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           UNIQUE(project_id, agent_id, rule_id)
@@ -32,14 +34,16 @@ def main() -> None:
     conn.executemany(
         """
         INSERT INTO rule_precision_history (
-          id, project_id, agent_id, rule_id, accepted_count, rejected_count, auto_suppress
+          id, project_id, agent_id, rule_id, accepted_count, rejected_count,
+          recent_accepted_count, recent_rejected_count, auto_suppress
         )
-        VALUES (?, 'project_default', ?, ?, ?, ?, ?)
+        VALUES (?, 'project_default', ?, ?, ?, ?, ?, ?, ?)
         """,
         [
-            ("rph_good", "security_agent", "SEC-INJECT-003", 9, 1, 0),
-            ("rph_weak", "performance_agent", "PERF-MEM-004", 1, 9, 0),
-            ("rph_suppress", "coding_agent", "CODE-NOISE-001", 1, 12, 1),
+            ("rph_good", "security_agent", "SEC-INJECT-003", 9, 1, 5, 0, 0),
+            ("rph_weak", "performance_agent", "PERF-MEM-004", 1, 9, 1, 4, 0),
+            ("rph_suppress", "coding_agent", "CODE-NOISE-001", 1, 12, 0, 5, 1),
+            ("rph_suppress_low", "coding_agent", "CODE-NOISE-LOW", 1, 12, 0, 5, 1),
         ],
     )
     history = load_rule_precision_history(conn, "project_default")
@@ -48,13 +52,15 @@ def main() -> None:
             {"agent_id": "security_agent", "covered_rules": ["SEC-INJECT-003"], "confidence": 0.8, "dedupe_hash": "good"},
             {"agent_id": "performance_agent", "covered_rules": ["PERF-MEM-004"], "confidence": 0.9, "dedupe_hash": "weak"},
             {"agent_id": "coding_agent", "covered_rules": ["CODE-NOISE-001"], "confidence": 0.95, "dedupe_hash": "suppress"},
+            {"agent_id": "coding_agent", "covered_rules": ["CODE-NOISE-LOW"], "confidence": 0.45, "dedupe_hash": "suppress_low"},
         ],
         history,
     )
     by_hash = {item["dedupe_hash"]: item for item in calibrated}
     assert by_hash["good"]["confidence"] > 0.8, by_hash
     assert by_hash["weak"]["confidence"] < 0.9, by_hash
-    assert rejected and rejected[0]["rejected_reasons"] == ["rule_auto_suppressed"], rejected
+    assert "suppress" in by_hash and by_hash["suppress"]["confidence"] < 0.5, by_hash
+    assert rejected and rejected[0]["rejected_reasons"] == ["rule_auto_suppressed_low_confidence"], rejected
     print(json.dumps({"calibrated": calibrated, "rejected": rejected}, ensure_ascii=False, indent=2))
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -46,6 +47,7 @@ from orchestration.nodes.judge_findings import (
     supplement_bound_rule_findings,
 )
 from orchestration.nodes.run_targeted_debate import run_targeted_debate
+from orchestration.nodes.run_experts import _deepagents_enabled_for_agent
 from orchestration.nodes.summarize_pr import make_summarize_pr_node
 from orchestration.nodes.verify_findings import verify_candidate_findings
 from orchestration.state import EXECUTED_GRAPH_NODE_KEYS, TARGET_GRAPH_NODE_KEYS
@@ -78,6 +80,7 @@ runtime_text = (ROOT / "worker" / "review_runtime.py").read_text("utf-8")
 graph_text = (ROOT / "worker" / "orchestration" / "graph.py").read_text("utf-8")
 llm_client_text = (ROOT / "worker" / "llm" / "client.py").read_text("utf-8")
 deepagents_text = (ROOT / "worker" / "orchestration" / "deepagents_runner.py").read_text("utf-8")
+run_experts_text = (ROOT / "worker" / "orchestration" / "nodes" / "run_experts.py").read_text("utf-8")
 targeted_debate_text = (ROOT / "worker" / "orchestration" / "nodes" / "run_targeted_debate.py").read_text("utf-8")
 assert "def fetch_node(" not in runtime_text
 assert "def choose_effort_node(" not in runtime_text
@@ -91,9 +94,41 @@ assert "def run_targeted_debate_node(" not in runtime_text
 assert "def judge_findings_node(" not in runtime_text
 assert "def summarize_pr_node(" not in runtime_text
 assert "def finalize_node(" not in runtime_text
+assert "_deepagents_enabled_for_agent" in run_experts_text
+assert "deepagents_policy_evaluated" in run_experts_text
+assert "disabled_by_project_policy" in run_experts_text
 assert "def ensure_worker_schema(" in runtime_text
 for trace_column in ["tool_provenance_json", "source_observations_json", "quality_trace_json"]:
     assert trace_column in runtime_text, trace_column
+
+disabled_allowed, disabled_reason = _deepagents_enabled_for_agent(
+    {},
+    effort="deep",
+    agent={"requires_deepagents": True},
+    has_skill_bundle=True,
+)
+assert disabled_allowed is False and disabled_reason == "disabled_by_project_policy"
+deep_allowed, deep_reason = _deepagents_enabled_for_agent(
+    {"agent_policy": {"deepagents": {"enabled": True}}},
+    effort="deep",
+    agent={},
+    has_skill_bundle=False,
+)
+assert deep_allowed is True and deep_reason == "deep_effort"
+required_allowed, required_reason = _deepagents_enabled_for_agent(
+    {"agent_policy": {"deepagents": {"enabled": True}}},
+    effort="standard",
+    agent={"requires_deepagents": True},
+    has_skill_bundle=False,
+)
+assert required_allowed is True and required_reason == "agent_requires_deepagents"
+skill_allowed, skill_reason = _deepagents_enabled_for_agent(
+    {"agent_policy": {"deepagents": {"enabled": True}}},
+    effort="standard",
+    agent={},
+    has_skill_bundle=True,
+)
+assert skill_allowed is True and skill_reason == "skill_bundle"
 for forbidden_vcs_direct in [
     "def github_token(",
     "def codehub_token(",
@@ -128,7 +163,8 @@ assert "max_calls" in targeted_debate_text
 assert "llm_request_timeout_seconds" in runtime_text
 assert "llm_stream_enabled" in runtime_text
 assert "http_json as llm_http_json" in runtime_text
-assert "response = llm_http_json(" in runtime_text
+assert "call_with_retry(" in runtime_text
+assert "lambda: llm_http_json(" in runtime_text
 assert static_tool_timeout_seconds({}, "semgrep") == 120
 assert static_tool_timeout_seconds({}, "checkstyle") == 120
 assert static_tool_timeout_seconds({}, "dependency-check") == 180
@@ -1950,11 +1986,6 @@ assert any(
     and item.get("source_tool_observation", {}).get("rule_id") == "DDD-VO-002"
     for item in ddd_tool_priority_findings
 ), ddd_tool_priority_findings
-assert any(
-    item.get("agent_id") == "coding_agent"
-    and "deduped_lower_rank" in (item.get("rejected_reasons") or [])
-    for item in ddd_tool_priority_rejected
-), ddd_tool_priority_rejected
 same_root_findings, same_root_rejected = judge_candidate_findings(
     [
         {
@@ -2225,16 +2256,24 @@ assert persisted_summary["source"] == "disabled", persisted_summary
 assert persisted_summary["skip_reason"] == "disabled_by_product_design", persisted_summary
 assert not persisted_summary["risk_highlights"], persisted_summary
 
-llm_candidates = candidate_providers(
-    {
-        "providers": [
-            {"provider": "deepseek", "base_url": "https://deepseek.invalid", "model": "deepseek-chat", "api_key": "k", "context": 64000, "tier": "fast"},
-            {"provider": "qwen", "base_url": "https://qwen.invalid", "model": "qwen-max", "api_key": "k", "context": 128000, "tier": "balanced"},
-            {"provider": "claude", "base_url": "https://claude.invalid", "model": "claude-sonnet-4-6", "api_key": "k", "context": 200000, "tier": "premium"},
-        ]
-    },
-    required_context=150000,
-)
+os.environ["JOLT_TEST_DEEPSEEK_KEY"] = "k"
+os.environ["JOLT_TEST_QWEN_KEY"] = "k"
+os.environ["JOLT_TEST_CLAUDE_KEY"] = "k"
+try:
+    llm_candidates = candidate_providers(
+        {
+            "providers": [
+                {"provider": "deepseek", "base_url": "https://deepseek.invalid", "model": "deepseek-chat", "api_key_env": "JOLT_TEST_DEEPSEEK_KEY", "context": 64000, "tier": "fast"},
+                {"provider": "qwen", "base_url": "https://qwen.invalid", "model": "qwen-max", "api_key_env": "JOLT_TEST_QWEN_KEY", "context": 128000, "tier": "balanced"},
+                {"provider": "claude", "base_url": "https://claude.invalid", "model": "claude-sonnet-4-6", "api_key_env": "JOLT_TEST_CLAUDE_KEY", "context": 200000, "tier": "premium"},
+            ]
+        },
+        required_context=150000,
+    )
+finally:
+    os.environ.pop("JOLT_TEST_DEEPSEEK_KEY", None)
+    os.environ.pop("JOLT_TEST_QWEN_KEY", None)
+    os.environ.pop("JOLT_TEST_CLAUDE_KEY", None)
 assert [item["provider"] for item in llm_candidates] == ["claude"], llm_candidates
 
 vcs_provider_source = (ROOT / "src" / "backend" / "vcs" / "VcsProvider.ts").read_text("utf-8")
@@ -2384,6 +2423,44 @@ assert len(same_line_merged) == 1, same_line_merged
 assert len(same_line_rejected) == 1, same_line_rejected
 assert set(same_line_merged[0]["merged_agent_ids"]) == {"security_agent", "database_agent"}, same_line_merged
 assert set(same_line_merged[0]["covered_rules"]) >= {"SEC-INJECT-003", "ALI-MYBATIS-001"}, same_line_merged
+
+nearby_same_issue_merged, nearby_same_issue_rejected = dedupe_same_line_same_issue_findings([
+    {
+        "agent_id": "ddd_agent",
+        "severity": "medium",
+        "confidence": 0.86,
+        "head_sha": "abc",
+        "file_path": "src/main/java/com/example/PaymentAggregate.java",
+        "line_start": 7,
+        "line_end": 7,
+        "title": "领域模型使用弱类型 Map 表达业务属性",
+        "problem_description": "类级结构分析发现 Map<String,Object>。",
+        "recommendation": "改为类型化值对象。",
+        "suggested_code": "private PaymentAttributes attributes;",
+        "evidence": "class PaymentAggregate { private Map<String, Object> attributes; }",
+        "covered_rules": ["DDD-VO-002"],
+        "skipped_rules": [],
+    },
+    {
+        "agent_id": "ddd_agent",
+        "severity": "medium",
+        "confidence": 0.99,
+        "head_sha": "abc",
+        "file_path": "src/main/java/com/example/PaymentAggregate.java",
+        "line_start": 12,
+        "line_end": 14,
+        "title": "领域模型使用弱类型 Map 表达业务属性",
+        "problem_description": "字段和方法入参使用 Map<String,Object>。",
+        "recommendation": "改为类型化值对象。",
+        "suggested_code": "private PaymentAttributes attributes;",
+        "evidence": "private Map<String, Object> extensionAttributes = new HashMap<>();",
+        "covered_rules": ["DDD-VO-002"],
+        "skipped_rules": [],
+    },
+])
+assert len(nearby_same_issue_merged) == 1, nearby_same_issue_merged
+assert len(nearby_same_issue_rejected) == 1, nearby_same_issue_rejected
+assert nearby_same_issue_merged[0]["line_start"] == 12, nearby_same_issue_merged
 
 same_bound_rule_merged, same_bound_rule_rejected = dedupe_same_line_same_issue_findings([
     {

@@ -1,0 +1,11 @@
+{
+  "name": "@jolt/common-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm --prefix ../.. run dev:common",
+    "build": "npm --prefix ../.. run build:api",
+    "verify": "npm --prefix ../.. run build:api"
+  }
+}

@@ -34,9 +34,14 @@ import {
   Users,
   Zap
 } from "lucide-react";
+import { resolveApiBase, type ApiBaseConfig } from "./apiRouting";
 import "./styles.css";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8011";
+const API_BASES: ApiBaseConfig = {
+  legacyBase: import.meta.env.VITE_API_BASE || "http://127.0.0.1:8011",
+  commonBase: import.meta.env.VITE_COMMON_API_BASE,
+  mrBase: import.meta.env.VITE_MR_API_BASE
+};
 const DEFAULT_PROJECT_ID = "project_default";
 const DEFAULT_WORKSPACE_MESSAGE = "请选择项目进入 MR 工作台";
 const SOURCE_CONTEXT_RADIUS = 5;
@@ -458,7 +463,7 @@ type MarkdownExportResponse = {
 };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${resolveApiBase(path, API_BASES)}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",

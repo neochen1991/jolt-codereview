@@ -435,20 +435,52 @@ npm run start:windows
 npm run dev
 ```
 
+三项目拆分后的独立启动：
+
+```bash
+cd apps/common-backend && npm run dev
+cd apps/mr-backend && npm run dev
+cd apps/frontend && npm run dev
+```
+
 启动后：
 
-- API: `http://127.0.0.1:8011`
+- Common Backend: `http://127.0.0.1:8010`
+- MR Backend: `http://127.0.0.1:8011`
 - Frontend: `http://127.0.0.1:5173`
+
+前端通过 `VITE_COMMON_API_BASE` 和 `VITE_MR_API_BASE` 分别访问两个后端；未配置时会回退到旧的 `VITE_API_BASE`。
+
+导出为三个独立本地代码仓：
+
+```bash
+npm run export:repos
+```
+
+导出目录：
+
+- `split-repos/common-backend`
+- `split-repos/mr-backend`
+- `split-repos/frontend`
+
+每个导出目录都会初始化自己的 `.git`，并带独立 `package.json`、README 和启动脚本。MR Backend 导出仓还包含 `requirements.txt`，首次独立运行 worker 前需要执行：
+
+```bash
+cd split-repos/mr-backend
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
 
 `npm run dev` 由 Node 脚本启动，不依赖 bash，可在 Windows 下运行。启动前会检查 `pg`、`@types/pg` 和 `psycopg` 等运行时依赖；如需自动补齐缺失包，可设置 `JOLT_INSTALL_MISSING_DEPS=1 npm run dev`。Windows 专用脚本会在启动前补齐 `CONFIG_PATH` 和 `PYTHON_BIN`。
 Python Worker 会优先使用 `PYTHON_BIN`、`config.json` 中的 `runtime.python_bin`，其次自动使用项目内 `.venv`。
 
 启动后会同时拉起：
 
-- TS API Backend
+- Common Backend
+- MR Backend
 - Python Review Worker loop
 - Frontend Vite dev server
-- Poller：默认每 5 分钟调用一次项目同步接口，作为 Webhook 之外的兜底通道。可用 `POLL_INTERVAL_MS` 调整。
+- Poller：默认集成在 MR Backend 自动同步调度器中；也可设置 `JOLT_START_EXTERNAL_POLLER=1` 启动外部 Poller。
 
 ## GitHub 数据源调试
 

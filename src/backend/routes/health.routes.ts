@@ -3,7 +3,7 @@ import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
 import type { FindingRow } from "../types.js";
 import type { BackendRouteContext } from "./context.js";
 
-export function createHealthRoutes(ctx: BackendRouteContext): Route[] {
+export function createHealthRoutes(ctx: BackendRouteContext, options: { serviceName?: string } = {}): Route[] {
   const {
     all,
     get,
@@ -131,7 +131,7 @@ export function createHealthRoutes(ctx: BackendRouteContext): Route[] {
   }
 
   const routes: Route[] = [
-    route("GET", "/api/health", () => ({ ok: true, service: "jolt-codereview-api", sli: healthSli() })),
+    route("GET", "/api/health", () => ({ ok: true, service: options.serviceName ?? "jolt-codereview-api", sli: healthSli() })),
   ];
   return routes;
 }

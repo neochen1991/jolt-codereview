@@ -16,6 +16,17 @@ const SETTINGS_KEYS = [
 
 export type ProjectSettingsKey = typeof SETTINGS_KEYS[number];
 
+function runtimeLlmPolicy(value: Record<string, unknown>) {
+  const next: Record<string, unknown> = {};
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (key === "default_api_key") continue;
+    if (rawValue === null || rawValue === undefined) continue;
+    if (typeof rawValue === "string" && rawValue.trim() === "") continue;
+    next[key] = rawValue;
+  }
+  return next;
+}
+
 export class ProjectConfigService {
   constructor(private readonly db: Db) {}
 
@@ -71,10 +82,11 @@ export class ProjectConfigService {
   effectiveConfig(projectId: string, deploymentDefaults: AppConfig) {
     const settings = this.listSettings(projectId).settings as Record<string, Record<string, unknown>>;
     const effective = JSON.parse(JSON.stringify(deploymentDefaults ?? {})) as AppConfig;
-    if (settings.llm_policy && Object.keys(settings.llm_policy).length > 0) {
+    const llmPolicy = runtimeLlmPolicy(settings.llm_policy ?? {});
+    if (Object.keys(llmPolicy).length > 0) {
       effective.llm = {
         ...(effective.llm ?? {}),
-        ...settings.llm_policy
+        ...llmPolicy
       };
     }
     if (settings.vcs_policy && Object.keys(settings.vcs_policy).length > 0) {

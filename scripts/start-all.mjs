@@ -7,7 +7,8 @@ const root = path.resolve(import.meta.dirname, "..");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const config = loadConfig();
 const apiHost = config.server?.host || "127.0.0.1";
-const apiPort = Number(config.server?.port || 8011);
+const commonPort = Number(config.server?.common_port || 8010);
+const mrPort = Number(config.server?.mr_port || config.server?.port || 8011);
 const frontendHost = process.env.JOLT_FRONTEND_HOST || "127.0.0.1";
 const frontendPort = Number(process.env.JOLT_FRONTEND_PORT || 5173);
 
@@ -35,7 +36,12 @@ try {
 
 const env = {
   ...process.env,
-  CONFIG_PATH: process.env.CONFIG_PATH || path.join(root, "config.json")
+  CONFIG_PATH: process.env.CONFIG_PATH || path.join(root, "config.json"),
+  COMMON_API_BASE: process.env.COMMON_API_BASE || `http://${apiHost}:${commonPort}`,
+  MR_API_BASE: process.env.MR_API_BASE || `http://${apiHost}:${mrPort}`,
+  VITE_COMMON_API_BASE: process.env.VITE_COMMON_API_BASE || `http://${apiHost}:${commonPort}`,
+  VITE_MR_API_BASE: process.env.VITE_MR_API_BASE || `http://${apiHost}:${mrPort}`,
+  VITE_API_BASE: process.env.VITE_API_BASE || `http://${apiHost}:${mrPort}`
 };
 
 const children = [];
@@ -157,14 +163,17 @@ process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
 console.log("Jolt CodeReview local dev");
-console.log(`API:      http://${apiHost}:${apiPort}`);
+console.log(`Common:  http://${apiHost}:${commonPort}`);
+console.log(`MR API:  http://${apiHost}:${mrPort}`);
 console.log(`Frontend: http://${frontendHost}:${frontendPort}`);
 console.log("MR poller: built into API auto-sync scheduler");
 
-await releasePort("API", apiPort);
+await releasePort("Common API", commonPort);
+await releasePort("MR API", mrPort);
 await releasePort("Frontend", frontendPort);
 
-start("API", ["run", "dev:api"]);
+start("Common API", ["run", "dev:common"]);
+start("MR API", ["run", "dev:mr"]);
 start("Worker", ["run", "worker"]);
 if (process.env.JOLT_START_EXTERNAL_POLLER === "1") {
   start("Poller", ["run", "poll"]);

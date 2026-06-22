@@ -17,6 +17,7 @@ __pycache__/
 coverage/
 playwright-report/
 test-results/
+split-repos/
 
 # Runtime data
 data/

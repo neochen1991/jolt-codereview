@@ -1,9 +1,26 @@
 export const API = process.env.API_BASE || "http://127.0.0.1:8011";
+export const COMMON_API = process.env.COMMON_API_BASE || API;
+export const MR_API = process.env.MR_API_BASE || API;
+
+const COMMON_PATH_PATTERNS = [
+  /^\/api\/auth(?:\/|$)/,
+  /^\/api\/me(?:\/|$)/,
+  /^\/api\/users(?:\/|$)/,
+  /^\/api\/permissions(?:\/|$)/,
+  /^\/api\/models(?:\/|$)/,
+  /^\/api\/system(?:\/|$)/,
+  /^\/internal\/auth(?:\/|$)/,
+  /^\/internal\/models(?:\/|$)/
+];
+
+export function apiBaseForPath(path) {
+  return COMMON_PATH_PATTERNS.some((pattern) => pattern.test(path)) ? COMMON_API : MR_API;
+}
 
 let cachedToken = null;
 
 export async function request(path, init = {}) {
-  const response = await fetch(`${API}${path}`, {
+  const response = await fetch(`${apiBaseForPath(path)}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",

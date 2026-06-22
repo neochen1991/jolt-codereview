@@ -26,6 +26,8 @@ export interface AppConfig {
   server?: {
     host?: string;
     port?: number;
+    common_port?: number;
+    mr_port?: number;
     database_path?: string;
     database_driver?: "sqlite" | "postgres";
     postgres_url?: string;

@@ -27,6 +27,7 @@
     "seed:payment-eval": "node scripts/seed-payment-springboot-eval.mjs",
     "verify:local": "node scripts/verify-local.mjs",
     "verify:three-project-boundary": "node scripts/verify-three-project-boundary.mjs",
+    "verify:split-full-regression": "node scripts/verify-split-full-regression.mjs",
     "verify:frontend-api-routing": "node scripts/verify-frontend-api-routing.mjs",
     "verify:model-config-env-fallback": "node scripts/verify-model-config-env-fallback.mjs",
     "verify:llm": "node scripts/verify-llm.mjs",

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from typing import Any
 
 from calibration.precision_history import calibrate_findings_with_history, load_rule_precision_history
@@ -3265,7 +3264,7 @@ def _tool_provenance(finding: dict[str, Any], source_observations: list[dict[str
 
 
 def _mark_observations_adopted(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     run_id: str,
     agent_id: str,
@@ -3296,7 +3295,7 @@ def _mark_observations_adopted(
 
 
 def _mark_observation_state(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     run_id: str,
     observation: dict[str, Any],
@@ -3329,7 +3328,7 @@ def _mark_observation_state(
 
 
 def _mark_promoted_rejection_sources(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     run_id: str,
     rejections: list[dict[str, Any]],
@@ -3428,7 +3427,7 @@ def judge_candidate_findings(
 
 def make_judge_findings_node(
     *,
-    conn: sqlite3.Connection,
+    conn: Any,
     recorder: Any,
     job: Any,
     project_id: str,
@@ -3452,7 +3451,7 @@ def make_judge_findings_node(
                     (project_id,),
                 ).fetchall()
             ]
-        except sqlite3.Error:
+        except Exception:
             return []
 
     def judge_findings_node(state: dict[str, Any]) -> dict[str, Any]:

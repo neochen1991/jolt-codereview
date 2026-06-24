@@ -136,10 +136,12 @@ function commonBackendRepo(dir) {
 
 \`\`\`bash
 npm install
+cp config.example.json config.json
 npm run dev
 \`\`\`
 
 默认监听 \`127.0.0.1:8010\`，可通过 \`config.json\` 的 \`server.common_port\` 调整。
+业务库只支持 PostgreSQL，请在 \`config.json\` 中配置 \`server.postgres_url\`。
 
 ## Owned Routes
 
@@ -155,7 +157,7 @@ npm run dev
 
 function mrBackendRepo(dir) {
   cleanDir(dir);
-  for (const item of ["src/backend", "worker", "scripts", "config", "docs/nfr-and-slo.md", "config.example.json", "requirements.txt", "tsconfig.json"]) {
+  for (const item of ["src/backend", "worker", "config", "docs/nfr-and-slo.md", "config.example.json", "requirements.txt", "tsconfig.json", "scripts/run-python.mjs"]) {
     copyIfExists(item, dir);
   }
   writeJson(path.join(dir, "package.json"), backendBasePackage(
@@ -164,8 +166,7 @@ function mrBackendRepo(dir) {
     "mr-server.js",
     {
       worker: "node scripts/run-python.mjs worker/review_worker.py --loop",
-      "worker:once": "node scripts/run-python.mjs worker/review_worker.py --once",
-      "verify:worker-orchestration": "node scripts/run-python.mjs scripts/verify_worker_orchestration_nodes.py"
+      "worker:once": "node scripts/run-python.mjs worker/review_worker.py --once"
     }
   ));
   writeJson(path.join(dir, "tsconfig.backend.json"), backendTsconfig());
@@ -178,6 +179,7 @@ MR 主后端，负责仓库、MR 同步、评审任务、规则、专家 Agent�
 
 \`\`\`bash
 npm install
+cp config.example.json config.json
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 npm run dev
@@ -185,6 +187,7 @@ npm run worker
 \`\`\`
 
 默认监听 \`127.0.0.1:8011\`，可通过 \`config.json\` 的 \`server.mr_port\` 调整。
+业务库只支持 PostgreSQL，请在 \`config.json\` 中配置 \`server.postgres_url\`。
 
 ## Owned Routes
 

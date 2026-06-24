@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from typing import Any, Callable
 
 
@@ -25,7 +24,7 @@ def _history_id(merge_request_id: str, dedupe_hash: str) -> str:
 
 
 def update_mr_finding_history(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     merge_request_id: str,
     head_sha: str,
@@ -138,7 +137,7 @@ def summarize_evidence_contracts(final_findings: list[dict[str, Any]]) -> dict[s
 
 def make_finalize_node(
     *,
-    conn: sqlite3.Connection,
+    conn: Any,
     job: Any,
     mr: Any,
     run_id: str,

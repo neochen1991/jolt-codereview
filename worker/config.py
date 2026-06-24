@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import json
 import os
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -28,8 +27,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "default_endpoint": "",
     },
     "server": {
-        "database_path": "data/jolt-codereview.sqlite",
-        "database_driver": "sqlite",
+        "database_driver": "postgres",
         "postgres_url": "",
         "postgres_user": "",
         "postgres_password": "",
@@ -124,15 +122,10 @@ def load_config() -> dict[str, Any]:
     return config
 
 
-def db_path(config: dict[str, Any]) -> Path:
-    configured = config.get("server", {}).get("database_path", "data/jolt-codereview.sqlite")
-    path = Path(configured)
-    return path if path.is_absolute() else ROOT / path
-
-
-def load_project_settings(conn: sqlite3.Connection, project_id: str) -> dict[str, dict[str, Any]]:
+def load_project_settings(conn: Any, project_id: str) -> dict[str, dict[str, Any]]:
     table = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'project_settings'"
+        "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?",
+        ("project_settings",),
     ).fetchone()
     if not table:
         return {}
@@ -149,11 +142,12 @@ def load_project_settings(conn: sqlite3.Connection, project_id: str) -> dict[str
     return settings
 
 
-def load_user_settings(conn: sqlite3.Connection, user_id: str | None) -> dict[str, dict[str, Any]]:
+def load_user_settings(conn: Any, user_id: str | None) -> dict[str, dict[str, Any]]:
     if not user_id:
         return {}
     table = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'user_settings'"
+        "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?",
+        ("user_settings",),
     ).fetchone()
     if not table:
         return {}
@@ -195,7 +189,7 @@ def apply_project_vcs_policy(effective: dict[str, Any], settings: dict[str, dict
     return effective
 
 
-def effective_project_config(base_config: dict[str, Any], conn: sqlite3.Connection, project_id: str, user_id: str | None = None) -> dict[str, Any]:
+def effective_project_config(base_config: dict[str, Any], conn: Any, project_id: str, user_id: str | None = None) -> dict[str, Any]:
     effective = copy.deepcopy(base_config)
     settings = load_project_settings(conn, project_id)
     for settings_key, config_key in SETTINGS_TO_CONFIG.items():

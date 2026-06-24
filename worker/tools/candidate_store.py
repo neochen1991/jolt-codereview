@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
 
+from db_helpers import table_exists
 from tools.tool_normalizer import sha1
 
 
-def _candidate_table_exists(conn: sqlite3.Connection) -> bool:
-    row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'candidate_findings'"
-    ).fetchone()
-    return bool(row)
+def _candidate_table_exists(conn: Any) -> bool:
+    return table_exists(conn, "candidate_findings")
 
 
 def _candidate_id(review_run_id: str, dedupe_hash: str, stage: str) -> str:
@@ -51,7 +48,7 @@ def _source_type(item: dict[str, Any]) -> str:
 
 
 def upsert_candidate_finding(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     review_run_id: str,
     item: dict[str, Any],
@@ -125,7 +122,7 @@ def upsert_candidate_finding(
 
 
 def upsert_candidate_findings(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     review_run_id: str,
     items: list[dict[str, Any]],

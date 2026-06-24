@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-import sqlite3
 from typing import Any
 
 HIGH_SEVERITIES = {"critical", "high"}
@@ -71,7 +70,7 @@ def detect_conflicts(findings: list[dict[str, Any]], tool_observations: list[dic
 
 def make_detect_conflicts_node(
     *,
-    conn: sqlite3.Connection,
+    conn: Any,
     recorder: Any,
     run_id: str,
     load_tool_observations: Any,

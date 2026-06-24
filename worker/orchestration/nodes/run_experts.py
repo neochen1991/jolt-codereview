@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any, Callable
 
 from orchestration.deepagents_runner import run_bounded_deepagent
@@ -43,14 +42,14 @@ def _deepagents_enabled_for_agent(project_config: dict[str, Any], *, effort: str
     return False, "no_enabled_trigger"
 
 
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+def _table_columns(conn: Any, table: str) -> set[str]:
     try:
         return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    except sqlite3.Error:
+    except Exception:
         return set()
 
 
-def _project_id_for_job(conn: sqlite3.Connection, job: Any) -> str:
+def _project_id_for_job(conn: Any, job: Any) -> str:
     try:
         row = conn.execute(
             """
@@ -63,11 +62,11 @@ def _project_id_for_job(conn: sqlite3.Connection, job: Any) -> str:
             (job["id"],),
         ).fetchone()
         return str(row["project_id"] or "") if row else ""
-    except sqlite3.Error:
+    except Exception:
         return ""
 
 
-def _first_rule_id(row: sqlite3.Row) -> str:
+def _first_rule_id(row: Any) -> str:
     if "covered_rules_json" not in row.keys():
         return ""
     try:
@@ -77,7 +76,7 @@ def _first_rule_id(row: sqlite3.Row) -> str:
     return str(values[0]) if isinstance(values, list) and values else ""
 
 
-def _load_feedback_examples(conn: sqlite3.Connection, project_id: str, agent_id: str) -> list[dict[str, Any]]:
+def _load_feedback_examples(conn: Any, project_id: str, agent_id: str) -> list[dict[str, Any]]:
     if not project_id or not agent_id:
         return []
     finding_columns = _table_columns(conn, "review_findings")
@@ -122,7 +121,7 @@ def _load_feedback_examples(conn: sqlite3.Connection, project_id: str, agent_id:
             """,
             (project_id, agent_id),
         ).fetchall()
-    except sqlite3.Error:
+    except Exception:
         return []
     examples = []
     for row in rows:
@@ -135,7 +134,7 @@ def _load_feedback_examples(conn: sqlite3.Connection, project_id: str, agent_id:
 
 def make_run_experts_node(
     *,
-    conn: sqlite3.Connection,
+    conn: Any,
     recorder: Any,
     job: Any,
     run_id: str,
@@ -144,7 +143,7 @@ def make_run_experts_node(
     tool_gateway: Any,
     package_version: Callable[[str], str | None],
     load_skill_summary: Callable[[str], str],
-    load_tool_observations: Callable[[sqlite3.Connection, str], list[dict[str, Any]]],
+    load_tool_observations: Callable[[Any, str], list[dict[str, Any]]],
     static_findings: Callable[[str, list[Any], str], list[dict[str, Any]]],
     sanitize_findings_for_policy: Callable[[list[dict[str, Any]], dict[str, Any], list[Any]], list[dict[str, Any]]],
     call_llm: Callable[..., list[dict[str, Any]]],

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from typing import Any
+
+from db_helpers import table_exists
 
 
 @dataclass(frozen=True)
@@ -13,7 +14,7 @@ class ToolDecision:
 
 
 class ToolGateway:
-    def __init__(self, conn: sqlite3.Connection, project_id: str, project_config: dict[str, Any]):
+    def __init__(self, conn: Any, project_id: str, project_config: dict[str, Any]):
         self.conn = conn
         self.project_id = project_id
         self.tool_policy = project_config.get("tool_policy") or {}
@@ -38,11 +39,8 @@ class ToolGateway:
             return ToolDecision(False, "project_tool_policy_not_enabled")
         return ToolDecision(True, "project_allowed")
 
-    def _binding(self, agent_key: str, tool_name: str) -> sqlite3.Row | None:
-        table = self.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'expert_tool_bindings'"
-        ).fetchone()
-        if not table:
+    def _binding(self, agent_key: str, tool_name: str) -> Any | None:
+        if not table_exists(self.conn, "expert_tool_bindings"):
             return None
         return self.conn.execute(
             """

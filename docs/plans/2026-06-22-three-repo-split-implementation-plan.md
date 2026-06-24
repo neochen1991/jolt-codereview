@@ -6,7 +6,7 @@
 
 **Architecture:** Reuse existing route modules and database adapters, but introduce explicit route groups and independent server entrypoints. The frontend keeps one API helper with path-based backend routing. The MR worker remains attached to the MR backend and model configuration is treated as a common-backend-owned contract.
 
-**Tech Stack:** TypeScript Node HTTP server, React/Vite, Python worker, SQLite/PostgreSQL adapter, existing npm verification scripts.
+**Tech Stack:** TypeScript Node HTTP server, React/Vite, Python worker, PostgreSQL adapter, existing npm verification scripts.
 
 ---
 

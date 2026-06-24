@@ -5,7 +5,7 @@ Jolt CodeReview 是一个项目级 AI 代码检视平台，面向生产环境的
 - GitHub Pull Request 作为当前本机调试 MR 数据源。
 - CodeHub Merge Request 作为可配置数据源，支持通过 endpoint/path template 对接公司内网 API。
 - TS API Backend + React 前端 + Python Review Worker。
-- SQLite 本机存储。
+- PostgreSQL 存储。
 - MiniMax-M2.7 本机 LLM 配置。
 - LangGraph 确定性流程编排 + 受控 DeepAgents 专家节点。
 - Security / Backend / Test / Performance / DDD / Frontend / Redis / Dependency / Database 等专家 Agent 检视流。
@@ -68,9 +68,10 @@ npm run start:windows
 ## 环境要求
 
 - Windows 10/11、macOS 或 Linux。
-- Node.js 24+，用于内置 `node:sqlite`。
+- Node.js 24+。
 - Python 3.10+。
 - npm。
+- PostgreSQL 14+。
 - Java 17+ 或 21+，用于 Checkstyle、PMD、SpotBugs、Dependency-Check 等 Java 工具。
 - 可选：`GITHUB_TOKEN`。不配置 token 时可以同步公开仓库 PR，但 GitHub API 可能很快触发 rate limit；配置 token 后可完整拉取 PR changed files。
 - 可选：`CODEHUB_TOKEN`。接入公司内网 CodeHub 时使用。
@@ -348,14 +349,13 @@ cp config.example.json config.json
 
 生产或团队共享环境建议改用 `default_api_key_env` 或 secret store，避免在团队仓库中长期保存明文 key。
 
-### PostgreSQL 存储切换
+### PostgreSQL 存储
 
-默认本机模式使用 SQLite。生产或多人共享环境可以在 root 用户的「系统设置 -> 数据库存储」中测试 PG、初始化表结构、保存切换配置；保存动作会同步写入 `config.json`，重启 API 和 Worker 后生效。也可以直接编辑：
+系统只支持 PostgreSQL。可以在 root 用户的「系统设置 -> 数据库存储」中测试 PG、初始化表结构、保存配置；保存动作会同步写入 `config.json`，重启 API 和 Worker 后生效。也可以直接编辑：
 
 ```json
 {
   "server": {
-    "database_driver": "postgres",
     "postgres_url": "postgresql://pg-host:5432/jolt_codereview",
     "postgres_user": "jolt",
     "postgres_password": "<PASSWORD>",
@@ -557,7 +557,7 @@ npm run verify:codehub
 ## Windows 常见问题
 
 - PowerShell 提示脚本不可执行：先执行 `Set-ExecutionPolicy -Scope Process Bypass -Force`，只影响当前终端窗口。
-- `node:sqlite` 或 `Cannot find module node:sqlite`：Node.js 版本过低，升级到 Node.js 24+ 后重新执行 `npm install`。
+- PostgreSQL 连接失败：确认 `server.postgres_url`、用户名、密码和网络访问正确，并先在系统设置中执行连接测试。
 - `Cannot find package 'pg'` 或 Python 报 `No module named psycopg`：依赖目录存在但包不完整。执行 `npm install` 和 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`；也可以直接运行 `.\scripts\start-windows.ps1 -InstallIfMissing`。
 - `Python 3 was not found`：安装 Python 3.10+，或设置 `$env:PYTHON_BIN="C:\Path\To\python.exe"`。
 - Python 报 `UnicodeEncodeError` / `UnicodeDecodeError` / `gbk codec can't encode/decode`：优先使用 `.\scripts\start-windows.ps1` 或 `npm run start:windows`。脚本会设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8` 并切换控制台到 UTF-8；如果你直接运行 Python，也先执行 `$env:PYTHONUTF8="1"; $env:PYTHONIOENCODING="utf-8"; chcp 65001`。

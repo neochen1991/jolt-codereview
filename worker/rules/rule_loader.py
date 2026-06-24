@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
+from db_helpers import table_exists
 from rules.markdown_rule_parser import parse_markdown_rules
 
 
-def load_bound_rules(conn: sqlite3.Connection, project_id: str, agent_key: str) -> list[dict[str, Any]]:
-    table = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'expert_rule_bindings'"
-    ).fetchone()
-    if not table:
+def load_bound_rules(conn: Any, project_id: str, agent_key: str) -> list[dict[str, Any]]:
+    if not table_exists(conn, "expert_rule_bindings"):
         return []
     rows = conn.execute(
         """

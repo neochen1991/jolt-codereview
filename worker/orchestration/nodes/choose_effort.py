@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any, Callable
 
 from budget import BudgetTracker
@@ -56,7 +55,7 @@ def budget_for_effort(effort: str, budget_policy: dict[str, Any] | None = None) 
 
 def make_choose_effort_node(
     *,
-    conn: sqlite3.Connection,
+    conn: Any,
     job: Any,
     mr: Any,
     run_id: str,

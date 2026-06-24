@@ -36,11 +36,11 @@ export function splitSqlStatements(sql: string): string[] {
   return statements;
 }
 
-export function translateSqliteToPostgres(sql: string) {
+export function translateLegacySqlToPostgres(sql: string) {
   let translated = sql.trim().replace(/;+\s*$/g, "");
   translated = translated.replace(/BEGIN\s+IMMEDIATE/gi, "BEGIN");
   if (/^(CREATE|ALTER)\b/i.test(translated)) {
-    translated = translateSqliteSchemaToPostgres(translated);
+    translated = translateLegacySchemaToPostgres(translated);
   }
   translated = translated.replace(/datetime\(\s*'now'\s*,\s*\?\s*\)/gi, "(CURRENT_TIMESTAMP + ?::interval)");
   translated = translated.replace(/datetime\(\s*'now'\s*,\s*'([^']+)'\s*\)/gi, "(CURRENT_TIMESTAMP + INTERVAL '$1')");
@@ -67,7 +67,7 @@ export function translateSqliteToPostgres(sql: string) {
   return translated;
 }
 
-export function translateSqliteSchemaToPostgres(sql: string) {
+export function translateLegacySchemaToPostgres(sql: string) {
   return sql
     .replace(/"([^"]+)"/g, '"$1"')
     .replace(/\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/gi, "SERIAL PRIMARY KEY")

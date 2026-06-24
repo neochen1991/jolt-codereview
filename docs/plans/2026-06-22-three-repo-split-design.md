@@ -97,7 +97,7 @@ MR backend owns:
 - `vcs_publish_records`
 - `webhook_dead_letter`
 
-Stage 1 may still use one SQLite or PostgreSQL database, but code should treat these table groups as owned by separate services.
+Stage 1 uses PostgreSQL as the only service database. Code treats the table groups below as owned by separate services even when both backends point at the same PG database during local development.
 
 ## Frontend Routing
 

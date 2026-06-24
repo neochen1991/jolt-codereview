@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 from collections.abc import Iterable, Iterator
 from datetime import date, datetime
-from pathlib import Path
 from typing import Any
-
-from config import db_path
 
 
 class CompatRow(dict[str, Any]):
@@ -40,17 +36,10 @@ class CompatCursor:
 
 
 def open_app_database(config: dict[str, Any]):
-    driver = str((config.get("server") or {}).get("database_driver") or "sqlite").strip().lower()
-    if driver == "postgres":
-        return PostgresCompatConnection(config)
-    if driver not in {"", "sqlite"}:
-        raise RuntimeError(f"Unsupported database driver: {driver}")
-    path = db_path(config)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout = 5000")
-    return conn
+    driver = str((config.get("server") or {}).get("database_driver") or "postgres").strip().lower()
+    if driver and driver != "postgres":
+        raise RuntimeError(f"Unsupported database driver: {driver}. Jolt services are PostgreSQL-only.")
+    return PostgresCompatConnection(config)
 
 
 class PostgresCompatConnection:
@@ -89,7 +78,7 @@ class PostgresCompatConnection:
         special = self._special_cursor(sql, params_list)
         if special is not None:
             return special
-        translated = translate_sqlite_to_postgres(sql)
+        translated = translate_legacy_sql_to_postgres(sql)
         cursor = self._conn.execute(translated, params_list)
         rows = _wrap_rows(cursor.fetchall() if cursor.description else [])
         return CompatCursor(rows, cursor.rowcount)
@@ -134,22 +123,6 @@ class PostgresCompatConnection:
                 FROM information_schema.columns
                 WHERE table_schema = 'public' AND table_name = %s
                 ORDER BY ordinal_position
-                """,
-                [table_name],
-            )
-            return CompatCursor(_wrap_rows(cursor.fetchall()), cursor.rowcount)
-        if re.search(r"\bFROM\s+sqlite_master\b", sql, re.I):
-            if re.search(r"\bsql\s+LIKE\s+'%REFERENCES%'", sql, re.I):
-                return CompatCursor([])
-            literal = re.search(r"\bname\s*=\s*'([^']+)'", sql, re.I)
-            table_name = literal.group(1) if literal else (str(params[0]) if params else "")
-            if not table_name:
-                return CompatCursor([])
-            cursor = self._conn.execute(
-                """
-                SELECT table_name AS name
-                FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_name = %s
                 """,
                 [table_name],
             )
@@ -213,11 +186,11 @@ def split_sql_statements(sql: str) -> list[str]:
     return statements
 
 
-def translate_sqlite_to_postgres(sql: str) -> str:
+def translate_legacy_sql_to_postgres(sql: str) -> str:
     translated = sql.strip().rstrip(";")
     translated = re.sub(r"BEGIN\s+IMMEDIATE", "BEGIN", translated, flags=re.I)
     if re.match(r"^(CREATE|ALTER)\b", translated, re.I):
-        translated = translate_sqlite_schema_to_postgres(translated)
+        translated = translate_legacy_schema_to_postgres(translated)
     translated = re.sub(r"datetime\(\s*'now'\s*,\s*\?\s*\)", "(CURRENT_TIMESTAMP + %s::interval)", translated, flags=re.I)
     translated = re.sub(
         r"datetime\(\s*'now'\s*,\s*'([^']+)'\s*\)",
@@ -244,12 +217,13 @@ def translate_sqlite_to_postgres(sql: str) -> str:
     translated = re.sub(r"^INSERT\s+OR\s+IGNORE\s+INTO\s+", "INSERT INTO ", translated, flags=re.I)
     if re.match(r"^INSERT\s+INTO\s+", translated, re.I) and not re.search(r"\bON\s+CONFLICT\b", translated, re.I):
         translated = f"{translated} ON CONFLICT DO NOTHING"
-    translated = replace_qmark_placeholders(translated)
     translated = cast_text_timestamp_comparisons(translated)
+    translated = replace_qmark_placeholders(translated)
+    translated = escape_psycopg_percent_literals(translated)
     return translated
 
 
-def translate_sqlite_schema_to_postgres(sql: str) -> str:
+def translate_legacy_schema_to_postgres(sql: str) -> str:
     translated = re.sub(r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b", "SERIAL PRIMARY KEY", sql, flags=re.I)
     translated = re.sub(r"\bDATETIME\b(?!\s*\()", "TEXT", translated, flags=re.I)
     translated = re.sub(r"\bBOOLEAN\b", "INTEGER", translated, flags=re.I)
@@ -328,3 +302,27 @@ def replace_qmark_placeholders(sql: str) -> str:
         output.append(char)
         index += 1
     return "".join(output)
+
+
+def escape_psycopg_percent_literals(sql: str) -> str:
+    output: list[str] = []
+    index = 0
+    while index < len(sql):
+        char = sql[index]
+        next_char = sql[index + 1] if index + 1 < len(sql) else ""
+        if char == "%":
+            if next_char in {"s", "b", "t", "%"}:
+                output.append(char)
+                output.append(next_char)
+                index += 2
+                continue
+            output.append("%%")
+            index += 1
+            continue
+        output.append(char)
+        index += 1
+    return "".join(output)
+
+
+translate_sqlite_to_postgres = translate_legacy_sql_to_postgres
+translate_sqlite_schema_to_postgres = translate_legacy_schema_to_postgres

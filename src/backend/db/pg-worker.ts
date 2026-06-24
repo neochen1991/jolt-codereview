@@ -1,7 +1,7 @@
 import { parentPort } from "node:worker_threads";
 import { Client } from "pg";
 import { writeFileSync } from "node:fs";
-import { translateSqliteToPostgres } from "./pg-sql.js";
+import { translateLegacySqlToPostgres } from "./pg-sql.js";
 
 type PgWorkerRequest = {
   id: string;
@@ -63,30 +63,10 @@ async function handleRequest(request: PgWorkerRequest) {
     );
     return { rows: result.rows, rowCount: result.rowCount ?? result.rows.length };
   }
-  if (/\bFROM\s+sqlite_master\b/i.test(sql)) {
-    if (/\bsql\s+LIKE\s+'%REFERENCES%'/i.test(sql)) {
-      return { rows: [], rowCount: 0 };
-    }
-    const literalName = sql.match(/\bname\s*=\s*'([^']+)'/i)?.[1];
-    const paramName = !literalName && request.params?.length ? String(request.params[0]) : null;
-    const tableName = literalName || paramName;
-    if (tableName) {
-      const result = await activeClient.query(
-        `
-          SELECT table_name AS name
-          FROM information_schema.tables
-          WHERE table_schema = 'public' AND table_name = $1
-        `,
-        [tableName]
-      );
-      return { rows: result.rows, rowCount: result.rowCount ?? result.rows.length };
-    }
-    return { rows: [], rowCount: 0 };
-  }
   if (/^PRAGMA\b/i.test(sql.trim())) {
     return { rows: [], rowCount: 0 };
   }
-  const translated = translateSqliteToPostgres(sql);
+  const translated = translateLegacySqlToPostgres(sql);
   const result = await activeClient.query(translated, request.params || []);
   return { rows: result.rows, rowCount: result.rowCount ?? 0 };
 }

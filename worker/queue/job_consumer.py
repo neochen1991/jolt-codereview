@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -20,12 +19,12 @@ def backoff_seconds(attempt: int) -> int:
     return min(MAX_BACKOFF_SECONDS, 5 * (2 ** (normalized_attempt - 1)))
 
 
-def start_heartbeat(db_file: Path, job_id: str, interval_seconds: int = HEARTBEAT_SECONDS, config: dict[str, Any] | None = None) -> threading.Thread:
+def start_heartbeat(db_file: Path | None, job_id: str, interval_seconds: int = HEARTBEAT_SECONDS, config: dict[str, Any] | None = None) -> threading.Thread:
     def run() -> None:
-        conn = open_app_database(config) if config else sqlite3.connect(db_file, timeout=15)
+        if config is None:
+            raise RuntimeError("PostgreSQL heartbeat requires worker config")
+        conn = open_app_database(config)
         try:
-            conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute("PRAGMA busy_timeout = 5000")
             while True:
                 time.sleep(interval_seconds)
                 placeholders = ",".join("?" for _ in ACTIVE_STATUSES)

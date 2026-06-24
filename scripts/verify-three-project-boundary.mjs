@@ -10,6 +10,10 @@ const configPath = path.join(tmpRoot, "config.json");
 const commonPort = Number(process.env.THREE_PROJECT_COMMON_PORT || 18110);
 const mrPort = Number(process.env.THREE_PROJECT_MR_PORT || 18111);
 const host = "127.0.0.1";
+const postgresUrl = process.env.TEST_POSTGRES_URL || process.env.POSTGRES_URL || "";
+if (!postgresUrl) {
+  throw new Error("verify:three-project-boundary requires TEST_POSTGRES_URL or POSTGRES_URL because services are PostgreSQL-only.");
+}
 
 rmSync(tmpRoot, { recursive: true, force: true });
 mkdirSync(tmpRoot, { recursive: true });
@@ -22,7 +26,10 @@ writeFileSync(
         port: mrPort,
         common_port: commonPort,
         mr_port: mrPort,
-        database_path: path.join(tmpRoot, "boundary.sqlite")
+        database_driver: "postgres",
+        postgres_url: postgresUrl,
+        postgres_user: process.env.TEST_POSTGRES_USER || process.env.POSTGRES_USER || "",
+        postgres_password: process.env.TEST_POSTGRES_PASSWORD || process.env.POSTGRES_PASSWORD || ""
       },
       logging: {
         enabled: false

@@ -10,7 +10,6 @@ import os
 import re
 import shutil
 import signal
-import sqlite3
 import subprocess
 import time
 import urllib.parse
@@ -21,8 +20,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from config import db_path, effective_project_config, load_config
+from config import effective_project_config, load_config
 from db_compat import open_app_database
+from db_helpers import table_exists
 from file_logger import clear_worker_logs, write_review_run_log, write_worker_log
 from agents.registry import load_expert_profiles
 from context.repo_index import build_repo_index
@@ -69,13 +69,13 @@ BUILTIN_PMD_RULESETS = [
 ]
 
 
-def connect(config: dict[str, Any]) -> sqlite3.Connection:
+def connect(config: dict[str, Any]) -> Any:
     conn = open_app_database(config)
     ensure_worker_schema(conn)
     return conn
 
 
-def ensure_worker_schema(conn: sqlite3.Connection) -> None:
+def ensure_worker_schema(conn: Any) -> None:
     def add_column_if_missing(table: str, column: str, definition: str) -> None:
         rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
         if not rows:
@@ -287,7 +287,7 @@ class ChangedFile:
 
 
 class Recorder:
-    def __init__(self, conn: sqlite3.Connection, run_id: str, max_batch: int = 200, config: dict[str, Any] | None = None):
+    def __init__(self, conn: Any, run_id: str, max_batch: int = 200, config: dict[str, Any] | None = None):
         self.conn = conn
         self.run_id = run_id
         self.max_batch = max_batch
@@ -514,7 +514,7 @@ class Recorder:
         )
 
 
-def path_template(value: str, repo_config: dict[str, Any], mr: sqlite3.Row) -> str:
+def path_template(value: str, repo_config: dict[str, Any], mr: Any) -> str:
     replacements = {
         "project_key": str(repo_config.get("project_key") or ""),
         "repo": str(repo_config.get("repo") or ""),
@@ -635,7 +635,7 @@ def source_worktree_mode(
     return "materialized_diff"
 
 
-def fetch_changed_files(config: dict[str, Any], repo: sqlite3.Row, mr: sqlite3.Row) -> list[ChangedFile]:
+def fetch_changed_files(config: dict[str, Any], repo: Any, mr: Any) -> list[ChangedFile]:
     repo_config = json.loads(repo["provider_config_json"] or "{}")
     fixture_path = repo_config.get("fixture_changed_files")
     if fixture_path:
@@ -664,7 +664,7 @@ GIT_CACHE_LOCK_TIMEOUT_SECONDS = 300
 GIT_CACHE_LOCK_STALE_SECONDS = 900
 
 
-def _repo_provider_config(repo: sqlite3.Row) -> dict[str, Any]:
+def _repo_provider_config(repo: Any) -> dict[str, Any]:
     try:
         return json.loads(str(repo["provider_config_json"] or "{}"))
     except Exception:
@@ -749,7 +749,7 @@ def _ensure_git_cache(git_url: str) -> tuple[Path | None, str | None]:
     return cache_dir, None
 
 
-def prepare_source_worktree(config: dict[str, Any], repo: sqlite3.Row, mr: sqlite3.Row) -> tuple[str | None, list[dict[str, Any]]]:
+def prepare_source_worktree(config: dict[str, Any], repo: Any, mr: Any) -> tuple[str | None, list[dict[str, Any]]]:
     provider_config = _repo_provider_config(repo)
     git_url = str(provider_config.get("git_url") or "").strip()
     head_sha = str(mr["latest_head_sha"] or "").strip()
@@ -792,8 +792,8 @@ def prepare_source_worktree(config: dict[str, Any], repo: sqlite3.Row, mr: sqlit
 
 
 def _fetch_git_file_contents(
-    repo: sqlite3.Row,
-    mr: sqlite3.Row,
+    repo: Any,
+    mr: Any,
     files: list[ChangedFile],
 ) -> tuple[dict[str, str], list[dict[str, Any]]]:
     provider_config = _repo_provider_config(repo)
@@ -836,7 +836,7 @@ def _fetch_git_file_contents(
         return {}, [{"filename": "*", "source": "git", "error": str(exc)[:500]}]
 
 
-def _mr_metadata(mr: sqlite3.Row) -> dict[str, Any]:
+def _mr_metadata(mr: Any) -> dict[str, Any]:
     try:
         return json.loads(str(mr["metadata_json"] or "{}"))
     except Exception:
@@ -856,7 +856,7 @@ def max_added_lines_per_mr(config: dict[str, Any]) -> int:
     return configured if configured > 0 else 2000
 
 
-def mr_metadata_additions(mr: sqlite3.Row) -> int:
+def mr_metadata_additions(mr: Any) -> int:
     metadata = _mr_metadata(mr)
     return _non_negative_int(metadata.get("additions") or metadata.get("added_lines") or metadata.get("addedLines"))
 
@@ -869,7 +869,7 @@ def changed_files_additions(files: list[ChangedFile]) -> int:
     return sum(max(_non_negative_int(item.additions), patch_additions(item.patch)) for item in files)
 
 
-def evaluate_mr_size_policy(mr: sqlite3.Row, files: list[ChangedFile] | None, config: dict[str, Any]) -> dict[str, Any]:
+def evaluate_mr_size_policy(mr: Any, files: list[ChangedFile] | None, config: dict[str, Any]) -> dict[str, Any]:
     max_lines = max_added_lines_per_mr(config)
     added_lines = max(mr_metadata_additions(mr), changed_files_additions(files or []))
     return {
@@ -879,7 +879,7 @@ def evaluate_mr_size_policy(mr: sqlite3.Row, files: list[ChangedFile] | None, co
     }
 
 
-def _fetch_git_changed_files(repo: sqlite3.Row, mr: sqlite3.Row) -> tuple[list[ChangedFile], list[dict[str, Any]]]:
+def _fetch_git_changed_files(repo: Any, mr: Any) -> tuple[list[ChangedFile], list[dict[str, Any]]]:
     provider_config = _repo_provider_config(repo)
     git_url = str(provider_config.get("git_url") or "").strip()
     head_sha = str(mr["latest_head_sha"] or "").strip()
@@ -914,8 +914,8 @@ def _fetch_git_changed_files(repo: sqlite3.Row, mr: sqlite3.Row) -> tuple[list[C
 
 def fetch_changed_file_contents(
     config: dict[str, Any],
-    repo: sqlite3.Row,
-    mr: sqlite3.Row,
+    repo: Any,
+    mr: Any,
     files: list[ChangedFile],
 ) -> tuple[dict[str, str], list[dict[str, Any]]]:
     project_id = str(repo["project_id"])
@@ -962,7 +962,7 @@ def load_fixture_changed_files(fixture_path: str) -> list[ChangedFile]:
     ]
 
 
-def fetch_changed_files_via_backend(config: dict[str, Any], repo: sqlite3.Row, mr: sqlite3.Row) -> list[ChangedFile]:
+def fetch_changed_files_via_backend(config: dict[str, Any], repo: Any, mr: Any) -> list[ChangedFile]:
     git_files, git_errors = _fetch_git_changed_files(repo, mr)
     if git_files:
         return git_files
@@ -2557,15 +2557,12 @@ def match_external_report_path(path_value: str, files_by_name: dict[str, Changed
 
 
 def external_report_findings(
-    conn: sqlite3.Connection,
+    conn: Any,
     mr_id: str,
     head_sha: str,
     files_by_name: dict[str, ChangedFile],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    table = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'external_review_reports'"
-    ).fetchone()
-    if not table:
+    if not table_exists(conn, "external_review_reports"):
         return [], []
     rows = conn.execute(
         """
@@ -3111,7 +3108,7 @@ def iac_and_api_tool_results(
     return results, findings
 
 
-def project_id_for_merge_request(conn: sqlite3.Connection | None, mr_id: str | None) -> str | None:
+def project_id_for_merge_request(conn: Any | None, mr_id: str | None) -> str | None:
     if conn is None or not mr_id:
         return None
     try:
@@ -3124,16 +3121,13 @@ def project_id_for_merge_request(conn: sqlite3.Connection | None, mr_id: str | N
             """,
             (mr_id,),
         ).fetchone()
-    except sqlite3.Error:
+    except Exception:
         return None
     return str(row["project_id"]) if row else None
 
 
-def load_baseline_fingerprints(conn: sqlite3.Connection, project_id: str) -> set[str]:
-    table = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'review_baseline_suppressions'"
-    ).fetchone()
-    if not table:
+def load_baseline_fingerprints(conn: Any, project_id: str) -> set[str]:
+    if not table_exists(conn, "review_baseline_suppressions"):
         return set()
     rows = conn.execute(
         """
@@ -3148,7 +3142,7 @@ def load_baseline_fingerprints(conn: sqlite3.Connection, project_id: str) -> set
 
 
 def apply_baseline_suppression(
-    conn: sqlite3.Connection | None,
+    conn: Any | None,
     project_id: str | None,
     project_config: dict[str, Any] | None,
     findings: list[dict[str, Any]],
@@ -3211,7 +3205,7 @@ def run_external_static_prescan(
     sandbox_dir: Path,
     files: list[ChangedFile],
     head_sha: str,
-    conn: sqlite3.Connection | None = None,
+    conn: Any | None = None,
     mr_id: str | None = None,
     project_config: dict[str, Any] | None = None,
     source_file_contents: dict[str, str] | None = None,
@@ -3552,12 +3546,12 @@ def make_finding(
     }
 
 
-def load_agent_configs(conn: sqlite3.Connection, project_id: str) -> list[dict[str, Any]]:
+def load_agent_configs(conn: Any, project_id: str) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT * FROM agent_configs WHERE project_id = ? ORDER BY agent_id",
         (project_id,),
     ).fetchall()
-    config_by_agent: dict[str, sqlite3.Row] = {row["agent_id"]: row for row in rows}
+    config_by_agent: dict[str, Any] = {row["agent_id"]: row for row in rows}
     profiles = load_expert_profiles(conn, project_id)
     result: list[dict[str, Any]] = []
     for profile in profiles:
@@ -3661,11 +3655,8 @@ def dedupe_strings(values: list[Any]) -> list[str]:
     return result
 
 
-def load_bound_custom_skill_keys(conn: sqlite3.Connection, project_id: str, agent_key: str) -> list[str]:
-    table = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'expert_skill_bindings'"
-    ).fetchone()
-    if not table:
+def load_bound_custom_skill_keys(conn: Any, project_id: str, agent_key: str) -> list[str]:
+    if not table_exists(conn, "expert_skill_bindings"):
         return []
     rows = conn.execute(
         """
@@ -3720,16 +3711,13 @@ def merge_custom_agents(agent_configs: list[dict[str, Any]], project_config: dic
 
 
 def load_custom_skill_summary(
-    conn: sqlite3.Connection | None,
+    conn: Any | None,
     project_id: str | None,
     skill_name: str,
 ) -> str:
     if conn is None or not project_id:
         return ""
-    table = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'custom_skills'"
-    ).fetchone()
-    if not table:
+    if not table_exists(conn, "custom_skills"):
         return ""
     row = conn.execute(
         """
@@ -3754,16 +3742,13 @@ def load_custom_skill_summary(
 
 
 def load_bound_custom_skill_assets(
-    conn: sqlite3.Connection,
+    conn: Any,
     project_id: str,
     skill_keys: list[str],
 ) -> list[dict[str, Any]]:
     if not skill_keys:
         return []
-    table = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'custom_skill_assets'"
-    ).fetchone()
-    if not table:
+    if not table_exists(conn, "custom_skill_assets"):
         return []
     placeholders = ",".join("?" for _ in skill_keys)
     rows = conn.execute(
@@ -3788,7 +3773,7 @@ def load_bound_custom_skill_assets(
     ]
 
 
-def custom_skill_asset_manifest(conn: sqlite3.Connection | None, project_id: str | None, skill_name: str) -> str:
+def custom_skill_asset_manifest(conn: Any | None, project_id: str | None, skill_name: str) -> str:
     if conn is None or not project_id:
         return ""
     assets = load_bound_custom_skill_assets(conn, project_id, [skill_name])
@@ -3820,7 +3805,7 @@ def custom_skill_asset_manifest(conn: sqlite3.Connection | None, project_id: str
 def load_skill_summary(
     skill_name: str,
     files: list[ChangedFile] | None = None,
-    conn: sqlite3.Connection | None = None,
+    conn: Any | None = None,
     project_id: str | None = None,
 ) -> str:
     custom_text = load_custom_skill_summary(conn, project_id, skill_name)
@@ -4243,7 +4228,7 @@ def route_agents(
     return matched
 
 
-def load_feedback_suppressions(conn: sqlite3.Connection, project_id: str) -> set[str]:
+def load_feedback_suppressions(conn: Any, project_id: str) -> set[str]:
     rows = conn.execute(
         """
         SELECT uf.dedupe_hash
@@ -4262,7 +4247,7 @@ def load_feedback_suppressions(conn: sqlite3.Connection, project_id: str) -> set
     return {row["dedupe_hash"] for row in rows}
 
 
-def load_feedback_boosts(conn: sqlite3.Connection, project_id: str) -> set[str]:
+def load_feedback_boosts(conn: Any, project_id: str) -> set[str]:
     rows = conn.execute(
         """
         SELECT uf.dedupe_hash
@@ -4379,14 +4364,14 @@ def positive_int(value: Any, default: int, minimum: int = 1, maximum: int = 20) 
     return max(minimum, min(maximum, number))
 
 
-def project_mr_concurrency(config: dict[str, Any], conn: sqlite3.Connection, project_id: str) -> int:
+def project_mr_concurrency(config: dict[str, Any], conn: Any, project_id: str) -> int:
     project_config = effective_project_config(config, conn, project_id)
     queue_policy = project_config.get("queue_policy") or {}
     return positive_int(queue_policy.get("max_concurrency"), 1)
 
 
-def lock_project_claim_if_needed(conn: sqlite3.Connection, project_id: str) -> None:
-    if getattr(conn, "dialect", "sqlite") != "postgres":
+def lock_project_claim_if_needed(conn: Any, project_id: str) -> None:
+    if getattr(conn, "dialect", "postgres") != "postgres":
         return
     conn.execute(
         "SELECT pg_advisory_xact_lock(hashtext(?)::bigint)",
@@ -4394,11 +4379,8 @@ def lock_project_claim_if_needed(conn: sqlite3.Connection, project_id: str) -> N
     )
 
 
-def choose_job(conn: sqlite3.Connection, config: dict[str, Any]) -> sqlite3.Row | None:
-    table = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'review_jobs'"
-    ).fetchone()
-    if not table:
+def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
+    if not table_exists(conn, "review_jobs"):
         return None
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -4464,7 +4446,7 @@ def choose_job(conn: sqlite3.Connection, config: dict[str, Any]) -> sqlite3.Row 
         return None
 
 
-def load_incremental_context(conn: sqlite3.Connection, merge_request_id: str, head_sha: str) -> dict[str, Any]:
+def load_incremental_context(conn: Any, merge_request_id: str, head_sha: str) -> dict[str, Any]:
     rows = conn.execute(
         """
         SELECT dedupe_hash, last_seen_head_sha, status, resolved_in_commit
@@ -4487,12 +4469,12 @@ def load_incremental_context(conn: sqlite3.Connection, merge_request_id: str, he
     }
 
 
-def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
+def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     job = choose_job(conn, config)
     if not job:
         write_worker_log(config, "worker_idle", {"reason": "no_queued_review_job"})
         return False
-    start_heartbeat(db_path(config), job["id"], config=config)
+    start_heartbeat(None, job["id"], config=config)
     write_worker_log(
         config,
         "review_job_claimed",
@@ -4862,7 +4844,7 @@ def process_mr_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
         return True
 
 
-def process_one(conn: sqlite3.Connection, config: dict[str, Any]) -> bool:
+def process_one(conn: Any, config: dict[str, Any]) -> bool:
     return process_mr_one(conn, config)
 
 

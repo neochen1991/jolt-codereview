@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 import re
 from collections import Counter
 from typing import Any
@@ -255,7 +254,7 @@ def rejected_reason_counts(rejected: list[dict[str, Any]]) -> dict[str, int]:
 
 def make_verify_findings_node(
     *,
-    conn: sqlite3.Connection,
+    conn: Any,
     recorder: Any,
     job: Any,
     project_id: str,

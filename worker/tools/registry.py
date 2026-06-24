@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
+from db_helpers import table_exists
 from tools.models import ToolObservation
 
 
@@ -33,7 +33,7 @@ def findings_to_observations(findings: list[dict[str, Any]]) -> list[ToolObserva
     return observations
 
 
-def save_tool_observations(conn: sqlite3.Connection, review_run_id: str, observations: list[ToolObservation], new_id) -> None:
+def save_tool_observations(conn: Any, review_run_id: str, observations: list[ToolObservation], new_id) -> None:
     for observation in observations:
         conn.execute(
             """
@@ -61,11 +61,8 @@ def save_tool_observations(conn: sqlite3.Connection, review_run_id: str, observa
         )
 
 
-def load_tool_observations(conn: sqlite3.Connection, review_run_id: str, limit: int = 500) -> list[dict[str, Any]]:
-    table = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tool_observations'"
-    ).fetchone()
-    if not table:
+def load_tool_observations(conn: Any, review_run_id: str, limit: int = 500) -> list[dict[str, Any]]:
+    if not table_exists(conn, "tool_observations"):
         return []
     rows = conn.execute(
         """

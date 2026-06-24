@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import sqlite3
+from typing import Any
 
 from agents.expert_profile import ExpertProfile
+from db_helpers import table_exists
 
 
 DEFAULT_EXPERT_PROFILES = [
@@ -79,11 +80,8 @@ DEFAULT_EXPERT_PROFILES = [
 ]
 
 
-def load_expert_profiles(conn: sqlite3.Connection, project_id: str) -> list[ExpertProfile]:
-    table = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'expert_profiles'"
-    ).fetchone()
-    if not table:
+def load_expert_profiles(conn: Any, project_id: str) -> list[ExpertProfile]:
+    if not table_exists(conn, "expert_profiles"):
         return DEFAULT_EXPERT_PROFILES
     rows = conn.execute(
         """

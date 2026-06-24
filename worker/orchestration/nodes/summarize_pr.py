@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any, Callable
 
 from llm.client import fallback_pr_summary
 
 
-def persist_pr_summary(conn: sqlite3.Connection, job_id: str, summary: dict[str, Any]) -> None:
+def persist_pr_summary(conn: Any, job_id: str, summary: dict[str, Any]) -> None:
     conn.execute(
         "UPDATE review_jobs SET pr_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         (json.dumps(summary, ensure_ascii=False), job_id),
@@ -17,7 +16,7 @@ def persist_pr_summary(conn: sqlite3.Connection, job_id: str, summary: dict[str,
 
 def make_summarize_pr_node(
     *,
-    conn: sqlite3.Connection,
+    conn: Any,
     recorder: Any,
     job: Any,
     mr: Any,

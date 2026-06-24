@@ -729,76 +729,17 @@ export function migrate(db: Db) {
   addColumnIfMissing(db, "full_review_jobs", "locked_by", "TEXT");
   addColumnIfMissing(db, "full_review_jobs", "heartbeat_at", "TEXT");
   addColumnIfMissing(db, "full_review_jobs", "failure_reason", "TEXT");
-  stripForeignKeysFromExistingTables(db);
 }
 
 function addColumnIfMissing(db: Db, table: string, column: string, definition: string) {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  if (!columns.some((item) => item.name === column)) {
+  const rows = db.prepare(`
+    SELECT column_name AS name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = ?
+      AND column_name = ?
+  `).all(table, column) as Array<{ name: string }>;
+  if (!rows.length) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
-}
-
-function stripForeignKeysFromExistingTables(db: Db) {
-  const tables = db.prepare(`
-    SELECT name, sql
-    FROM sqlite_master
-    WHERE type = 'table'
-      AND name NOT LIKE 'sqlite_%'
-      AND sql LIKE '%REFERENCES%'
-  `).all() as Array<{ name: string; sql: string }>;
-  for (const table of tables) {
-    const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${quoteIdentifier(table.name)})`).all();
-    if (!foreignKeys.length) continue;
-    rebuildTableWithoutForeignKeys(db, table.name, table.sql);
-  }
-}
-
-function rebuildTableWithoutForeignKeys(db: Db, tableName: string, createSql: string) {
-  const tempName = `__jolt_no_fk_${tableName}`;
-  const indexes = db.prepare(`
-    SELECT name, sql
-    FROM sqlite_master
-    WHERE type = 'index'
-      AND tbl_name = ?
-      AND sql IS NOT NULL
-  `).all(tableName) as Array<{ name: string; sql: string }>;
-  const columns = db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>;
-  const columnList = columns.map((column) => quoteIdentifier(column.name)).join(", ");
-  const normalizedCreateSql = stripForeignKeyReferences(createSql);
-  const tempCreateSql = normalizedCreateSql.replace(
-    new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${escapeRegExp(tableName)}`, "i"),
-    `CREATE TABLE ${quoteIdentifier(tableName)}`
-  );
-  db.exec("PRAGMA foreign_keys = OFF");
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    db.exec(`ALTER TABLE ${quoteIdentifier(tableName)} RENAME TO ${quoteIdentifier(tempName)}`);
-    db.exec(tempCreateSql);
-    if (columnList) {
-      db.exec(`INSERT INTO ${quoteIdentifier(tableName)} (${columnList}) SELECT ${columnList} FROM ${quoteIdentifier(tempName)}`);
-    }
-    db.exec(`DROP TABLE ${quoteIdentifier(tempName)}`);
-    for (const index of indexes) {
-      db.exec(index.sql);
-    }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-}
-
-function stripForeignKeyReferences(sql: string) {
-  return sql
-    .replace(/\s+REFERENCES\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)/gi, "")
-    .replace(/,\s*FOREIGN\s+KEY\s*\([^)]*\)\s*REFERENCES\s+[A-Za-z_][A-Za-z0-9_]*\([^)]*\)(?:\s+ON\s+(?:DELETE|UPDATE)\s+\w+)?/gi, "");
-}
-
-function quoteIdentifier(value: string) {
-  return `"${value.replace(/"/g, '""')}"`;
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

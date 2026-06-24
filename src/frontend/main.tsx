@@ -311,7 +311,6 @@ type ProjectVcsSettingsForm = {
 };
 
 type StorageSettingsForm = {
-  driver: string;
   postgres_url: string;
   postgres_user: string;
   postgres_password: string;
@@ -4443,7 +4442,7 @@ function PersonalSettingsWorkspace({ user, setMessage }: { user: User | null; se
 
 function SystemSettingsWorkspace({ setMessage, canEdit }: { setMessage: (value: string) => void; canEdit: boolean }) {
   const [storage, setStorage] = useState<Record<string, unknown> | null>(null);
-  const [form, setForm] = useState<StorageSettingsForm>({ driver: "sqlite", postgres_url: "", postgres_user: "", postgres_password: "" });
+  const [form, setForm] = useState<StorageSettingsForm>({ postgres_url: "", postgres_user: "", postgres_password: "" });
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -4457,7 +4456,6 @@ function SystemSettingsWorkspace({ setMessage, canEdit }: { setMessage: (value: 
       const value = recordValue(result.value);
       setStorage(result);
       setForm({
-        driver: String(value.driver || "sqlite"),
         postgres_url: String(value.postgres_url || ""),
         postgres_user: String(value.postgres_user || ""),
         postgres_password: "",
@@ -4496,9 +4494,7 @@ function SystemSettingsWorkspace({ setMessage, canEdit }: { setMessage: (value: 
         body: JSON.stringify(form)
       });
       setStorage(result);
-      const msg = form.driver === "postgres"
-        ? "PostgreSQL 运行配置已保存到 config.json，重启 API 和 Worker 后会使用 PG。"
-        : "SQLite 运行配置已保存到 config.json，重启 API 和 Worker 后会使用 SQLite。";
+      const msg = "PostgreSQL 运行配置已保存到 config.json，重启 API 和 Worker 后会使用 PG。";
       setMessage(msg);
       setNotice({ title: "系统存储配置已保存", message: msg });
       await loadStorage();
@@ -4515,7 +4511,7 @@ function SystemSettingsWorkspace({ setMessage, canEdit }: { setMessage: (value: 
         body: JSON.stringify(form)
       });
       const msg = Boolean(result.ok)
-        ? `PostgreSQL 初始化完成：${String(result.initialized_tables ?? 0)} 张表，${String(result.initialized_indexes ?? 0)} 个索引。`
+        ? "PostgreSQL 初始化完成。"
         : String(result.message || "PostgreSQL 初始化失败");
       setMessage(msg);
       setNotice({ title: Boolean(result.ok) ? "PostgreSQL 初始化完成" : "PostgreSQL 初始化失败", message: msg });
@@ -4534,31 +4530,28 @@ function SystemSettingsWorkspace({ setMessage, canEdit }: { setMessage: (value: 
           <article className="setting-form-card">
             <div className="setting-form-head">
               <strong>数据库存储</strong>
-              <span>当前实际运行：{String(storage?.current_driver || "sqlite")} · {String(storage?.active_database_path || "--")}</span>
+              <span>当前实际运行：{String(storage?.current_driver || "postgres")} · {String(storage?.active_postgres_url || "--")}</span>
             </div>
             <div className="setting-form-grid">
               <SettingField label="目标数据库">
-                <select value={form.driver} onChange={(event) => setForm({ ...form, driver: event.target.value })} disabled={!canEdit}>
-                  <option value="sqlite">SQLite</option>
-                  <option value="postgres">PostgreSQL</option>
-                </select>
+                <input value="PostgreSQL" disabled />
               </SettingField>
               <SettingField label="PG 连接串">
-                <input value={form.postgres_url} onChange={(event) => setForm({ ...form, postgres_url: event.target.value })} placeholder="postgresql://host:5432/db" disabled={!canEdit || form.driver !== "postgres"} />
+                <input value={form.postgres_url} onChange={(event) => setForm({ ...form, postgres_url: event.target.value })} placeholder="postgresql://host:5432/db" disabled={!canEdit} />
               </SettingField>
               <SettingField label="PG 用户名">
-                <input value={form.postgres_user} onChange={(event) => setForm({ ...form, postgres_user: event.target.value })} disabled={!canEdit || form.driver !== "postgres"} />
+                <input value={form.postgres_user} onChange={(event) => setForm({ ...form, postgres_user: event.target.value })} disabled={!canEdit} />
               </SettingField>
               <SettingField label="PG 密码">
-                <input type="password" value={form.postgres_password} onChange={(event) => setForm({ ...form, postgres_password: event.target.value })} placeholder={form.postgres_password_has_value ? `已配置 ${form.postgres_password_masked}` : ""} disabled={!canEdit || form.driver !== "postgres"} />
+                <input type="password" value={form.postgres_password} onChange={(event) => setForm({ ...form, postgres_password: event.target.value })} placeholder={form.postgres_password_has_value ? `已配置 ${form.postgres_password_masked}` : ""} disabled={!canEdit} />
               </SettingField>
             </div>
             <div className="system-storage-note">
-              PostgreSQL 表结构初始化会真实连接目标 PG 并创建当前系统表/索引。保存配置会同步写入 config.json；当前进程不会热切断连接，重启 API 和 Worker 后生效。
+              系统仅支持 PostgreSQL。表结构初始化会真实连接目标 PG 并创建当前系统表/索引。保存配置会同步写入 config.json；当前进程不会热切断连接，重启 API 和 Worker 后生效。
             </div>
             <div className="setting-actions">
               <button type="button" onClick={testStorage} disabled={!canEdit || testing}>{testing ? "测试中..." : "测试配置"}</button>
-              <button type="button" onClick={initializePostgres} disabled={!canEdit || initializing || form.driver !== "postgres"}>{initializing ? "初始化中..." : "初始化 PG 表"}</button>
+              <button type="button" onClick={initializePostgres} disabled={!canEdit || initializing}>{initializing ? "初始化中..." : "初始化 PG 表"}</button>
               <button type="button" onClick={saveStorage} disabled={!canEdit || saving}>{saving ? "保存中..." : "保存配置"}</button>
             </div>
           </article>

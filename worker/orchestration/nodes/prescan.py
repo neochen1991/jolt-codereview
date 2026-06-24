@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -9,7 +8,7 @@ from typing import Any, Callable
 
 def make_prescan_node(
     *,
-    conn: sqlite3.Connection,
+    conn: Any,
     recorder: Any,
     sandbox_dir: Path,
     run_id: str,
@@ -26,7 +25,7 @@ def make_prescan_node(
     run_external_static_prescan: Callable[..., tuple[dict[str, Any], list[dict[str, Any]]]],
     sanitize_findings_for_policy: Callable[[list[dict[str, Any]], dict[str, Any], list[Any]], list[dict[str, Any]]],
     findings_to_observations: Callable[[list[dict[str, Any]]], list[Any]],
-    save_tool_observations: Callable[[sqlite3.Connection, str, list[Any], Callable[[str], str]], None],
+    save_tool_observations: Callable[[Any, str, list[Any], Callable[[str], str]], None],
     write_json_artifact: Callable[..., Path],
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     def prescan_node(state: dict[str, Any]) -> dict[str, Any]:

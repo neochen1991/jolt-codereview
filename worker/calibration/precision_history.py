@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
 
-def load_rule_precision_history(conn: sqlite3.Connection, project_id: str) -> dict[tuple[str, str], dict[str, Any]]:
-    columns = {
-        str(row["name"] if isinstance(row, sqlite3.Row) else row[1])
-        for row in conn.execute("PRAGMA table_info(rule_precision_history)").fetchall()
-    }
+def load_rule_precision_history(conn: Any, project_id: str) -> dict[tuple[str, str], dict[str, Any]]:
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(rule_precision_history)").fetchall()}
     has_recent_counts = {"recent_accepted_count", "recent_rejected_count"}.issubset(columns)
     recent_select = (
         "recent_accepted_count, recent_rejected_count,"

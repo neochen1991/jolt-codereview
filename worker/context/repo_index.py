@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import json
 import re
-import sqlite3
 import time
 from pathlib import Path
 from typing import Any
@@ -19,7 +19,7 @@ def _safe_key(value: str) -> str:
 
 
 def _repo_index_path(cache_root: Path, repository_id: str, commit_sha: str) -> Path:
-    return cache_root / _safe_key(repository_id) / f"{_safe_key(commit_sha)}.sqlite"
+    return cache_root / _safe_key(repository_id) / f"{_safe_key(commit_sha)}.json"
 
 
 def _iter_source_files(worktree: Path) -> list[Path]:
@@ -90,67 +90,54 @@ def build_repo_index(worktree: Path, repository_id: str, commit_sha: str, cache_
     index_path = _repo_index_path(cache_root, repository_id, commit_sha)
     index_path.parent.mkdir(parents=True, exist_ok=True)
     if index_path.exists():
-        with sqlite3.connect(index_path) as conn:
-            symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
-            ref_count = conn.execute("SELECT COUNT(*) FROM refs").fetchone()[0]
+        index_data = _load_index(index_path)
         return {
             "status": "cached",
             "index_kind": "repo_symbol_index",
             "storage_uri": str(index_path),
-            "symbol_count": symbol_count,
-            "ref_count": ref_count,
+            "symbol_count": len(index_data.get("symbols") or []),
+            "ref_count": len(index_data.get("refs") or []),
             "duration_ms": int((time.time() - started) * 1000),
         }
 
     source_files = _iter_source_files(worktree)
     skipped_large = 0
-    with sqlite3.connect(index_path) as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS symbols (
-              name TEXT NOT NULL,
-              kind TEXT NOT NULL,
-              file TEXT NOT NULL,
-              start_line INTEGER NOT NULL,
-              end_line INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
-            CREATE TABLE IF NOT EXISTS refs (
-              symbol_name TEXT NOT NULL,
-              file TEXT NOT NULL,
-              line INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_refs_symbol ON refs(symbol_name);
-            """
-        )
-        for path in source_files:
-            rel = path.relative_to(worktree).as_posix()
-            language = language_for_path(rel)
-            if not language:
-                continue
-            if _line_count(path) > MAX_FILE_LINES:
-                skipped_large += 1
-                continue
-            try:
-                lines = path.read_text("utf-8", errors="replace").splitlines()
-            except OSError:
-                continue
-            for line_no, line in enumerate(lines, start=1):
-                for name, kind in _symbols_for_line(language, line):
-                    conn.execute("INSERT INTO symbols (name, kind, file, start_line, end_line) VALUES (?, ?, ?, ?, ?)", (name, kind, rel, line_no, min(len(lines), line_no + 30)))
-                for ref_name in _refs_for_line(line):
-                    conn.execute("INSERT INTO refs (symbol_name, file, line) VALUES (?, ?, ?)", (ref_name, rel, line_no))
-        conn.commit()
-        symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
-        ref_count = conn.execute("SELECT COUNT(*) FROM refs").fetchone()[0]
+    symbols: list[dict[str, Any]] = []
+    refs: list[dict[str, Any]] = []
+    for path in source_files:
+        rel = path.relative_to(worktree).as_posix()
+        language = language_for_path(rel)
+        if not language:
+            continue
+        if _line_count(path) > MAX_FILE_LINES:
+            skipped_large += 1
+            continue
+        try:
+            lines = path.read_text("utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line_no, line in enumerate(lines, start=1):
+            for name, kind in _symbols_for_line(language, line):
+                symbols.append(
+                    {
+                        "name": name,
+                        "kind": kind,
+                        "file": rel,
+                        "start_line": line_no,
+                        "end_line": min(len(lines), line_no + 30),
+                    }
+                )
+            for ref_name in _refs_for_line(line):
+                refs.append({"symbol_name": ref_name, "file": rel, "line": line_no})
+    index_path.write_text(json.dumps({"symbols": symbols, "refs": refs}, ensure_ascii=False), "utf-8")
     return {
         "status": "indexed",
         "index_kind": "repo_symbol_index",
         "storage_uri": str(index_path),
         "file_count": len(source_files),
         "skipped_large_files": skipped_large,
-        "symbol_count": symbol_count,
-        "ref_count": ref_count,
+        "symbol_count": len(symbols),
+        "ref_count": len(refs),
         "duration_ms": int((time.time() - started) * 1000),
         "limits": {"max_index_files": MAX_INDEX_FILES, "max_file_lines": MAX_FILE_LINES},
     }
@@ -224,25 +211,34 @@ def _related_test_files(worktree: Path, symbol_name: str, definition_file: str) 
     return result
 
 
-def _definitions_for_changed_lines(conn: sqlite3.Connection, changed_lines: dict[str, list[tuple[int, str]]]) -> list[sqlite3.Row]:
-    definitions: list[sqlite3.Row] = []
+def _load_index(index_path: Path) -> dict[str, list[dict[str, Any]]]:
+    try:
+        data = json.loads(index_path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return {"symbols": [], "refs": []}
+    return {
+        "symbols": data.get("symbols") if isinstance(data.get("symbols"), list) else [],
+        "refs": data.get("refs") if isinstance(data.get("refs"), list) else [],
+    }
+
+
+def _definitions_for_changed_lines(index_data: dict[str, list[dict[str, Any]]], changed_lines: dict[str, list[tuple[int, str]]]) -> list[dict[str, Any]]:
+    definitions: list[dict[str, Any]] = []
     seen: set[tuple[str, str, int]] = set()
+    symbols = index_data.get("symbols") or []
     for file_path, lines in changed_lines.items():
         for line_no, _line_text in lines:
-            row = conn.execute(
-                """
-                SELECT * FROM symbols
-                WHERE file = ?
-                  AND kind IN ('function', 'class')
-                  AND start_line <= ?
-                  AND end_line >= ?
-                ORDER BY CASE kind WHEN 'function' THEN 0 ELSE 1 END, start_line DESC
-                LIMIT 1
-                """,
-                (file_path, line_no, line_no),
-            ).fetchone()
-            if not row:
+            matches = [
+                row
+                for row in symbols
+                if row.get("file") == file_path
+                and row.get("kind") in {"function", "class"}
+                and int(row.get("start_line") or 0) <= line_no
+                and int(row.get("end_line") or 0) >= line_no
+            ]
+            if not matches:
                 continue
+            row = sorted(matches, key=lambda item: (0 if item.get("kind") == "function" else 1, -int(item.get("start_line") or 0)))[0]
             key = (str(row["file"]), str(row["name"]), int(row["start_line"]))
             if key not in seen:
                 seen.add(key)
@@ -282,28 +278,27 @@ def resolve_diff_symbols(index_info: dict[str, Any], worktree: Path, files: list
     index_path = Path(str(index_info.get("storage_uri") or ""))
     if not index_path.exists():
         return {"status": "missing_index", "modified_symbols": [], "source_file_contents": {}}
+    index_data = _load_index(index_path)
     modified_names = _changed_symbol_names(files)
     changed_lines = _changed_lines_by_file(files)
     source_file_contents: dict[str, str] = {}
     modified_symbols: list[dict[str, Any]] = []
     chars_used = 0
-    with sqlite3.connect(index_path) as conn:
-        conn.row_factory = sqlite3.Row
-        definitions: list[sqlite3.Row] = _definitions_for_changed_lines(conn, changed_lines)
-        seen_definitions = {(str(row["file"]), str(row["name"]), int(row["start_line"])) for row in definitions}
-        for name in modified_names:
-            definition = conn.execute(
-                "SELECT * FROM symbols WHERE name = ? ORDER BY start_line LIMIT 1",
-                (name,),
-            ).fetchone()
-            if not definition:
-                continue
-            key = (str(definition["file"]), str(definition["name"]), int(definition["start_line"]))
-            if key in seen_definitions:
-                continue
-            seen_definitions.add(key)
-            definitions.append(definition)
-        for definition in definitions[:30]:
+    definitions = _definitions_for_changed_lines(index_data, changed_lines)
+    seen_definitions = {(str(row["file"]), str(row["name"]), int(row["start_line"])) for row in definitions}
+    symbols = index_data.get("symbols") or []
+    refs = index_data.get("refs") or []
+    for name in modified_names:
+        matches = sorted([row for row in symbols if row.get("name") == name], key=lambda item: int(item.get("start_line") or 0))
+        if not matches:
+            continue
+        definition = matches[0]
+        key = (str(definition["file"]), str(definition["name"]), int(definition["start_line"]))
+        if key in seen_definitions:
+            continue
+        seen_definitions.add(key)
+        definitions.append(definition)
+    for definition in definitions[:30]:
             name = str(definition["name"])
             def_lines = _read_lines(worktree, definition["file"])
             definition_snippet = _snippet_from_lines(def_lines, int(definition["start_line"]), 15) if def_lines else ""
@@ -313,10 +308,11 @@ def resolve_diff_symbols(index_info: dict[str, Any], worktree: Path, files: list
                 if int(definition["start_line"]) <= line_no <= int(definition["end_line"])
             ]
             callers = []
-            for ref in conn.execute(
-                "SELECT * FROM refs WHERE symbol_name = ? AND file <> ? ORDER BY file, line LIMIT 3",
-                (name, definition["file"]),
-            ).fetchall():
+            matching_refs = sorted(
+                [ref for ref in refs if ref.get("symbol_name") == name and ref.get("file") != definition["file"]],
+                key=lambda item: (str(item.get("file") or ""), int(item.get("line") or 0)),
+            )
+            for ref in matching_refs[:3]:
                 ref_lines = _read_lines(worktree, ref["file"])
                 callers.append(
                     {

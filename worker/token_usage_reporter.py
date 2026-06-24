@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import urllib.error
 import urllib.request
 from typing import Any
@@ -40,7 +39,7 @@ def _auth_token(config: dict[str, Any]) -> str:
     return str(config.get("auth_token") or "").strip()
 
 
-def _employee_no(config: dict[str, Any], row: sqlite3.Row) -> str:
+def _employee_no(config: dict[str, Any], row: Any) -> str:
     configured = str(config.get("employee_no") or "").strip()
     if configured:
         return configured
@@ -54,7 +53,7 @@ def _employee_no(config: dict[str, Any], row: sqlite3.Row) -> str:
     return str(config.get("default_employee_no") or "system").strip() or "system"
 
 
-def _fetch_run_context(conn: sqlite3.Connection, run_id: str) -> sqlite3.Row | None:
+def _fetch_run_context(conn: Any, run_id: str) -> Any | None:
     return conn.execute(
         """
         SELECT
@@ -90,7 +89,7 @@ def _fetch_run_context(conn: sqlite3.Connection, run_id: str) -> sqlite3.Row | N
     ).fetchone()
 
 
-def _usage_summary(conn: sqlite3.Connection, run_id: str) -> tuple[dict[str, int], list[dict[str, Any]]]:
+def _usage_summary(conn: Any, run_id: str) -> tuple[dict[str, int], list[dict[str, Any]]]:
     total_row = conn.execute(
         """
         SELECT
@@ -144,7 +143,7 @@ def _usage_summary(conn: sqlite3.Connection, run_id: str) -> tuple[dict[str, int
 def _build_payload(
     *,
     config: dict[str, Any],
-    row: sqlite3.Row,
+    row: Any,
     usage: dict[str, int],
     model_usage: list[dict[str, Any]],
     employee_no: str,
@@ -189,9 +188,9 @@ def _build_payload(
 
 
 def _save_report(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
-    row: sqlite3.Row,
+    row: Any,
     employee_no: str,
     reported_at: str,
     usage: dict[str, int],
@@ -249,7 +248,7 @@ def _save_report(
     conn.commit()
 
 
-def report_token_usage(conn: sqlite3.Connection, config: dict[str, Any], run_id: str) -> dict[str, Any]:
+def report_token_usage(conn: Any, config: dict[str, Any], run_id: str) -> dict[str, Any]:
     token_config = _token_usage_config(config)
     row = _fetch_run_context(conn, run_id)
     if not row:

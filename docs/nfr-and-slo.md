@@ -202,15 +202,15 @@ Verifier 必须过滤：
 
 - API：2 vCPU / 4GB RAM。
 - Worker：4 vCPU / 8GB RAM。
-- SQLite：本机 SSD，单库 <= 50GB。
+- PostgreSQL：14+，推荐独立实例，单库容量按项目数据保留策略规划。
 - 单 worker 并发：8 个 MR。
 - 单 MR changed files：默认最多 200 个进入完整 LLM 上下文，超出后降级为 diff slice 和工具摘要。
 
-### 6.2 SQLite 到 PostgreSQL 迁移阈值
+### 6.2 PostgreSQL 扩容阈值
 
-出现任一情况应迁移 PostgreSQL：
+出现任一情况应扩容 PostgreSQL 或拆分数据保留策略：
 
-- SQLite 文件 >= 50GB。
+- 数据库容量 >= 50GB。
 - `review_jobs` 日增量 >= 30,000。
 - `/api/health` P99 > 1s 且瓶颈来自 DB。
 - Trace 写入导致 worker 阻塞。
@@ -310,7 +310,7 @@ P1 告警：
 
 P2 告警：
 
-- SQLite 文件 > 40GB。
+- PostgreSQL 数据库容量 > 40GB。
 - trace 写入 P95 > 500ms。
 - gold set 周评测未执行。
 

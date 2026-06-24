@@ -119,6 +119,19 @@ julian_diff = translate_sqlite_to_postgres(
 assert_contains(julian_diff, "EXTRACT(EPOCH FROM NULLIF(rr.completed_at, '')::timestamptz) / 86400.0")
 assert_contains(julian_diff, "EXTRACT(EPOCH FROM NULLIF(rr.started_at, '')::timestamptz) / 86400.0")
 
+like_literal_percent = translate_sqlite_to_postgres(
+    """
+    SELECT
+      SUM(CASE WHEN t.status LIKE 'skipped%' THEN 1 ELSE 0 END) AS skipped_calls,
+      SUM(CASE WHEN t.status LIKE 'failed:%' THEN 1 ELSE 0 END) AS failed_calls
+    FROM tool_call_records t
+    WHERE t.run_id = ?
+    """
+)
+assert_contains(like_literal_percent, "LIKE 'skipped%%'")
+assert_contains(like_literal_percent, "LIKE 'failed:%%'")
+assert_contains(like_literal_percent, "t.run_id = %s")
+
 rows = _wrap_rows([{"created_at": datetime(2026, 6, 12, 10, 30, 45)}])
 if rows[0]["created_at"] != "2026-06-12 10:30:45":
     raise AssertionError(f"datetime normalization failed: {rows[0]['created_at']!r}")

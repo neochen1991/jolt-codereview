@@ -4,6 +4,10 @@ Common Backend 是 Jolt 平台的公共基础服务，负责账号、登录态�
 
 Common 不负责 MR 同步、代码仓库绑定、评审任务、Worker、Finding、规则/Agent 配置执行等业务域能力。这些属于各业务服务，例如 MR Backend。
 
+专项接入文档：
+
+- [用户认证与模型配置接入文档](docs/auth-model-config-integration.md)
+
 ## 服务能力
 
 Common 当前提供以下公共能力：

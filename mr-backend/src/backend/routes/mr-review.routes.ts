@@ -16,9 +16,9 @@ import { AgentToolBindingService } from "../services/AgentToolBindingService.js"
 import { FeedbackLearningService } from "../services/FeedbackLearningService.js";
 import { MrSyncService } from "../services/MrSyncService.js";
 import { ObservabilityService } from "../services/ObservabilityService.js";
-import { ProjectConfigService } from "../services/ProjectConfigService.js";
 import { ReviewQueueService } from "../services/ReviewQueueService.js";
 import { StaticToolAvailabilityService } from "../services/StaticToolAvailabilityService.js";
+import { CommonBackendClient } from "../services/CommonBackendClient.js";
 import { queuedReviewWorkerCapacity } from "../services/WorkerLaunchPolicy.js";
 import { spawnWorkerOnce as launchWorkerOnce, type WorkerProcessLogger } from "../services/WorkerProcessLauncher.js";
 
@@ -27,7 +27,6 @@ import { createAgentRoutes } from "./agents.routes.js";
 import { createFullReviewRoutes } from "./full-review.routes.js";
 import { createHealthRoutes } from "./health.routes.js";
 import { createObservabilityRoutes } from "./observability.routes.js";
-import { createProjectRoutes } from "./projects.routes.js";
 import { createQualityRoutes } from "./quality.routes.js";
 import { createRepositoryRoutes } from "./repositories.routes.js";
 import { createReviewRoutes } from "./review.routes.js";
@@ -50,9 +49,20 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
   const agentConfigService = new AgentConfigService(agentRepository);
   const agentToolBindingService = new AgentToolBindingService(db);
   const feedbackLearningService = new FeedbackLearningService(db);
-  const projectConfigService = new ProjectConfigService(db);
+  const commonClient = new CommonBackendClient(config);
   const reviewQueueService = new ReviewQueueService(reviewJobRepository);
-  const mrSyncService = new MrSyncService(config, repositoryRepository, mergeRequestRepository, reviewQueueService, runWorkerOnce, projectConfigService);
+  async function effectiveConfig(projectId: string): Promise<AppConfig> {
+    const response = await commonClient.effectiveConfig(projectId);
+    return response.effective_config ?? {
+      ...config,
+      llm: {
+        ...(config.llm ?? {}),
+        ...(response.llm ?? {})
+      }
+    };
+  }
+
+  const mrSyncService = new MrSyncService(config, repositoryRepository, mergeRequestRepository, reviewQueueService, runWorkerOnce, effectiveConfig);
   const observabilityService = new ObservabilityService(db);
   const staticToolAvailabilityService = new StaticToolAvailabilityService();
 
@@ -69,11 +79,14 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
   }
 
   function runWorkerOnce() {
-    const count = queuedReviewWorkerCapacity({ config, db, projectConfigService });
-    const spawnCount = Math.max(1, count);
-    for (let index = 0; index < spawnCount; index += 1) {
-      spawnWorkerOnce();
-    }
+    queuedReviewWorkerCapacity({ config, db, effectiveConfig })
+      .then((count) => {
+        const spawnCount = Math.max(1, count);
+        for (let index = 0; index < spawnCount; index += 1) {
+          spawnWorkerOnce();
+        }
+      })
+      .catch((error) => logger?.error?.("worker_capacity_failed", error));
   }
   
   function repoConfig(row: { provider_config_json: string }): RepositoryConfig {
@@ -200,10 +213,7 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
 
   function effectiveConfigForUser(userId?: string | null): AppConfig {
     if (!userId) return config;
-    const rows = projectRepository.listUserSettings(userId) as Array<{ settings_key: string; settings_json: string }>;
-    const tokenSettings = rows.find((row) => row.settings_key === "vcs_tokens");
-    if (!tokenSettings) return config;
-    const tokens = JSON.parse(tokenSettings.settings_json || "{}") as Record<string, unknown>;
+    const tokens = commonClient.authForUser(userId)?.settings?.vcs_tokens ?? {};
     const githubToken = String(tokens.github_token || "").trim();
     const codehubToken = String(tokens.codehub_token || "").trim();
     if (!githubToken && !codehubToken) return config;
@@ -231,11 +241,8 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
   }
   
   function currentUserId(req: { headers: Record<string, any> }) {
-    const token = bearerToken(req);
-    if (token) {
-      const session = projectRepository.findSessionUserId(sha1(token)) as { user_id: string } | undefined;
-      if (session) return session.user_id;
-    }
+    const auth = commonClient.authForRequest(req as any);
+    if (auth.active && auth.user?.id) return auth.user.id;
     if (process.env.JOLT_TRUST_X_USER_ID === "1" || process.env.JOLT_TRUST_X_USER_ID === "true") {
       const headerUser = Array.isArray(req.headers["x-user-id"]) ? req.headers["x-user-id"][0] : req.headers["x-user-id"];
       return headerUser ? String(headerUser) : "";
@@ -245,8 +252,9 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
   
   function ensureProjectRole(projectId: string, userId: string, minRole: string) {
     if (!userId) return { statusCode: 401, error: "unauthorized", message: "login is required" };
-    if (projectRepository.isRoot(userId)) return null;
-    const member = projectRepository.findMemberRole(projectId, userId) as { role: string } | undefined;
+    const auth = commonClient.authForUser(userId);
+    if (auth?.user?.is_root) return null;
+    const member = auth?.memberships.find((item) => item.project_id === projectId);
     if (!member || projectRoleRank(member.role) < projectRoleRank(minRole)) {
       return { statusCode: 403, error: "forbidden", message: `${minRole} permission is required` };
     }
@@ -259,7 +267,7 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
 
   function ensureRoot(userId: string) {
     if (!userId) return { statusCode: 401, error: "unauthorized", message: "login is required" };
-    if (!projectRepository.isRoot(userId)) {
+    if (!commonClient.authForUser(userId)?.user?.is_root) {
       return { statusCode: 403, error: "forbidden", message: "root permission is required" };
     }
     return null;
@@ -452,8 +460,8 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     mrSyncService,
     observabilityService,
     staticToolAvailabilityService,
-    projectConfigService,
     reviewQueueService,
+    effectiveConfig,
     all,
     get,
     runWorkerOnce,
@@ -474,9 +482,8 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     formatPublishBody
   };
 
-  return [
+  const routes = [
     ...createHealthRoutes(ctx, { serviceName: "jolt-mr-backend" }),
-    ...createProjectRoutes(ctx),
     ...createRuleRoutes(ctx),
     ...createAgentRoutes(ctx),
     ...createRepositoryRoutes(ctx),
@@ -487,4 +494,11 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     ...createQualityRoutes(ctx),
     ...createVcsProxyRoutes(ctx)
   ];
+  return routes.map((item) => ({
+    ...item,
+    handler: async (routeCtx) => {
+      await commonClient.introspectRequest(routeCtx.req);
+      return item.handler(routeCtx);
+    }
+  }));
 }

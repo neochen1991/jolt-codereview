@@ -38,7 +38,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     ruleDocumentRepository,
     auditRepository,
     reviewQueueService,
-    projectConfigService,
+    effectiveConfig,
     feedbackLearningService
   } = ctx;
   function compareRunsForMr(mrId: string) {
@@ -385,7 +385,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
   }
 
   const routes: Route[] = [
-    route("GET", "/api/mr-review/projects/:projectId/merge-requests", ({ params, url }) => {
+    route("GET", "/api/mr-review/projects/:projectId/merge-requests", async ({ params, url }) => {
       const status = url.searchParams.get("status");
       const activeJobStatuses = new Set(["fetching", "pre_scanning", "reviewing", "judging", "running"]);
       const activeProjectJobs = all<Record<string, any>>(`
@@ -398,14 +398,14 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
           AND COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at) >= datetime('now', '-60 seconds')
         ORDER BY rj.locked_at DESC, rj.updated_at DESC
       `, [params.projectId]);
-      const projectConcurrency = projectMrConcurrency(projectConfigService.effectiveConfig(params.projectId, config).effective_config);
+      const projectEffectiveConfig = await effectiveConfig(params.projectId);
+      const projectConcurrency = projectMrConcurrency(projectEffectiveConfig);
       const activeProjectJobIds = new Set(activeProjectJobs.map((job) => String(job.merge_request_id)));
-      const effectiveConfig = projectConfigService.effectiveConfig(params.projectId, config).effective_config;
       const rows = mergeRequestRepository.listByProject(params.projectId, null).map((row: any) => {
         const terminalStatus = ["merged", "closed"].includes(String(row.review_status));
         const effectiveStatus = !terminalStatus && activeJobStatuses.has(String(row.latest_job_status)) ? String(row.latest_job_status) : String(row.review_status);
         const blockedByProject = effectiveStatus === "queued" && activeProjectJobs.length >= projectConcurrency && !activeProjectJobIds.has(String(row.id));
-        const sizeHint = mrSizePolicyHint(row, effectiveConfig);
+        const sizeHint = mrSizePolicyHint(row, projectEffectiveConfig);
         return {
           ...row,
           ...sizeHint,
@@ -601,8 +601,8 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const closed = await ensureMergeRequestOpenForAction(params.mrId, "开始检视");
       if (closed) return closed;
       const input = body as Record<string, unknown> | undefined;
-      const effectiveConfig = projectConfigService.effectiveConfig(repo.project_id, config).effective_config;
-      const sizeDecision = await evaluateMrSizeWithRemoteFiles(mr as unknown as Record<string, unknown>, repo as unknown as Record<string, unknown>, effectiveConfig);
+      const projectEffectiveConfig = await effectiveConfig(repo.project_id);
+      const sizeDecision = await evaluateMrSizeWithRemoteFiles(mr as unknown as Record<string, unknown>, repo as unknown as Record<string, unknown>, projectEffectiveConfig);
       if (!sizeDecision.allowed) {
         reviewQueueService.cancelQueued(params.mrId);
         mergeRequestRepository.updateReviewStatus(params.mrId, "too_large");
@@ -673,11 +673,11 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       if (!mr) return notFound();
       const closed = await ensureMergeRequestOpenForAction(job.merge_request_id, "重新检视");
       if (closed) return closed;
-      const effectiveConfig = projectConfigService.effectiveConfig(job.project_id, config).effective_config;
+      const projectEffectiveConfig = await effectiveConfig(job.project_id);
       const repository = repositoryRepository.findById(mr.repository_id);
       const sizeDecision = repository
-        ? await evaluateMrSizeWithRemoteFiles(mr as unknown as Record<string, unknown>, repository as unknown as Record<string, unknown>, effectiveConfig)
-        : evaluateMrSizePolicy(mr as unknown as Record<string, unknown>, effectiveConfig);
+        ? await evaluateMrSizeWithRemoteFiles(mr as unknown as Record<string, unknown>, repository as unknown as Record<string, unknown>, projectEffectiveConfig)
+        : evaluateMrSizePolicy(mr as unknown as Record<string, unknown>, projectEffectiveConfig);
       if (!sizeDecision.allowed) {
         reviewQueueService.cancelQueued(job.merge_request_id);
         mergeRequestRepository.updateReviewStatus(job.merge_request_id, "too_large");

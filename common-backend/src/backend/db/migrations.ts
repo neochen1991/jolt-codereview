@@ -59,6 +59,33 @@ export function migrate(db: Db) {
       UNIQUE(user_id, settings_key)
     );
 
+    CREATE TABLE IF NOT EXISTS project_invitations (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      invite_code_hash TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL DEFAULT 'developer',
+      created_by TEXT NOT NULL,
+      expires_at TEXT,
+      max_uses INTEGER NOT NULL DEFAULT 0,
+      used_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS project_join_requests (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      requested_role TEXT NOT NULL DEFAULT 'developer',
+      reason TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      reviewed_by TEXT,
+      reviewed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(project_id, user_id, status)
+    );
+
     CREATE TABLE IF NOT EXISTS auth_sessions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,

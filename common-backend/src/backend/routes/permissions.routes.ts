@@ -1,4 +1,4 @@
-import { badRequest, route, type Route } from "../http.js";
+import { badRequest, route, sha1, type Route } from "../http.js";
 import type { BackendRouteContext } from "./context.js";
 
 const PROJECT_ROLES = [
@@ -19,7 +19,33 @@ function validProjectRole(role: string) {
 }
 
 export function createPermissionRoutes(ctx: BackendRouteContext): Route[] {
-  const { currentUserId, ensureRoot, ensureProjectRole, projectRepository, auditLog } = ctx;
+  const { bearerToken, currentUserId, ensureRoot, ensureProjectRole, projectRepository, auditLog } = ctx;
+
+  function userMemberships(userId: string) {
+    return projectRepository.isRoot(userId)
+      ? projectRepository.listProjects().map((project: any) => ({ project_id: project.id, project_name: project.name, role: "system_admin" }))
+      : projectRepository.listProjectsForUser(userId).map((project: any) => ({ project_id: project.id, project_name: project.name, role: project.role }));
+  }
+
+  function publicAuthUser(userId: string) {
+    const user = projectRepository.findUserById(userId) as { id: string; username: string; global_role?: string; status?: string } | undefined;
+    if (!user || user.status !== "active") return null;
+    return {
+      id: user.id,
+      username: user.username,
+      global_role: user.global_role ?? "user",
+      is_root: projectRepository.isRoot(userId)
+    };
+  }
+
+  function userSettings(userId: string) {
+    const rows = projectRepository.listUserSettings(userId) as Array<{ settings_key: string; settings_json: string }>;
+    return Object.fromEntries(rows.map((row) => [
+      row.settings_key,
+      JSON.parse(row.settings_json || "{}")
+    ]));
+  }
+
   return [
     route("GET", "/api/permissions/roles", () => ({
       global_roles: GLOBAL_ROLES,
@@ -30,9 +56,7 @@ export function createPermissionRoutes(ctx: BackendRouteContext): Route[] {
       if (!userId) return { statusCode: 401, error: "unauthorized", message: "login is required" };
       const user = projectRepository.findUserById(userId) as { id: string; username: string; global_role?: string } | undefined;
       if (!user) return { statusCode: 401, error: "unauthorized", message: "login is required" };
-      const memberships = projectRepository.isRoot(userId)
-        ? projectRepository.listProjects().map((project: any) => ({ project_id: project.id, project_name: project.name, role: "system_admin" }))
-        : projectRepository.listProjectsForUser(userId).map((project: any) => ({ project_id: project.id, project_name: project.name, role: project.role }));
+      const memberships = userMemberships(userId);
       return {
         user: {
           id: user.id,
@@ -75,22 +99,21 @@ export function createPermissionRoutes(ctx: BackendRouteContext): Route[] {
       if (!expected || actual !== expected) {
         return { statusCode: 401, error: "unauthorized", message: "internal service token is required" };
       }
-      const userId = url.searchParams.get("user_id") || "";
-      if (!userId) return badRequest("user_id is required");
-      const user = projectRepository.findUserById(userId) as { id: string; username: string; global_role?: string; status?: string } | undefined;
-      if (!user || user.status !== "active") return { active: false };
-      const memberships = projectRepository.isRoot(userId)
-        ? projectRepository.listProjects().map((project: any) => ({ project_id: project.id, role: "system_admin" }))
-        : projectRepository.listProjectsForUser(userId).map((project: any) => ({ project_id: project.id, role: project.role }));
+      let userId = url.searchParams.get("user_id") || "";
+      const token = bearerToken(req);
+      if (token) {
+        const session = projectRepository.findSessionUserId(sha1(token)) as { user_id: string } | undefined;
+        userId = session?.user_id ?? "";
+      }
+      if (!userId) return { active: false };
+      const user = publicAuthUser(userId);
+      if (!user) return { active: false };
+      const memberships = userMemberships(userId).map((item: any) => ({ project_id: item.project_id, role: item.role }));
       return {
         active: true,
-        user: {
-          id: user.id,
-          username: user.username,
-          global_role: user.global_role ?? "user",
-          is_root: projectRepository.isRoot(userId)
-        },
-        memberships
+        user,
+        memberships,
+        settings: userSettings(userId)
       };
     })
   ];

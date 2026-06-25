@@ -25,6 +25,14 @@ function sanitizeLlmConfig(value: Record<string, unknown>) {
   return rest;
 }
 
+function sanitizeEffectiveConfig(value: Record<string, unknown>) {
+  const next = JSON.parse(JSON.stringify(value ?? {})) as Record<string, unknown>;
+  if (next.llm && typeof next.llm === "object") {
+    next.llm = sanitizeLlmConfig(next.llm as Record<string, unknown>);
+  }
+  return next;
+}
+
 export function createModelRoutes(ctx: BackendRouteContext): Route[] {
   const { currentUserId, ensureRoot, projectConfigService, auditLog } = ctx;
   return [
@@ -36,7 +44,8 @@ export function createModelRoutes(ctx: BackendRouteContext): Route[] {
       const effective = projectConfigService.effectiveConfig(projectId, ctx.config).effective_config;
       return {
         project_id: projectId,
-        llm: sanitizeLlmConfig((effective.llm ?? {}) as Record<string, unknown>)
+        llm: sanitizeLlmConfig((effective.llm ?? {}) as Record<string, unknown>),
+        effective_config: sanitizeEffectiveConfig(effective as Record<string, unknown>)
       };
     }),
     route("PATCH", "/api/models/projects/:projectId", ({ params, body, req }) => {
@@ -74,7 +83,8 @@ export function createModelRoutes(ctx: BackendRouteContext): Route[] {
       const effective = projectConfigService.effectiveConfig(projectId, ctx.config).effective_config;
       return {
         project_id: projectId,
-        llm: sanitizeLlmConfig((effective.llm ?? {}) as Record<string, unknown>)
+        llm: sanitizeLlmConfig((effective.llm ?? {}) as Record<string, unknown>),
+        effective_config: sanitizeEffectiveConfig(effective as Record<string, unknown>)
       };
     })
   ];

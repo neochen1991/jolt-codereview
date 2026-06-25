@@ -1,7 +1,6 @@
 import type { AppConfig } from "../types.js";
 import type { MergeRequestRepository } from "../repositories/MergeRequestRepository.js";
 import type { RepositoryRepository, RepositoryRow } from "../repositories/RepositoryRepository.js";
-import type { ProjectConfigService } from "./ProjectConfigService.js";
 import type { ReviewQueueService } from "./ReviewQueueService.js";
 import { CodeHubProvider } from "../vcs/CodeHubProvider.js";
 import { GithubProvider } from "../vcs/GithubProvider.js";
@@ -27,7 +26,7 @@ export class MrSyncService {
     private readonly mergeRequestRepository: MergeRequestRepository,
     private readonly reviewQueueService: ReviewQueueService,
     private readonly runWorkerOnce: () => void,
-    private readonly projectConfigService?: ProjectConfigService
+    private readonly effectiveConfig?: (projectId: string) => Promise<AppConfig>
   ) {
     this.providers = {
       github: new GithubProvider(config),
@@ -35,8 +34,8 @@ export class MrSyncService {
     };
   }
 
-  private effectiveConfigForProject(projectId: string): AppConfig {
-    return this.projectConfigService?.effectiveConfig(projectId, this.config).effective_config ?? this.config;
+  private async effectiveConfigForProject(projectId: string): Promise<AppConfig> {
+    return this.effectiveConfig ? await this.effectiveConfig(projectId) : this.config;
   }
 
   private providersFor(config: AppConfig): Record<string, VcsProvider> {
@@ -50,7 +49,7 @@ export class MrSyncService {
 
   async syncProject(projectId: string, requestedBy?: string | null) {
     const repos = this.repositoryRepository.listActiveByProject(projectId);
-    const providers = this.providersFor(this.effectiveConfigForProject(projectId));
+    const providers = this.providersFor(await this.effectiveConfigForProject(projectId));
     let merged = 0;
     let jobs = 0;
     const errors: string[] = [];
@@ -167,7 +166,7 @@ export class MrSyncService {
     if (!mr) return { ok: false, reason: "merge_request_not_found" };
     const repository = this.repositoryRepository.findById(mr.repository_id);
     if (!repository) return { ok: false, reason: "repository_not_found" };
-    const providers = this.providersFor(this.effectiveConfigForProject(repository.project_id));
+    const providers = this.providersFor(await this.effectiveConfigForProject(repository.project_id));
     const provider = providers[repository.provider];
     if (!provider) return { ok: false, reason: `unsupported provider ${repository.provider}` };
     const remoteStatus = await provider.fetchMergeRequestStatus({

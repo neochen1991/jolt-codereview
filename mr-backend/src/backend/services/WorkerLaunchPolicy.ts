@@ -1,6 +1,5 @@
 import type { Db } from "../db.js";
 import type { AppConfig } from "../types.js";
-import type { ProjectConfigService } from "./ProjectConfigService.js";
 import { projectMrConcurrency } from "./QueuePolicy.js";
 
 const ACTIVE_REVIEW_STATUSES = "'fetching', 'pre_scanning', 'reviewing', 'judging', 'running'";
@@ -8,7 +7,17 @@ const ACTIVE_REVIEW_STATUSES = "'fetching', 'pre_scanning', 'reviewing', 'judgin
 export function queuedReviewWorkerCapacity(input: {
   config: AppConfig;
   db: Db;
-  projectConfigService: ProjectConfigService;
+  effectiveConfig(projectId: string): Promise<AppConfig>;
+  maxAttempts?: number;
+  maxWorkers?: number;
+}) {
+  return queuedReviewWorkerCapacityAsync(input);
+}
+
+async function queuedReviewWorkerCapacityAsync(input: {
+  config: AppConfig;
+  db: Db;
+  effectiveConfig(projectId: string): Promise<AppConfig>;
   maxAttempts?: number;
   maxWorkers?: number;
 }) {
@@ -36,7 +45,7 @@ export function queuedReviewWorkerCapacity(input: {
   let capacity = 0;
   for (const row of queuedRows) {
     const projectId = String(row.project_id);
-    const effectiveConfig = input.projectConfigService.effectiveConfig(projectId, input.config).effective_config;
+    const effectiveConfig = await input.effectiveConfig(projectId);
     const projectCapacity = projectMrConcurrency(effectiveConfig);
     const activeCount = activeByProject.get(projectId) ?? 0;
     const available = Math.max(0, projectCapacity - activeCount);

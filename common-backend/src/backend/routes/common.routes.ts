@@ -9,6 +9,7 @@ import { createAuthRoutes } from "./auth.routes.js";
 import { createHealthRoutes } from "./health.routes.js";
 import { createModelRoutes } from "./models.routes.js";
 import { createPermissionRoutes } from "./permissions.routes.js";
+import { createProjectRoutes } from "./projects.routes.js";
 import { createSystemRoutes } from "./system.routes.js";
 
 function projectRoleRank(role: string): number {
@@ -105,6 +106,7 @@ export function createCommonRoutes(config: AppConfig, db: Db): Route[] {
     ...createHealthRoutes({ serviceName: "jolt-common-backend" }),
     ...createAuthRoutes(ctx),
     ...createPermissionRoutes(ctx),
+    ...createProjectRoutes(ctx),
     ...createSystemRoutes(ctx),
     ...createModelRoutes(ctx)
   ];

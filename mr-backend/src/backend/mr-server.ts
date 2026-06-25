@@ -3,16 +3,15 @@ import { loadConfig } from "./config.js";
 import { openDatabase } from "./db.js";
 import { clearLogFiles, FileLogger } from "./logger.js";
 import { MergeRequestRepository } from "./repositories/MergeRequestRepository.js";
-import { ProjectRepository } from "./repositories/ProjectRepository.js";
 import { RepositoryRepository } from "./repositories/RepositoryRepository.js";
 import { ReviewJobRepository } from "./repositories/ReviewJobRepository.js";
 import { createMrRoutes } from "./routes/mr-review.routes.js";
 import { MrAutoSyncScheduler, shouldStartAutoSync } from "./services/MrAutoSyncScheduler.js";
 import { MrSyncService } from "./services/MrSyncService.js";
-import { ProjectConfigService } from "./services/ProjectConfigService.js";
 import { ReviewQueueService } from "./services/ReviewQueueService.js";
 import { queuedReviewWorkerCapacity } from "./services/WorkerLaunchPolicy.js";
 import { spawnWorkerOnce } from "./services/WorkerProcessLauncher.js";
+import { CommonBackendClient } from "./services/CommonBackendClient.js";
 
 const config = loadConfig();
 clearLogFiles(config);
@@ -20,35 +19,51 @@ const logger = new FileLogger(config);
 const db = openDatabase(config);
 const server = createApp(createMrRoutes(config, db, logger), logger);
 
-const projectRepository = new ProjectRepository(db);
 const repositoryRepository = new RepositoryRepository(db);
 const mergeRequestRepository = new MergeRequestRepository(db);
 const reviewJobRepository = new ReviewJobRepository(db);
-const projectConfigService = new ProjectConfigService(db);
+const commonClient = new CommonBackendClient(config);
 const reviewQueueService = new ReviewQueueService(reviewJobRepository);
 
+async function effectiveConfig(projectId: string) {
+  const response = await commonClient.effectiveConfig(projectId);
+  return response.effective_config ?? config;
+}
+
 function runWorkerOnce() {
-  const count = queuedReviewWorkerCapacity({ config, db, projectConfigService });
-  const spawnCount = Math.max(1, count);
-  for (let index = 0; index < spawnCount; index += 1) {
-    spawnWorkerOnce(logger);
-  }
+  queuedReviewWorkerCapacity({ config, db, effectiveConfig })
+    .then((count) => {
+      const spawnCount = Math.max(1, count);
+      for (let index = 0; index < spawnCount; index += 1) {
+        spawnWorkerOnce(logger);
+      }
+    })
+    .catch((error) => logger.error("worker_capacity_failed", error));
 }
 
 function runQueuedWorkersIfNeeded() {
-  const count = queuedReviewWorkerCapacity({ config, db, projectConfigService });
-  for (let index = 0; index < count; index += 1) {
-    spawnWorkerOnce(logger);
-  }
+  queuedReviewWorkerCapacity({ config, db, effectiveConfig })
+    .then((count) => {
+      for (let index = 0; index < count; index += 1) {
+        spawnWorkerOnce(logger);
+      }
+    })
+    .catch((error) => logger.error("worker_capacity_failed", error));
 }
 
-const mrSyncService = new MrSyncService(config, repositoryRepository, mergeRequestRepository, reviewQueueService, runWorkerOnce, projectConfigService);
-const autoSyncScheduler = new MrAutoSyncScheduler(config, projectRepository, projectConfigService, mrSyncService, {
+const mrSyncService = new MrSyncService(config, repositoryRepository, mergeRequestRepository, reviewQueueService, runWorkerOnce, effectiveConfig);
+const autoSyncScheduler = new MrAutoSyncScheduler(
+  config,
+  () => db.prepare("SELECT DISTINCT project_id FROM repositories WHERE status = 'active'").all().map((row: any) => String(row.project_id)),
+  effectiveConfig,
+  mrSyncService,
+  {
   logger: {
     log: (line: string) => logger.log("auto_sync", { message: line }),
     error: (line: string) => logger.log("auto_sync_failed", { message: line }, "error")
   }
-});
+  }
+);
 
 const host = config.server?.host ?? "127.0.0.1";
 const port = config.server?.mr_port ?? config.server?.port ?? 8011;

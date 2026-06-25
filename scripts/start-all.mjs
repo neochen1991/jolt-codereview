@@ -37,6 +37,7 @@ try {
 const env = {
   ...process.env,
   CONFIG_PATH: process.env.CONFIG_PATH || path.join(root, "config.json"),
+  JOLT_INTERNAL_SERVICE_TOKEN: process.env.JOLT_INTERNAL_SERVICE_TOKEN || "jolt-local-internal-service-token",
   COMMON_API_BASE: process.env.COMMON_API_BASE || `http://${apiHost}:${commonPort}`,
   MR_API_BASE: process.env.MR_API_BASE || `http://${apiHost}:${mrPort}`,
   VITE_COMMON_API_BASE: process.env.VITE_COMMON_API_BASE || `http://${apiHost}:${commonPort}`,

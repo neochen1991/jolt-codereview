@@ -55,6 +55,7 @@ export function createRepositoryRoutes(ctx: BackendRouteContext): Route[] {
       const provider = String(input.provider ?? inferredProvider ?? "github");
       const name = String(input.name ?? parsed.name);
       if (!["github", "codehub"].includes(provider)) return badRequest("provider must be github or codehub");
+      projectRepository.ensureReviewDefaults(params.projectId);
       const providerInput = typeof input.provider_config === "object" && input.provider_config ? input.provider_config : {};
       const providerConfig = repositoryConfigFromGitUrl(config, provider as "github" | "codehub", parsed, providerInput as Record<string, unknown>);
       const repository = repositoryRepository.upsert({

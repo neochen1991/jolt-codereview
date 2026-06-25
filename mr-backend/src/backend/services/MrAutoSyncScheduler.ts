@@ -1,6 +1,4 @@
 import type { AppConfig } from "../types.js";
-import type { ProjectRepository } from "../repositories/ProjectRepository.js";
-import type { ProjectConfigService } from "./ProjectConfigService.js";
 import type { MrSyncService } from "./MrSyncService.js";
 
 interface SchedulerOptions {
@@ -15,8 +13,8 @@ export class MrAutoSyncScheduler {
 
   constructor(
     private readonly config: AppConfig,
-    private readonly projectRepository: ProjectRepository,
-    private readonly projectConfigService: ProjectConfigService,
+    private readonly listProjectIds: () => string[],
+    private readonly effectiveConfig: (projectId: string) => Promise<AppConfig>,
     private readonly mrSyncService: MrSyncService,
     private readonly options: SchedulerOptions = {}
   ) {}
@@ -34,24 +32,30 @@ export class MrAutoSyncScheduler {
   }
 
   async syncAllAndSchedule() {
-    const projects = this.projectRepository.listProjects() as Array<{ id: string; name?: string }>;
-    for (const project of projects) {
-      await this.syncProject(project.id);
-      this.scheduleProject(project.id);
+    const projectIds = this.listProjectIds();
+    for (const projectId of projectIds) {
+      await this.syncProject(projectId);
+      this.scheduleProject(projectId);
     }
   }
 
   private scheduleProject(projectId: string) {
     if (!this.running) return;
-    const intervalMs = this.pollIntervalSeconds(projectId) * 1000;
-    const previous = this.timers.get(projectId);
-    if (previous) clearTimeout(previous);
-    const timer = setTimeout(async () => {
-      await this.syncProject(projectId);
-      this.scheduleProject(projectId);
-    }, intervalMs);
-    timer.unref?.();
-    this.timers.set(projectId, timer);
+    void this.pollIntervalSeconds(projectId)
+      .then((seconds) => {
+        if (!this.running) return;
+        const previous = this.timers.get(projectId);
+        if (previous) clearTimeout(previous);
+        const timer = setTimeout(async () => {
+          await this.syncProject(projectId);
+          this.scheduleProject(projectId);
+        }, seconds * 1000);
+        timer.unref?.();
+        this.timers.set(projectId, timer);
+      })
+      .catch((error) => {
+        this.options.logger?.error?.(`[auto-sync] project=${projectId} schedule failed: ${(error as Error).message}`);
+      });
   }
 
   private async syncProject(projectId: string) {
@@ -67,8 +71,8 @@ export class MrAutoSyncScheduler {
     }
   }
 
-  private pollIntervalSeconds(projectId: string) {
-    const effective = this.projectConfigService.effectiveConfig(projectId, this.config).effective_config;
+  private async pollIntervalSeconds(projectId: string) {
+    const effective = await this.effectiveConfig(projectId);
     const projectValue = Number(effective.queue_policy?.poll_interval_seconds);
     const defaultValue = Number(this.config.queue_policy?.poll_interval_seconds ?? this.options.defaultPollIntervalSeconds ?? 300);
     const interval = Number.isFinite(projectValue) && projectValue > 0 ? projectValue : defaultValue;

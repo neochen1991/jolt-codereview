@@ -30,9 +30,8 @@ export class AuditRepository {
 
   listForProject(projectId: string, limit: number) {
     return this.db.prepare(`
-      SELECT al.*, u.username, u.display_name
+      SELECT al.*
       FROM audit_logs al
-      LEFT JOIN users u ON u.id = al.user_id
       WHERE al.project_id = ? OR al.project_id IS NULL
       ORDER BY al.created_at DESC
       LIMIT ?

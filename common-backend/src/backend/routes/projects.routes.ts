@@ -1,42 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
-import type { FindingRow } from "../types.js";
-import { compactLlmTestInput, testOpenAiCompatibleLlm, type LlmTestInput } from "../services/LlmConnectivityService.js";
 import type { BackendRouteContext } from "./context.js";
 
 const PROJECT_MEMBER_ROLES = new Set(["observer", "developer", "reviewer", "project_admin"]);
 
 export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
-  const {
-    all,
-    get,
-    db,
-    config,
-    runWorkerOnce,
-    repoConfig,
-    riskScore,
-    verifyGitHubSignature,
-    verifyCodeHubSignature,
-    normalizeCodeHubWebhookPayload,
-    codehubRepoMatches,
-    bearerToken,
-    currentUserId,
-    ensureRoot,
-    ensureProjectRole,
-    ensureProjectWrite,
-    auditLog,
-    syncProject,
-    publishFindings,
-    projectRepository,
-    repositoryRepository,
-    mergeRequestRepository,
-    reviewJobRepository,
-    agentRepository,
-    ruleDocumentRepository,
-    auditRepository,
-    projectConfigService
-  } = ctx;
-  const routes: Route[] = [
+  const { config, get, currentUserId, ensureRoot, ensureProjectRole, projectRepository, auditRepository, projectConfigService, auditLog } = ctx;
+  return [
     route("GET", "/api/projects", ({ req }) => {
       const actorId = currentUserId(req);
       if (!actorId) return { statusCode: 401, error: "unauthorized", message: "login is required" };
@@ -55,9 +25,6 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       const input = body as Record<string, unknown>;
       const name = String(input.name || "").trim();
       if (!name) return badRequest("project name is required");
-      const repo = input.repository && typeof input.repository === "object" ? input.repository as Record<string, unknown> : null;
-      const gitUrl = String(repo?.git_url || "").trim();
-      if (repo && gitUrl && (!gitUrl.includes("/") || !gitUrl.includes(".git"))) return badRequest("repository git url is invalid");
       const projectId = id("project");
       const project = projectRepository.createProject({
         id: projectId,
@@ -67,30 +34,15 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
         memberId: `member_${sha1(`${projectId}:${actorId}`).slice(0, 12)}`,
         cloneFromProjectId: "project_default"
       });
-      let repository = null;
-      if (repo && gitUrl) {
-        const provider = String(repo.provider || "codehub").trim() || "codehub";
-        const nameFromUrl = gitUrl.replace(/\\/g, "/").split("/").pop()?.replace(/\.git$/, "") || "repository";
-        repository = repositoryRepository.upsert({
-          id: id("repo"),
-          projectId,
-          provider,
-          externalRepoId: gitUrl,
-          name: String(repo.name || "").trim() || nameFromUrl,
-          defaultBranch: String(repo.default_branch || "main").trim() || "main",
-          providerConfig: { git_url: gitUrl }
-        });
-      }
       auditLog({
         userId: actorId,
         projectId,
         action: "projects.create",
         resourceType: "project",
         resourceId: projectId,
-        summary: repository ? "created project and bound repository" : "created project",
-        metadata: repository ? { repository_id: (repository as { id?: string }).id } : {}
+        summary: "created project"
       });
-      return { project, repository };
+      return { project, repository: null };
     }),
     route("GET", "/api/projects/:projectId", ({ params, req }) => {
       const actorId = currentUserId(req);
@@ -100,7 +52,7 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
     }),
     route("PATCH", "/api/projects/:projectId", ({ params, body, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectWrite(params.projectId, actorId);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
       if (denied) return denied;
       const input = body as Record<string, unknown>;
       if (input.name !== undefined && !String(input.name).trim()) return badRequest("project name is required");
@@ -120,7 +72,7 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
     }),
     route("POST", "/api/projects/:projectId/members", ({ params, body, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectWrite(params.projectId, actorId);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
       if (denied) return denied;
       const input = body as Record<string, unknown>;
       const username = String(input.username ?? "").trim();
@@ -148,24 +100,21 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
     }),
     route("PATCH", "/api/projects/:projectId/members/:memberId", ({ params, body, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectWrite(params.projectId, actorId);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
       if (denied) return denied;
-      const input = body as Record<string, unknown>;
-      if (typeof input.role === "string") {
-        const role = String(input.role);
-        if (!PROJECT_MEMBER_ROLES.has(role)) return badRequest("role is invalid");
-        if (role === "project_admin") {
-          const rootDenied = ensureRoot(actorId);
-          if (rootDenied) return rootDenied;
-        }
-        projectRepository.updateMemberRole(params.projectId, params.memberId, role);
-        auditLog({ userId: actorId, projectId: params.projectId, action: "project.members.update_role", resourceType: "project_member", resourceId: params.memberId, summary: `role=${role}` });
+      const role = String((body as Record<string, unknown>)?.role ?? "");
+      if (!PROJECT_MEMBER_ROLES.has(role)) return badRequest("role is invalid");
+      if (role === "project_admin") {
+        const rootDenied = ensureRoot(actorId);
+        if (rootDenied) return rootDenied;
       }
+      projectRepository.updateMemberRole(params.projectId, params.memberId, role);
+      auditLog({ userId: actorId, projectId: params.projectId, action: "project.members.update_role", resourceType: "project_member", resourceId: params.memberId, summary: `role=${role}` });
       return projectRepository.findMember(params.projectId, params.memberId) ?? notFound();
     }),
     route("DELETE", "/api/projects/:projectId/members/:memberId", ({ params, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectWrite(params.projectId, actorId);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
       if (denied) return denied;
       projectRepository.deleteMember(params.projectId, params.memberId);
       auditLog({ userId: actorId, projectId: params.projectId, action: "project.members.remove", resourceType: "project_member", resourceId: params.memberId });
@@ -183,30 +132,9 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       return projectConfigService.effectiveConfig(params.projectId, config);
     }),
-    route("POST", "/api/projects/:projectId/settings/llm/test", async ({ params, body, req }) => {
-      const actorId = currentUserId(req);
-      const denied = ensureProjectWrite(params.projectId, actorId);
-      if (denied) return denied;
-      const effective = projectConfigService.effectiveConfig(params.projectId, config).effective_config;
-      const input = (typeof body === "object" && body ? body : {}) as LlmTestInput;
-      const llm = {
-        ...(effective.llm ?? {}),
-        ...compactLlmTestInput(input)
-      };
-      const result = await testOpenAiCompatibleLlm(llm);
-      auditLog({
-        userId: actorId,
-        projectId: params.projectId,
-        action: "project.settings.llm_test",
-        resourceType: "project_settings",
-        resourceId: "llm_policy",
-        summary: `tested llm provider=${String(llm.default_provider ?? "")} model=${String(llm.default_model ?? "")}`
-      });
-      return result;
-    }),
     route("PATCH", "/api/projects/:projectId/settings/:key", ({ params, body, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectWrite(params.projectId, actorId);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
       if (denied) return denied;
       if (!projectConfigService.isAllowedKey(params.key)) {
         return badRequest(`settings key must be one of: ${projectConfigService.allowedKeys().join(", ")}`);
@@ -248,7 +176,7 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
     }),
     route("PATCH", "/api/projects/:projectId/join-requests/:requestId", ({ params, body, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectWrite(params.projectId, actorId);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
       if (denied) return denied;
       const status = String((body as Record<string, unknown>)?.status ?? "");
       if (!["approved", "rejected"].includes(status)) return badRequest("status must be approved or rejected");
@@ -288,7 +216,6 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
         const rootDenied = ensureRoot(actorId);
         if (rootDenied) return rootDenied;
       }
-      const expiresAt = String(input.expires_at || "").trim() || null;
       const inviteCode = `jolt-${randomBytes(9).toString("base64url")}`;
       const invitation = projectRepository.createInvitation({
         id: id("invite"),
@@ -296,7 +223,7 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
         inviteCodeHash: sha1(inviteCode),
         role,
         createdBy: actorId,
-        expiresAt,
+        expiresAt: String(input.expires_at || "").trim() || null,
         maxUses: 0
       });
       auditLog({ userId: actorId, projectId: params.projectId, action: "project.invitation.create", resourceType: "project_invitation", resourceId: String((invitation as { id?: string })?.id || ""), summary: `created invitation role=${role}` });
@@ -320,7 +247,6 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       return {
         items: auditRepository.listForProject(params.projectId, limit)
       };
-    }),
+    })
   ];
-  return routes;
 }

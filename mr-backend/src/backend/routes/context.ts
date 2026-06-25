@@ -12,7 +12,6 @@ import type { AgentToolBindingService } from "../services/AgentToolBindingServic
 import type { FeedbackLearningService } from "../services/FeedbackLearningService.js";
 import type { MrSyncService } from "../services/MrSyncService.js";
 import type { ObservabilityService } from "../services/ObservabilityService.js";
-import type { ProjectConfigService } from "../services/ProjectConfigService.js";
 import type { ReviewQueueService } from "../services/ReviewQueueService.js";
 import type { StaticToolAvailabilityService } from "../services/StaticToolAvailabilityService.js";
 
@@ -52,8 +51,8 @@ export interface BackendRouteContext {
   mrSyncService: MrSyncService;
   observabilityService: ObservabilityService;
   staticToolAvailabilityService: StaticToolAvailabilityService;
-  projectConfigService: ProjectConfigService;
   reviewQueueService: ReviewQueueService;
+  effectiveConfig(projectId: string): Promise<AppConfig>;
   all<T>(sql: string, params?: any[]): T[];
   get<T>(sql: string, params?: any[]): T | undefined;
   runWorkerOnce(): void;

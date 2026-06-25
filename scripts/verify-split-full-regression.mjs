@@ -149,6 +149,15 @@ async function http(pathOrUrl, init = {}, expected = 200) {
 function apiBaseForPath(value) {
   if (/^\/api\/(auth|me|users|permissions|models|system)(?:\/|$)/.test(value)) return `http://127.0.0.1:${commonPort}`;
   if (/^\/internal\/(auth|models)(?:\/|$)/.test(value)) return `http://127.0.0.1:${commonPort}`;
+  if (
+    value === "/api/projects" ||
+    value === "/api/projects/discover" ||
+    value === "/api/projects/join-by-invite" ||
+    /^\/api\/projects\/[^/]+$/.test(value) ||
+    /^\/api\/projects\/[^/]+\/(members|settings|effective-config|join-requests|invitations|audit-logs)(?:\/|$)/.test(value)
+  ) {
+    return `http://127.0.0.1:${commonPort}`;
+  }
   return `http://127.0.0.1:${mrPort}`;
 }
 
@@ -461,6 +470,7 @@ async function main() {
   });
   await http(`/api/projects/${projectId}/repositories`, { headers: auth });
   await http(`/api/projects/${projectId}/settings`, { headers: auth });
+  await http(`http://127.0.0.1:${mrPort}/api/projects/${projectId}/settings`, { headers: auth }, 404);
   await http(`/api/projects/${projectId}/effective-config`, { headers: auth });
   await http(`/api/projects/${projectId}/agents`, { headers: auth });
   await http(`/api/projects/${projectId}/expert-profiles`, { headers: auth });

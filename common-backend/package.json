@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Jolt public platform backend for users, permissions, system settings, and model management.",
   "scripts": {
-    "build": "tsc -p tsconfig.backend.json",
+    "clean": "node -e \"import('node:fs').then(({ rmSync }) => rmSync('build', { recursive: true, force: true }))\"",
+    "build": "npm run clean && tsc -p tsconfig.backend.json",
     "dev": "npm run build && node build/backend/common-server.js",
     "start": "node build/backend/common-server.js",
     "verify": "npm run build"

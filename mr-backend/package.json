@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Jolt MR review backend for repositories, merge requests, review jobs, quality, webhooks, and worker orchestration.",
   "scripts": {
-    "build": "tsc -p tsconfig.backend.json",
+    "clean": "node -e \"import('node:fs').then(({ rmSync }) => rmSync('build', { recursive: true, force: true }))\"",
+    "build": "npm run clean && tsc -p tsconfig.backend.json",
     "dev": "npm run build && node build/backend/mr-server.js",
     "start": "node build/backend/mr-server.js",
     "verify": "npm run build",

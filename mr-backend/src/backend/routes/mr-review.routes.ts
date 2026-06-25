@@ -24,33 +24,22 @@ import { spawnWorkerOnce as launchWorkerOnce, type WorkerProcessLogger } from ".
 
 import type { BackendRouteContext } from "./context.js";
 import { createAgentRoutes } from "./agents.routes.js";
-import { createAuthRoutes } from "./auth.routes.js";
 import { createFullReviewRoutes } from "./full-review.routes.js";
 import { createHealthRoutes } from "./health.routes.js";
-import { createModelRoutes } from "./models.routes.js";
 import { createObservabilityRoutes } from "./observability.routes.js";
-import { createPermissionRoutes } from "./permissions.routes.js";
 import { createProjectRoutes } from "./projects.routes.js";
 import { createQualityRoutes } from "./quality.routes.js";
 import { createRepositoryRoutes } from "./repositories.routes.js";
 import { createReviewRoutes } from "./review.routes.js";
 import { createRuleRoutes } from "./rules.routes.js";
-import { createSystemRoutes } from "./system.routes.js";
 import { createVcsProxyRoutes } from "./vcs-proxy.routes.js";
 import { createWebhookRoutes } from "./webhooks.routes.js";
-export function createRoutes(config: AppConfig, db: Db, logger?: WorkerProcessLogger): Route[] {
-  return createRouteGroup("all", config, db, logger);
-}
-
-export function createCommonRoutes(config: AppConfig, db: Db, logger?: WorkerProcessLogger): Route[] {
-  return createRouteGroup("common", config, db, logger);
-}
 
 export function createMrRoutes(config: AppConfig, db: Db, logger?: WorkerProcessLogger): Route[] {
-  return createRouteGroup("mr", config, db, logger);
+  return createRouteGroup(config, db, logger);
 }
 
-function createRouteGroup(mode: "all" | "common" | "mr", config: AppConfig, db: Db, logger?: WorkerProcessLogger): Route[] {
+function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogger): Route[] {
   const projectRepository = new ProjectRepository(db);
   const repositoryRepository = new RepositoryRepository(db);
   const mergeRequestRepository = new MergeRequestRepository(db);
@@ -485,42 +474,12 @@ function createRouteGroup(mode: "all" | "common" | "mr", config: AppConfig, db: 
     formatPublishBody
   };
 
-  if (mode === "common") {
-    return [
-      ...createHealthRoutes(ctx, { serviceName: "jolt-common-backend" }),
-      ...createAuthRoutes(ctx),
-      ...createPermissionRoutes(ctx),
-      ...createSystemRoutes(ctx),
-      ...createModelRoutes(ctx)
-    ];
-  }
-
-  if (mode === "mr") {
-    return [
-      ...createHealthRoutes(ctx, { serviceName: "jolt-mr-backend" }),
-      ...createProjectRoutes(ctx),
-      ...createRuleRoutes(ctx),
-      ...createAgentRoutes(ctx),
-      ...createRepositoryRoutes(ctx),
-      ...createObservabilityRoutes(ctx),
-      ...createWebhookRoutes(ctx),
-      ...createReviewRoutes(ctx),
-      ...createFullReviewRoutes(ctx),
-      ...createQualityRoutes(ctx),
-      ...createVcsProxyRoutes(ctx)
-    ];
-  }
-
   return [
-    ...createHealthRoutes(ctx),
-    ...createAuthRoutes(ctx),
-    ...createPermissionRoutes(ctx),
+    ...createHealthRoutes(ctx, { serviceName: "jolt-mr-backend" }),
     ...createProjectRoutes(ctx),
     ...createRuleRoutes(ctx),
     ...createAgentRoutes(ctx),
     ...createRepositoryRoutes(ctx),
-    ...createSystemRoutes(ctx),
-    ...createModelRoutes(ctx),
     ...createObservabilityRoutes(ctx),
     ...createWebhookRoutes(ctx),
     ...createReviewRoutes(ctx),

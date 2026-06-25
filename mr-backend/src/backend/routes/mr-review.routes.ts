@@ -52,14 +52,7 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
   const commonClient = new CommonBackendClient(config);
   const reviewQueueService = new ReviewQueueService(reviewJobRepository);
   async function effectiveConfig(projectId: string): Promise<AppConfig> {
-    const response = await commonClient.effectiveConfig(projectId);
-    return response.effective_config ?? {
-      ...config,
-      llm: {
-        ...(config.llm ?? {}),
-        ...(response.llm ?? {})
-      }
-    };
+    return commonClient.projectEffectiveConfig(projectId);
   }
 
   const mrSyncService = new MrSyncService(config, repositoryRepository, mergeRequestRepository, reviewQueueService, runWorkerOnce, effectiveConfig);

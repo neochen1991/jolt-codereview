@@ -8,9 +8,7 @@ function loggingConfig(config: AppConfig) {
   return {
     enabled: config.logging?.enabled ?? true,
     dir: config.logging?.dir ?? "logs",
-    apiFile: config.logging?.api_file ?? "jolt-api.log",
-    workerFile: config.logging?.worker_file ?? "jolt-worker.log",
-    reviewRunDir: config.logging?.review_run_dir ?? "review-runs"
+    apiFile: config.logging?.api_file ?? "jolt-common-api.log"
   };
 }
 
@@ -31,13 +29,7 @@ export function clearLogFiles(config: AppConfig) {
   const logging = loggingConfig(config);
   if (!logging.enabled) return;
   const dir = resolveLogDir(config);
-  for (const target of [
-    path.join(dir, logging.apiFile),
-    path.join(dir, logging.workerFile),
-    path.join(dir, logging.reviewRunDir)
-  ]) {
-    rmSync(target, { recursive: true, force: true });
-  }
+  rmSync(path.join(dir, logging.apiFile), { recursive: true, force: true });
 }
 
 function beijingIsoString() {
@@ -67,7 +59,7 @@ export class FileLogger {
     if (!this.filePath) return;
     const line = JSON.stringify({
       ts: beijingIsoString(),
-      service: "jolt-api",
+      service: "jolt-common-api",
       level,
       event,
       ...sanitize(fields)

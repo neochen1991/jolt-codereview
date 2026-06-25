@@ -1,4 +1,5 @@
 export interface AppConfig {
+  [key: string]: unknown;
   llm?: {
     default_provider?: string;
     default_base_url?: string;
@@ -8,18 +9,6 @@ export interface AppConfig {
     request_timeout_seconds?: number;
     max_output_tokens?: number;
     enable_stream?: boolean;
-  };
-  github?: {
-    default_token_env?: string;
-    default_token?: string | null;
-    default_endpoint?: string;
-    webhook_secret?: string;
-  };
-  codehub?: {
-    default_token_env?: string;
-    default_token?: string | null;
-    default_endpoint?: string;
-    webhook_secret?: string;
   };
   server?: {
     host?: string;
@@ -36,29 +25,5 @@ export interface AppConfig {
     enabled?: boolean;
     dir?: string;
     api_file?: string;
-    worker_file?: string;
-    review_run_dir?: string;
   };
-  budget_policy?: Record<string, unknown>;
-  token_usage?: {
-    enabled?: boolean;
-    endpoint?: string;
-    method?: string;
-    timeout_seconds?: number;
-    auth_header?: string;
-    auth_token_env?: string | null;
-    auth_token?: string | null;
-    employee_no_env?: string | null;
-    default_employee_no?: string | null;
-    service_name?: string;
-  };
-  runtime?: {
-    python_bin?: string | null;
-  };
-  review_policy?: Record<string, unknown>;
-  agent_policy?: Record<string, unknown>;
-  tool_policy?: Record<string, unknown>;
-  queue_policy?: Record<string, unknown>;
-  publish_policy?: Record<string, unknown>;
-  data_policy?: Record<string, unknown>;
 }

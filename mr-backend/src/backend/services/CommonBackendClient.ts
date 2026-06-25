@@ -19,6 +19,41 @@ export type CommonAuthSnapshot = {
   settings?: Record<string, Record<string, unknown>>;
 };
 
+export type CommonEffectiveConfigResponse = {
+  project_id: string;
+  effective_config?: AppConfig & { vcs_policy?: Record<string, unknown> };
+  llm?: Record<string, unknown>;
+  source?: {
+    project_settings?: Record<string, Record<string, unknown>>;
+  };
+};
+
+function mergeObject<T extends Record<string, unknown>>(base: T | undefined, override: Record<string, unknown> | undefined): T | undefined {
+  if (!override || Object.keys(override).length === 0) return base;
+  return { ...(base ?? {}), ...override } as T;
+}
+
+function applyVcsPolicy(config: AppConfig, vcsPolicy: Record<string, unknown>) {
+  const next: AppConfig = { ...config };
+  if (vcsPolicy.github_token || vcsPolicy.github_token_env || vcsPolicy.github_endpoint) {
+    next.github = {
+      ...(next.github ?? {}),
+      ...(vcsPolicy.github_token ? { default_token: vcsPolicy.github_token as string } : {}),
+      ...(vcsPolicy.github_token_env ? { default_token_env: vcsPolicy.github_token_env as string } : {}),
+      ...(vcsPolicy.github_endpoint ? { default_endpoint: vcsPolicy.github_endpoint as string } : {})
+    };
+  }
+  if (vcsPolicy.codehub_token || vcsPolicy.codehub_token_env || vcsPolicy.codehub_endpoint) {
+    next.codehub = {
+      ...(next.codehub ?? {}),
+      ...(vcsPolicy.codehub_token ? { default_token: vcsPolicy.codehub_token as string } : {}),
+      ...(vcsPolicy.codehub_token_env ? { default_token_env: vcsPolicy.codehub_token_env as string } : {}),
+      ...(vcsPolicy.codehub_endpoint ? { default_endpoint: vcsPolicy.codehub_endpoint as string } : {})
+    };
+  }
+  return next;
+}
+
 export class CommonBackendClient {
   private readonly requestAuth = new WeakMap<IncomingMessage, CommonAuthSnapshot>();
   private readonly authByUserId = new Map<string, CommonAuthSnapshot>();
@@ -85,6 +120,30 @@ export class CommonBackendClient {
     if (!response.ok) {
       throw new Error(`common effective config failed: ${response.status} ${JSON.stringify(json)}`);
     }
-    return json as { project_id: string; effective_config?: AppConfig; llm?: Record<string, unknown> };
+    return json as CommonEffectiveConfigResponse;
+  }
+
+  async projectEffectiveConfig(projectId: string) {
+    const response = await this.effectiveConfig(projectId);
+    const settings = response.source?.project_settings ?? {};
+    let next: AppConfig = {
+      ...this.config,
+      llm: mergeObject(this.config.llm, response.llm ?? response.effective_config?.llm)
+    };
+    for (const [key, value] of Object.entries(settings)) {
+      if (!value || Object.keys(value).length === 0) continue;
+      if (key === "llm_policy") {
+        next = { ...next, llm: mergeObject(next.llm, value) };
+      } else if (key === "vcs_policy") {
+        next = applyVcsPolicy(next, value);
+      } else {
+        const current = (next as Record<string, unknown>)[key];
+        (next as Record<string, unknown>)[key] =
+          current && typeof current === "object" && !Array.isArray(current)
+            ? { ...(current as Record<string, unknown>), ...value }
+            : value;
+      }
+    }
+    return next;
   }
 }

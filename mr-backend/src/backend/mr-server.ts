@@ -26,8 +26,7 @@ const commonClient = new CommonBackendClient(config);
 const reviewQueueService = new ReviewQueueService(reviewJobRepository);
 
 async function effectiveConfig(projectId: string) {
-  const response = await commonClient.effectiveConfig(projectId);
-  return response.effective_config ?? config;
+  return commonClient.projectEffectiveConfig(projectId);
 }
 
 function runWorkerOnce() {

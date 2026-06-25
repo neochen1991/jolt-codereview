@@ -2,13 +2,13 @@ import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { openDatabase } from "./db.js";
 import { clearLogFiles, FileLogger } from "./logger.js";
-import { createCommonRoutes } from "./routes/mr-review.routes.js";
+import { createCommonRoutes } from "./routes/common.routes.js";
 
 const config = loadConfig();
 clearLogFiles(config);
 const logger = new FileLogger(config);
 const db = openDatabase(config);
-const server = createApp(createCommonRoutes(config, db, logger), logger);
+const server = createApp(createCommonRoutes(config, db), logger);
 
 const host = config.server?.host ?? "127.0.0.1";
 const port = config.server?.common_port ?? 8010;

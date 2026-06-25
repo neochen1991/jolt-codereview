@@ -1,6 +1,5 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
-import type { FindingRow } from "../types.js";
 import type { BackendRouteContext } from "./context.js";
 
 type UserRow = {
@@ -72,33 +71,7 @@ function verifyPassword(password: string, user: UserRow) {
 }
 
 export function createAuthRoutes(ctx: BackendRouteContext): Route[] {
-  const {
-    all,
-    get,
-    db,
-    config,
-    runWorkerOnce,
-    repoConfig,
-    riskScore,
-    verifyGitHubSignature,
-    verifyCodeHubSignature,
-    normalizeCodeHubWebhookPayload,
-    codehubRepoMatches,
-    bearerToken,
-    currentUserId,
-    ensureProjectRole,
-    ensureProjectWrite,
-    auditLog,
-    syncProject,
-    publishFindings,
-    projectRepository,
-    repositoryRepository,
-    mergeRequestRepository,
-    reviewJobRepository,
-    agentRepository,
-    ruleDocumentRepository,
-    auditRepository
-  } = ctx;
+  const { get, bearerToken, currentUserId, auditLog, projectRepository } = ctx;
   const routes: Route[] = [
     route("POST", "/api/auth/login", ({ body }) => {
       const input = body as Record<string, unknown>;

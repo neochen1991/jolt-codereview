@@ -3,6 +3,9 @@ from __future__ import annotations
 import copy
 import json
 import os
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -122,46 +125,58 @@ def load_config() -> dict[str, Any]:
     return config
 
 
-def load_project_settings(conn: Any, project_id: str) -> dict[str, dict[str, Any]]:
-    table = conn.execute(
-        "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?",
-        ("project_settings",),
-    ).fetchone()
-    if not table:
-        return {}
-    rows = conn.execute(
-        "SELECT settings_key, settings_json FROM project_settings WHERE project_id = ?",
-        (project_id,),
-    ).fetchall()
-    settings: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        try:
-            settings[str(row["settings_key"])] = json.loads(row["settings_json"] or "{}")
-        except (TypeError, json.JSONDecodeError):
-            settings[str(row["settings_key"])] = {}
-    return settings
+def common_base_url(config: dict[str, Any]) -> str:
+    configured = os.environ.get("COMMON_API_BASE") or os.environ.get("VITE_COMMON_API_BASE")
+    if configured:
+        return configured.rstrip("/")
+    server = config.get("server") or {}
+    host = server.get("host") or "127.0.0.1"
+    port = server.get("common_port") or 8010
+    return f"http://{host}:{port}"
 
 
-def load_user_settings(conn: Any, user_id: str | None) -> dict[str, dict[str, Any]]:
+def internal_service_token() -> str:
+    return os.environ.get("JOLT_INTERNAL_SERVICE_TOKEN", "").strip()
+
+
+def common_get_json(config: dict[str, Any], path: str, query: dict[str, str]) -> dict[str, Any]:
+    token = internal_service_token()
+    if not token:
+        raise RuntimeError("JOLT_INTERNAL_SERVICE_TOKEN is required for worker/common API communication")
+    encoded = urllib.parse.urlencode(query)
+    url = f"{common_base_url(config)}{path}"
+    if encoded:
+        url = f"{url}?{encoded}"
+    request = urllib.request.Request(url, headers={"x-internal-service-token": token})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=10) as response:
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"common API {path} failed: {exc.code} {detail}") from exc
+    return json.loads(body or "{}")
+
+
+def load_project_settings(config: dict[str, Any], project_id: str) -> dict[str, dict[str, Any]]:
+    payload = common_get_json(config, "/internal/models/effective-config", {"project_id": project_id})
+    source = payload.get("source") or {}
+    settings = source.get("project_settings") or {}
+    return {
+        str(key): value if isinstance(value, dict) else {}
+        for key, value in settings.items()
+    }
+
+
+def load_user_settings(config: dict[str, Any], user_id: str | None) -> dict[str, dict[str, Any]]:
     if not user_id:
         return {}
-    table = conn.execute(
-        "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?",
-        ("user_settings",),
-    ).fetchone()
-    if not table:
-        return {}
-    rows = conn.execute(
-        "SELECT settings_key, settings_json FROM user_settings WHERE user_id = ?",
-        (user_id,),
-    ).fetchall()
-    settings: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        try:
-            settings[str(row["settings_key"])] = json.loads(row["settings_json"] or "{}")
-        except (TypeError, json.JSONDecodeError):
-            settings[str(row["settings_key"])] = {}
-    return settings
+    payload = common_get_json(config, "/internal/auth/introspect", {"user_id": user_id})
+    settings = payload.get("settings") or {}
+    return {
+        str(key): value if isinstance(value, dict) else {}
+        for key, value in settings.items()
+    }
 
 
 def apply_project_vcs_policy(effective: dict[str, Any], settings: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -191,7 +206,7 @@ def apply_project_vcs_policy(effective: dict[str, Any], settings: dict[str, dict
 
 def effective_project_config(base_config: dict[str, Any], conn: Any, project_id: str, user_id: str | None = None) -> dict[str, Any]:
     effective = copy.deepcopy(base_config)
-    settings = load_project_settings(conn, project_id)
+    settings = load_project_settings(base_config, project_id)
     for settings_key, config_key in SETTINGS_TO_CONFIG.items():
         value = settings.get(settings_key) or {}
         if not value:

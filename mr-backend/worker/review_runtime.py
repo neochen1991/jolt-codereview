@@ -4488,7 +4488,6 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     mr = conn.execute("SELECT * FROM merge_requests WHERE id = ?", (job["merge_request_id"],)).fetchone()
     repo = conn.execute("SELECT * FROM repositories WHERE id = ?", (mr["repository_id"],)).fetchone()
     project_id = repo["project_id"]
-    project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     project_config = effective_project_config(config, conn, project_id, job["requested_by"])
 
     size_guard_files: list[ChangedFile] | None = None
@@ -4561,11 +4560,9 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
           id, review_job_id, effort_level, risk_score, sandbox_uri, budget_json,
           toolchain_manifest, data_policy_snapshot, status
         )
-        SELECT ?, j.id, j.requested_effort_level, mr.risk_score, ?, ?, ?, p.data_policy_json, 'running'
+        SELECT ?, j.id, j.requested_effort_level, mr.risk_score, ?, ?, ?, ?, 'running'
         FROM review_jobs j
         JOIN merge_requests mr ON mr.id = j.merge_request_id
-        JOIN repositories r ON r.id = mr.repository_id
-        JOIN projects p ON p.id = r.project_id
         WHERE j.id = ?
         """,
         (
@@ -4573,6 +4570,7 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             str(sandbox_dir),
             json.dumps({"max_llm_calls_per_agent": 2, "max_findings": 40}),
             json.dumps({"static": "open_source_tools_first", "llm": config.get("llm", {}).get("default_model")}),
+            json.dumps(project_config.get("data_policy") or {}, ensure_ascii=False),
             job["id"],
         ),
     )
@@ -4586,9 +4584,8 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     )
     conn.commit()
 
-    legacy_data_policy = json.loads(project["data_policy_json"] or "{}") if project else {}
     configured_data_policy = project_config.get("data_policy") or {}
-    data_policy = normalize_data_policy({**legacy_data_policy, **configured_data_policy})
+    data_policy = normalize_data_policy(configured_data_policy)
     conn.execute("UPDATE review_runs SET data_policy_snapshot = ? WHERE id = ?", (json.dumps(data_policy, ensure_ascii=False), run_id))
     conn.commit()
     agent_configs = merge_custom_agents(load_agent_configs(conn, project_id), project_config)

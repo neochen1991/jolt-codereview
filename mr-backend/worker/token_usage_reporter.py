@@ -73,16 +73,11 @@ def _fetch_run_context(conn: Any, run_id: str) -> Any | None:
           repo.name AS repository_name,
           repo.provider,
           repo.external_repo_id,
-          p.id AS project_id,
-          p.name AS project_name,
-          u.username AS requested_username,
-          u.display_name AS requested_display_name
+          repo.project_id AS project_id
         FROM review_runs rr
         JOIN review_jobs rj ON rj.id = rr.review_job_id
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories repo ON repo.id = mr.repository_id
-        JOIN projects p ON p.id = repo.project_id
-        LEFT JOIN users u ON u.id = rj.requested_by
         WHERE rr.id = ?
         """,
         (run_id,),
@@ -156,7 +151,7 @@ def _build_payload(
         "review_job_id": row["review_job_id"],
         "project": {
             "id": row["project_id"],
-            "name": row["project_name"],
+            "name": row["project_id"],
         },
         "repository": {
             "id": row["repository_id"],

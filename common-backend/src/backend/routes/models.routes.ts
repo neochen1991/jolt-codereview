@@ -80,11 +80,13 @@ export function createModelRoutes(ctx: BackendRouteContext): Route[] {
       const denied = ensureInternal(req);
       if (denied) return denied;
       const projectId = url.searchParams.get("project_id") || "project_default";
-      const effective = projectConfigService.effectiveConfig(projectId, ctx.config).effective_config;
+      const result = projectConfigService.effectiveConfig(projectId, ctx.config);
+      const effective = result.effective_config;
       return {
         project_id: projectId,
         llm: sanitizeLlmConfig((effective.llm ?? {}) as Record<string, unknown>),
-        effective_config: sanitizeEffectiveConfig(effective as Record<string, unknown>)
+        effective_config: sanitizeEffectiveConfig(effective as Record<string, unknown>),
+        source: result.source
       };
     })
   ];

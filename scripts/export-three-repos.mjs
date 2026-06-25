@@ -53,6 +53,14 @@ function writeText(file, value) {
   writeFileSync(file, value, "utf8");
 }
 
+function copyServiceReadme(serviceName, dir) {
+  const source = path.join(root, "apps", serviceName, "README.md");
+  if (!existsSync(source)) {
+    throw new Error(`Missing README template for ${serviceName}: ${source}`);
+  }
+  cpSync(source, path.join(dir, "README.md"));
+}
+
 function backendTsconfig() {
   return {
     extends: "./tsconfig.json",
@@ -128,31 +136,7 @@ function commonBackendRepo(dir) {
   ));
   writeJson(path.join(dir, "tsconfig.backend.json"), backendTsconfig());
   writeText(path.join(dir, ".gitignore"), "node_modules/\nbuild/\ndata/\nlogs/\n.env\n.env.*\n!.env.example\n");
-  writeText(path.join(dir, "README.md"), `# Jolt Common Backend
-
-公共模块后端，负责用户管理、权限管理、系统设置和模型管理。
-
-## Start
-
-\`\`\`bash
-npm install
-cp config.example.json config.json
-npm run dev
-\`\`\`
-
-默认监听 \`127.0.0.1:8010\`，可通过 \`config.json\` 的 \`server.common_port\` 调整。
-业务库只支持 PostgreSQL，请在 \`config.json\` 中配置 \`server.postgres_url\`。
-
-## Owned Routes
-
-- \`/api/auth/*\`
-- \`/api/me/*\`
-- \`/api/permissions/*\`
-- \`/api/models/*\`
-- \`/api/system/*\`
-- \`/internal/auth/introspect\`
-- \`/internal/models/effective-config\`
-`);
+  copyServiceReadme("common-backend", dir);
 }
 
 function mrBackendRepo(dir) {
@@ -171,34 +155,7 @@ function mrBackendRepo(dir) {
   ));
   writeJson(path.join(dir, "tsconfig.backend.json"), backendTsconfig());
   writeText(path.join(dir, ".gitignore"), "node_modules/\nbuild/\ndata/\nlogs/\noutput/\n.venv/\n.env\n.env.*\n!.env.example\n");
-  writeText(path.join(dir, "README.md"), `# Jolt MR Backend
-
-MR 主后端，负责仓库、MR 同步、评审任务、规则、专家 Agent、质量观测、Webhook、VCS 代理和 Python Worker。
-
-## Start
-
-\`\`\`bash
-npm install
-cp config.example.json config.json
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-npm run dev
-npm run worker
-\`\`\`
-
-默认监听 \`127.0.0.1:8011\`，可通过 \`config.json\` 的 \`server.mr_port\` 调整。
-业务库只支持 PostgreSQL，请在 \`config.json\` 中配置 \`server.postgres_url\`。
-
-## Owned Routes
-
-- \`/api/projects/*\`
-- \`/api/mr-review/*\`
-- \`/api/full-review/*\`
-- \`/api/vcs/*\`
-- \`/api/webhooks/*\`
-- \`/api/observability/*\`
-- \`/api/quality/*\`
-`);
+  copyServiceReadme("mr-backend", dir);
 }
 
 function frontendRepo(dir) {
@@ -212,25 +169,7 @@ function frontendRepo(dir) {
     "VITE_API_BASE=http://127.0.0.1:8011",
     ""
   ].join("\n"));
-  writeText(path.join(dir, "README.md"), `# Jolt Frontend
-
-独立前端项目，通过路径路由同时访问 Common Backend 和 MR Backend。
-
-## Start
-
-\`\`\`bash
-npm install
-npm run dev
-\`\`\`
-
-默认监听 \`127.0.0.1:5173\`。
-
-## API Environment
-
-- \`VITE_COMMON_API_BASE\`: 公共模块后端，默认 \`http://127.0.0.1:8010\`
-- \`VITE_MR_API_BASE\`: MR 主后端，默认 \`http://127.0.0.1:8011\`
-- \`VITE_API_BASE\`: 兼容旧单后端模式
-`);
+  copyServiceReadme("frontend", dir);
 }
 
 cleanDir(outputRoot);
@@ -257,9 +196,9 @@ writeText(path.join(outputRoot, "README.md"), `# Jolt Three Repository Export
 
 Generated from ${root}.
 
-- common-backend: public platform backend
-- mr-backend: MR review backend and worker
-- frontend: React/Vite frontend
+- common-backend: public platform backend. See \`common-backend/README.md\`.
+- mr-backend: MR review backend and worker. See \`mr-backend/README.md\`.
+- frontend: React/Vite frontend. See \`frontend/README.md\`.
 
 Regenerate:
 

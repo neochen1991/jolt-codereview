@@ -1,577 +1,269 @@
-# Jolt CodeReview
+# Jolt CodeReview 三服务运行与接入指南
 
-Jolt CodeReview 是一个项目级 AI 代码检视平台，面向生产环境的 MR 自动检视、专家 Agent 协作、静态工具证据采集和人工确认发布闭环。当前实现支持：
+Jolt CodeReview 已拆分为三个可独立启动、可独立导出的服务：
 
-- GitHub Pull Request 作为当前本机调试 MR 数据源。
-- CodeHub Merge Request 作为可配置数据源，支持通过 endpoint/path template 对接公司内网 API。
-- TS API Backend + React 前端 + Python Review Worker。
-- PostgreSQL 存储。
-- MiniMax-M2.7 本机 LLM 配置。
-- LangGraph 确定性流程编排 + 受控 DeepAgents 专家节点。
-- Security / Backend / Test / Performance / DDD / Frontend / Redis / Dependency / Database 等专家 Agent 检视流。
-- Agent trace、LLM 调用记录、finding 确认、dry-run/真实提交检视意见到代码平台。
-- macOS / Windows 跨平台启动脚本。
+- `common-backend`: 公共平台后端，负责登录、用户、权限、系统设置和模型配置。
+- `mr-backend`: MR 检视后端，负责项目、仓库、MR 队列、评审任务、规则、专家 Agent、质量观测、Webhook、VCS 代理和 Python Worker。
+- `frontend`: React/Vite 前端，通过路径规则同时接入 `common-backend` 和 `mr-backend`。
 
-## Windows 快速运行
+运行时只支持 PostgreSQL。SQLite 已不再作为运行库使用。
 
-建议使用 Windows 10/11 + PowerShell。首次运行分为“安装依赖”和“启动服务”两步：
+## 服务拓扑
 
-```powershell
-git clone https://github.com/neochen1991/jolt-codereview.git
-cd jolt-codereview
-Set-ExecutionPolicy -Scope Process Bypass -Force
-.\scripts\install-windows.ps1
-.\scripts\start-windows.ps1
+```text
+Browser
+  |
+  | VITE_COMMON_API_BASE: /api/auth /api/me /api/permissions /api/models /api/system
+  v
+Common Backend (default 127.0.0.1:8010)
+  |
+  | same PostgreSQL database
+  v
+PostgreSQL
+  ^
+  | same PostgreSQL database
+  |
+MR Backend (default 127.0.0.1:8011) <---- Python Review Worker
+  ^
+  |
+  | VITE_MR_API_BASE: /api/projects /api/mr-review /api/full-review /api/vcs /api/webhooks ...
+  |
+Browser
 ```
 
-启动后访问：
+前端不会把所有请求都打到同一个后端。路由规则在 [src/frontend/apiRouting.ts](src/frontend/apiRouting.ts)：
 
-- API: `http://127.0.0.1:8011`
-- Frontend: `http://127.0.0.1:5173`
+- Common API: `/api/auth/*`、`/api/me/*`、`/api/users/*`、`/api/permissions/*`、`/api/models/*`、`/api/system/*`、`/internal/auth/*`、`/internal/models/*`
+- MR API: 其它业务 API，主要是 `/api/projects/*`、`/api/mr-review/*`、`/api/full-review/*`、`/api/vcs/*`、`/api/webhooks/*`
 
-首次本机登录：
+## 目录说明
 
-- 用户名：`local-admin`
-- 密码：`admin123`
-- 角色：`root`
-
-生产环境建议先创建正式管理员账号，并通过组织密钥管理或环境变量维护 LLM/API Token。
-
-权限模型：
-
-- 普通用户可以维护个人 CodeHub Token，该 Token 只用于提交已确认的检视意见；MR 同步、diff 读取和 AI 检视统一使用项目管理员维护的项目级配置。
-- 项目管理员可以维护项目代码仓、静态工具策略、专家 Agent、规范文档、Skill、成员和加入申请。
-- root 管理员可以访问系统设置，包括 PostgreSQL 连接测试和 PG 表结构初始化。
-
-如果机器不能访问 GitHub release、npm registry 或 PyPI，可以先跳过静态工具和规则下载：
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass -Force
-.\scripts\install-windows.ps1 -SkipStaticTools -SkipStaticRules
-.\scripts\start-windows.ps1
+```text
+apps/common-backend/README.md   Common Backend 独立说明
+apps/mr-backend/README.md       MR Backend 和 Worker 独立说明
+apps/frontend/README.md         Frontend 独立说明
+src/backend/                    两个后端共用的 TypeScript 源码
+src/frontend/                   前端源码
+worker/                         Python review worker
+scripts/export-three-repos.mjs  导出三个独立仓库
 ```
-
-如果已经安装过依赖，只想启动：
-
-```powershell
-npm run start:windows
-```
-
-如果缺少 `node_modules` 或 `.venv`，并希望启动脚本自动补齐基础依赖：
-
-```powershell
-.\scripts\start-windows.ps1 -InstallIfMissing
-```
-
-启动脚本会检查运行时依赖是否完整，包括 Node 包 `pg` / `@types/pg` 和 Python 包 `psycopg`。如果内网同步代码后出现缺包，优先重新执行 `.\scripts\install-windows.ps1`，或用 `.\scripts\start-windows.ps1 -InstallIfMissing` 自动修复。
 
 ## 环境要求
 
-- Windows 10/11、macOS 或 Linux。
-- Node.js 24+。
-- Python 3.10+。
-- npm。
-- PostgreSQL 14+。
-- Java 17+ 或 21+，用于 Checkstyle、PMD、SpotBugs、Dependency-Check 等 Java 工具。
-- 可选：`GITHUB_TOKEN`。不配置 token 时可以同步公开仓库 PR，但 GitHub API 可能很快触发 rate limit；配置 token 后可完整拉取 PR changed files。
-- 可选：`CODEHUB_TOKEN`。接入公司内网 CodeHub 时使用。
+- Node.js 24+
+- npm
+- Python 3.10+
+- PostgreSQL 14+
+- 可选：Java 17+ 或 21+，用于 Checkstyle、PMD、SpotBugs、Dependency-Check 等 Java 静态工具
+- 可选：`GITHUB_TOKEN`，用于 GitHub PR 同步和读取 changed files
+- 可选：`CODEHUB_TOKEN`，用于接入公司内网 CodeHub
+- 可选：LLM Key，例如 `MINIMAX_API_KEY`
 
-Windows PowerShell 环境变量示例：
+## 配置文件
 
-```powershell
-$env:GITHUB_TOKEN="ghp_xxx"
-$env:CODEHUB_TOKEN="codehub_xxx"
-$env:PYTHON_BIN="C:\Path\To\python.exe"
-```
-
-macOS / Linux 环境变量示例：
-
-```bash
-export GITHUB_TOKEN="ghp_xxx"
-export CODEHUB_TOKEN="codehub_xxx"
-export PYTHON_BIN="/path/to/python3"
-```
-
-`PYTHON_BIN` 可选。未配置时，启动脚本会优先使用项目内 `.venv`，然后再查找系统 Python。
-
-## 静态工具安装与验证
-
-AI 检视前会先运行一批静态工具，把结果结构化为 `tool_observations` 和候选 finding，供专家 Agent 二次判断。建议生产镜像和本机调试环境都安装以下工具：
-
-Linux 一键安装：
-
-```bash
-bash scripts/install-linux.sh
-```
-
-Windows PowerShell 一键安装：
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass -Force
-.\scripts\install-windows.ps1
-```
-
-两个脚本会安装项目 npm/Python 依赖、创建 `.venv`、准备 `config.json`、安装/验证静态工具链，并同步开源静态规则集。Linux 脚本默认使用用户目录 `$HOME/.jolt-tools`、`$HOME/.local/bin`、`$HOME/.npm-global/bin`；Windows 脚本默认使用 `%USERPROFILE%\.jolt-tools\bin`，并写入用户级 `PATH`。如果刚装完后仍提示命令不存在，请重新打开终端后再执行验证。
-
-只验证当前机器工具状态，不执行安装：
-
-```bash
-bash scripts/install-linux.sh --verify-only
-```
-
-```powershell
-.\scripts\install-windows.ps1 -VerifyOnly
-```
-
-受限服务器或内网镜像环境可以跳过部分步骤：
-
-```bash
-bash scripts/install-linux.sh --skip-system-packages --skip-project-deps
-```
-
-```powershell
-.\scripts\install-windows.ps1 -SkipWinget -SkipProjectDeps -SkipStaticRules
-```
-
-常用参数：
-
-- Linux: `--tool-home DIR`、`--skip-system-packages`、`--skip-project-deps`、`--skip-static-tools`、`--verify-only`。
-- Windows: `-ToolHome DIR`、`-SkipWinget`、`-SkipProjectDeps`、`-SkipStaticTools`、`-SkipStaticRules`、`-VerifyOnly`。
-- Windows 离线/内网常用：`-SkipStaticTools -SkipStaticRules`。跳过后仍可启动平台，但对应静态工具会在设置页显示为 missing。
-- 版本覆盖：`GITLEAKS_VERSION`、`PMD_VERSION`、`CHECKSTYLE_VERSION`、`SPOTBUGS_VERSION`、`DEPENDENCY_CHECK_VERSION`、`OSV_SCANNER_VERSION`、`TRIVY_VERSION`、`KICS_VERSION`。
-
-| 工具 | 用途 | macOS / Linux 安装 | Windows 安装 |
-| --- | --- | --- | --- |
-| Tree-sitter | 变更文件 AST 解析、类/方法/调用关系代码图谱 | `.venv/bin/python -m pip install -r requirements.txt` | `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` |
-| Semgrep | Java/Spring 安全与通用 SAST | `pipx install semgrep` 或 `brew install semgrep` | `py -3 -m pip install semgrep` 或 `pipx install semgrep` |
-| Gitleaks | 密钥泄露扫描 | `brew install gitleaks` | `winget install Gitleaks.Gitleaks` |
-| Ruff | Python 代码扫描 | `brew install ruff` 或 `python -m pip install ruff` | `py -3 -m pip install ruff` |
-| Bandit | Python 安全扫描 | `brew install bandit` 或 `python -m pip install bandit` | `py -3 -m pip install bandit` |
-| ESLint | JS/TS/前端扫描 | `npm install -g eslint` | `npm install -g eslint` |
-| PMD | Java 规范、复杂度、安全规则 | `brew install pmd` | 下载 PMD release，解压后把 `bin` 加入 `PATH` |
-| Checkstyle | Java 风格与基础规范 | `brew install checkstyle` | 下载 Checkstyle jar，配置 `checkstyle.cmd` 或把包装脚本加入 `PATH` |
-| SpotBugs | Java 字节码缺陷扫描 | `brew install spotbugs` | 下载 SpotBugs release，解压后把 `bin` 加入 `PATH` |
-| OWASP Dependency-Check | 依赖 CVE 扫描 | `brew install dependency-check` | 下载 Dependency-Check CLI，解压后把 `bin` 加入 `PATH` |
-| OSV Scanner | OSV 依赖漏洞扫描 | `brew install osv-scanner` | `winget install Google.OSV-Scanner` 或下载 release |
-| Trivy | 依赖、容器、IaC、Secret 扫描 | `brew install trivy` | `winget install AquaSecurity.Trivy` |
-| KICS | Kubernetes / Docker / Terraform 配置风险 | `brew install kics` | 下载 KICS release，解压后把可执行文件加入 `PATH` |
-| OpenAPI Diff | OpenAPI 破坏性变更检测 | `npm install -g openapi-diff` | `npm install -g openapi-diff` |
-
-macOS 快速安装：
-
-```bash
-brew install semgrep gitleaks ruff bandit pmd checkstyle spotbugs dependency-check osv-scanner trivy kics
-npm install -g eslint openapi-diff
-```
-
-Windows PowerShell 快速安装：
-
-```powershell
-py -3 -m pip install semgrep ruff bandit
-npm install -g eslint openapi-diff
-winget install Gitleaks.Gitleaks
-winget install Google.OSV-Scanner
-winget install AquaSecurity.Trivy
-```
-
-Windows 下 PMD、Checkstyle、SpotBugs、Dependency-Check、KICS 建议从官方 release 下载 zip，解压到固定目录，例如 `C:\Tools\pmd`、`C:\Tools\spotbugs`，然后把对应 `bin` 或包装脚本目录加入系统 `PATH`。修改 `PATH` 后需要重新打开终端，并重启 API 服务，设置页的工具状态卡才会刷新。
-
-安装后验证：
-
-```bash
-semgrep --version
-gitleaks version
-ruff --version
-bandit --version
-eslint --version
-pmd --version
-checkstyle --version
-spotbugs -version
-dependency-check --version
-osv-scanner --version
-trivy --version
-kics version
-openapi-diff --version
-python3 scripts/verify_java_tool_runners.py
-npm run verify:static-tools
-```
-
-Windows PowerShell：
-
-```powershell
-semgrep --version
-gitleaks version
-ruff --version
-bandit --version
-eslint --version
-pmd --version
-checkstyle --version
-spotbugs -version
-dependency-check --version
-osv-scanner --version
-trivy --version
-kics version
-openapi-diff --version
-py -3 scripts\verify_java_tool_runners.py
-npm run verify:static-tools
-```
-
-启动 API 后，也可以直接访问：
-
-```bash
-curl -sS http://127.0.0.1:8011/api/projects/project_default/static-tools/availability
-```
-
-前端 `系统设置` 页面会显示“静态工具可用性”卡片，按 SAST、Java、Dependency、IaC/API 等分类展示工具路径、版本、状态和安装提示。后端探测兼容 Windows `PATHEXT`，可以识别 `.exe`、`.cmd`、`.bat` 等命令。
-
-Tree-sitter 需要本地文件内容，但不强制要求配置完整本地仓库：
-
-- 已配置项目级 `tool_policy.analysis_worktree_path` 时，Tree-sitter 会从该完整工作区读取 MR 相关文件和同目录上下文。
-- 未配置完整工作区但仓库配置了 `git_url` 时，系统会先在 `data/repo-cache/<repo>` 维护 Git 对象缓存，再把 MR 的 `head_sha` 自动展开到 `data/repo-worktrees/<repo>/<head_sha>`，Tree-sitter、PMD、Semgrep 等静态工具优先读取这个真实源码工作区。
-- `repo-cache` 目录使用 `git clone --filter=blob:none --no-checkout`，因此通常只包含隐藏的 `.git`，Windows 资源管理器看起来可能是空目录；这是对象缓存，不是源码 checkout。源码 checkout 请查看 `data/repo-worktrees`。
-- 如果 Git 工作区准备失败，系统才会把 GitHub / CodeHub 拉到的 MR 变更文件内容物化到 `data/sandboxes/<run_id>/prescan/working-tree`，再构建轻量代码图谱。
-- 为避免 Windows 下完整仓库递归扫描卡住，Tree-sitter 默认只扫描 MR 相关路径及同目录上下文，并跳过 `.git`、`node_modules`、`target`、`build`、`dist`、`.venv` 等目录，同时限制文件数、文件大小和耗时。
-- 可在项目配置 `tool_policy.static_runners.tree_sitter_code_graph` 中调整 `max_files`、`max_file_bytes`、`timeout_seconds`、`ignore_dirs`。
-
-### 内置开源规则集
-
-Jolt CodeReview 会把业界开源规则集下载到 `config/static-rules/`，作为本项目的内置规则。执行：
-
-```bash
-npm run sync:static-rules
-npm run verify:static-rules
-```
-
-当前内置规则来源：
-
-- Semgrep community rules：`semgrep/java`、`semgrep/generic`、`semgrep/yaml`、`semgrep/secrets`。
-- PMD Java category rules：`bestpractices.xml`、`errorprone.xml`、`security.xml`、`performance.xml`。
-- Checkstyle：官方 `google_checks.xml`、`sun_checks.xml`。
-- Gitleaks：官方默认 `gitleaks.toml`，运行时通过 composite config 继承开源默认规则。
-- KICS：官方 `assets/queries` IaC 规则。
-
-项目可以在 `系统设置 -> 静态工具策略` 里追加团队规则：
-
-- Semgrep：填写追加 `--config` 路径或 registry config，保存到 `static_runners.semgrep.custom_config_paths`。
-- PMD：填写追加 ruleset，保存到 `static_runners.pmd.custom_rulesets`。
-- Gitleaks：填写扩展配置，保存到 `static_runners.gitleaks.extend_config_path`，运行时仍 `useDefault=true`。
-- Checkstyle：填写团队 Checkstyle XML，保存到 `static_runners.checkstyle.config_path`。
-- KICS：填写团队 queries 目录，保存到 `static_runners.kics.custom_queries_path`。
-
-项目级工具参数可以放在项目配置的 `tool_policy.static_runners` 中。常用配置：
-
-```json
-{
-  "tool_policy": {
-    "analysis_worktree_path": "/path/to/full/repo",
-    "static_runners": {
-      "dependency-check": {
-        "timeout_seconds": 180,
-        "data_directory": "data/cache/dependency-check",
-        "nvd_api_key_env": "NVD_API_KEY",
-        "nvd_api_delay_ms": 1000,
-        "nvd_api_results_per_page": 2000
-      },
-      "osv-scanner": {
-        "offline": false,
-        "allow_no_lockfiles": true
-      },
-      "spotbugs": {
-        "class_dirs": ["target/classes"]
-      },
-      "trivy": {
-        "cache_dir": "data/cache/trivy",
-        "scanners": ["vuln", "secret", "misconfig"]
-      },
-      "kics": {
-        "custom_queries_path": "config/team-rules/kics/queries"
-      },
-      "checkstyle": {
-        "config_path": "config/checkstyle.xml"
-      },
-      "semgrep": {
-        "custom_config_paths": ["config/team-rules/semgrep"]
-      },
-      "pmd": {
-        "custom_rulesets": ["config/team-rules/pmd/team-rules.xml"]
-      },
-      "gitleaks": {
-        "extend_config_path": "config/team-rules/gitleaks.toml"
-      }
-    }
-  }
-}
-```
-
-说明：
-
-- `analysis_worktree_path` 指向完整仓库时，PMD、Checkstyle、OSV、Trivy、KICS 等工具优先读取该完整上下文；未配置但仓库有 `git_url` 时会自动使用 `data/repo-worktrees` 中的 MR checkout；两者都不可用时才回退到 MR diff 物化目录。
-- SpotBugs 需要 `target/classes` 或 `build/classes`，因此建议在 CI 或后台队列中先执行项目构建。
-- SpotBugs 也可以通过 `tool_policy.static_runners.spotbugs.class_dirs` 指定 CI artifact 或完整仓库下的编译目录。
-- OpenAPI Diff 需要配置 `tool_policy.openapi_diff.base_spec_path`，否则会记录为 `skipped_requires_baseline_spec`。
-- OSV Scanner 使用 2.x 命令形态 `scan source --recursive --no-ignore --format json --output-file ...`；在内网或离线环境可以配置 `offline`、`offline_vulnerabilities`、`download_offline_databases`。
-- Dependency-Check 首次运行会下载/初始化漏洞库，生产环境建议预热缓存、配置 `NVD_API_KEY`，并把 timeout 调到 180 秒以上。
-
-## 本机配置
-
-仓库包含一个可直接本机调试的 `config.json`。Windows 启动脚本会自动设置：
-
-```powershell
-$env:CONFIG_PATH="<repo>\config.json"
-$env:PYTHON_BIN="<repo>\.venv\Scripts\python.exe"
-```
-
-如果你需要重置配置，可以从示例文件恢复：
-
-```powershell
-Copy-Item config.example.json config.json -Force
-```
-
-macOS / Linux：
+复制配置模板：
 
 ```bash
 cp config.example.json config.json
 ```
 
-`config.json` 里的 LLM 配置示例：
-
-```json
-{
-  "llm": {
-    "default_provider": "dashscope-openai-compatible",
-    "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-    "default_model": "MiniMax-M2.7",
-    "default_api_key_env": null,
-    "default_api_key": "<LOCAL_ONLY_API_KEY>"
-  }
-}
-```
-
-生产或团队共享环境建议改用 `default_api_key_env` 或 secret store，避免在团队仓库中长期保存明文 key。
-
-### PostgreSQL 存储
-
-系统只支持 PostgreSQL。可以在 root 用户的「系统设置 -> 数据库存储」中测试 PG、初始化表结构、保存配置；保存动作会同步写入 `config.json`，重启 API 和 Worker 后生效。也可以直接编辑：
+至少需要配置 PostgreSQL：
 
 ```json
 {
   "server": {
-    "postgres_url": "postgresql://pg-host:5432/jolt_codereview",
-    "postgres_user": "jolt",
-    "postgres_password": "<PASSWORD>",
+    "host": "127.0.0.1",
+    "common_port": 8010,
+    "mr_port": 8011,
+    "database_driver": "postgres",
+    "postgres_url": "postgresql://USER:PASSWORD@127.0.0.1:5432/jolt_codereview",
     "postgres_query_timeout_seconds": 120
   }
 }
 ```
 
-PG 模式下 Node API 和 Python Worker 都会走同一套 PG 运行时适配层，覆盖项目、用户、仓库、MR 队列、检视任务、工具结果、LLM 记录、finding 和 token 上报等主链路表。Python 依赖需要包含 `psycopg[binary]>=3.2.0`，一键安装脚本会从 `requirements.txt` 安装。
-
-### 检视预算与熔断
-
-单次模型请求超时配置在 `llm.request_timeout_seconds`，整个 MR 检视流程的熔断预算配置在 `budget_policy`。也可以在前端「系统设置 -> 检视预算与熔断」中按项目维护，项目级配置会覆盖 `config.json`。
-
-```json
-{
-  "budget_policy": {
-    "efforts": {
-      "standard": {
-        "max_llm_calls": 80,
-        "max_wall_seconds": 1800,
-        "max_output_tokens": 16000,
-        "max_findings": 80
-      },
-      "deep": {
-        "max_llm_calls": 120,
-        "max_wall_seconds": 2400,
-        "max_output_tokens": 24000,
-        "max_findings": 120
-      }
-    }
-  }
-}
-```
-
-熔断原因会记录到 `review_runs.budget_used_json.truncated_reason`，常见值包括 `llm_calls_exceeded`、`wall_seconds_exceeded`。触发后当前任务会降级跳过后续模型步骤，保留已完成的静态工具和专家结果。
-
-### Token 用量上报占位
-
-每个 MR 检视任务结束后，Worker 会汇总本次 `review_run` 的 LLM 调用记录，并写入 `token_usage_reports` 表。内网 token 服务 API 当前预留为占位配置，默认关闭，不会发起外部请求：
-
-```json
-{
-  "token_usage": {
-    "enabled": false,
-    "endpoint": "",
-    "method": "POST",
-    "timeout_seconds": 10,
-    "auth_header": "Authorization",
-    "auth_token_env": "JOLT_TOKEN_USAGE_API_TOKEN",
-    "employee_no_env": "JOLT_REPORTER_EMPLOYEE_NO",
-    "default_employee_no": "system",
-    "service_name": "jolt-codereview"
-  }
-}
-```
-
-启用后，任务完成时会向 `endpoint` 上报：项目、代码仓、MR、review_run、上报人工号、北京时间 `reported_at`、输入 token、输出 token、总 token、LLM 调用次数和按模型拆分的用量。上报失败只记录日志和 `token_usage_reports.status=failed`，不会把检视任务改成失败。
-
-## 启动
-
-Windows 推荐：
-
-```powershell
-.\scripts\start-windows.ps1
-```
-
-或：
-
-```powershell
-npm run start:windows
-```
-
-跨平台通用：
+如果配置文件不在项目根目录，所有服务都可以使用 `CONFIG_PATH`：
 
 ```bash
-npm run dev
+export CONFIG_PATH=/absolute/path/to/config.json
 ```
 
-三项目拆分后的独立启动：
+## 本仓联调启动
+
+安装依赖：
 
 ```bash
-cd apps/common-backend && npm run dev
-cd apps/mr-backend && npm run dev
-cd apps/frontend && npm run dev
-```
-
-启动后：
-
-- Common Backend: `http://127.0.0.1:8010`
-- MR Backend: `http://127.0.0.1:8011`
-- Frontend: `http://127.0.0.1:5173`
-
-前端通过 `VITE_COMMON_API_BASE` 和 `VITE_MR_API_BASE` 分别访问两个后端；未配置时会回退到旧的 `VITE_API_BASE`。
-
-导出为三个独立本地代码仓：
-
-```bash
-npm run export:repos
-```
-
-导出目录：
-
-- `split-repos/common-backend`
-- `split-repos/mr-backend`
-- `split-repos/frontend`
-
-每个导出目录都会初始化自己的 `.git`，并带独立 `package.json`、README 和启动脚本。MR Backend 导出仓还包含 `requirements.txt`，首次独立运行 worker 前需要执行：
-
-```bash
-cd split-repos/mr-backend
+npm install
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-`npm run dev` 由 Node 脚本启动，不依赖 bash，可在 Windows 下运行。启动前会检查 `pg`、`@types/pg` 和 `psycopg` 等运行时依赖；如需自动补齐缺失包，可设置 `JOLT_INSTALL_MISSING_DEPS=1 npm run dev`。Windows 专用脚本会在启动前补齐 `CONFIG_PATH` 和 `PYTHON_BIN`。
-Python Worker 会优先使用 `PYTHON_BIN`、`config.json` 中的 `runtime.python_bin`，其次自动使用项目内 `.venv`。
-
-启动后会同时拉起：
-
-- Common Backend
-- MR Backend
-- Python Review Worker loop
-- Frontend Vite dev server
-- Poller：默认集成在 MR Backend 自动同步调度器中；也可设置 `JOLT_START_EXTERNAL_POLLER=1` 启动外部 Poller。
-
-## GitHub 数据源调试
-
-默认调试仓库是 `microsoft/vscode`：
+启动 Common Backend：
 
 ```bash
-npm run seed:github
+CONFIG_PATH=./config.json \
+JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
+npm run dev:common
 ```
 
-指定仓库：
+启动 MR Backend：
 
 ```bash
-GITHUB_REPO=owner/repo npm run seed:github
+CONFIG_PATH=./config.json \
+JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
+PYTHON_BIN=.venv/bin/python \
+npm run dev:mr
 ```
 
-Windows PowerShell：
+启动 Worker：
 
-```powershell
-$env:GITHUB_REPO="owner/repo"
-npm run seed:github
+```bash
+CONFIG_PATH=./config.json \
+JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
+PYTHON_BIN=.venv/bin/python \
+npm run worker
 ```
 
-## CodeHub 数据源配置
+启动 Frontend：
 
-CodeHub 仓库可以通过 API 或前端绑定，核心是提供 `provider_config`：
-
-```json
-{
-  "provider": "codehub",
-  "external_repo_id": "trade-platform/payment-service",
-  "name": "payment-service",
-  "provider_config": {
-    "endpoint": "https://codehub.internal.example.com",
-    "project_key": "trade-platform",
-    "repo_id": "trade-platform/payment-service",
-    "token_env": "CODEHUB_TOKEN",
-    "list_mrs_path": "/api/v1/repos/{repo_id}/merge-requests?state=open&per_page=50",
-    "files_path_template": "/api/v1/repos/{repo_id}/merge-requests/{mr_number}/files",
-    "comment_path_template": "/api/v1/repos/{repo_id}/merge-requests/{mr_number}/comments"
-  }
-}
+```bash
+VITE_COMMON_API_BASE=http://127.0.0.1:8010 \
+VITE_MR_API_BASE=http://127.0.0.1:8011 \
+VITE_API_BASE=http://127.0.0.1:8011 \
+npm run dev:web
 ```
 
-不同公司内网 CodeHub 的 REST 路径可能不同，因此 provider 层使用 path template 适配；前端和 MR Review 业务层只看统一的 `merge_request` 数据。
+访问：
+
+- Frontend: `http://127.0.0.1:5173`
+- Common health: `http://127.0.0.1:8010/api/health`
+- MR health: `http://127.0.0.1:8011/api/health`
+
+默认本机 root 账号：
+
+- 用户名：`local-admin`
+- 密码：`admin123`
+
+生产环境必须先改初始化密码和密码策略。
+
+## 导出三个独立仓库
+
+```bash
+node scripts/export-three-repos.mjs --force --out=split-repos
+```
+
+输出：
+
+```text
+split-repos/common-backend
+split-repos/mr-backend
+split-repos/frontend
+```
+
+每个导出的仓库都有自己的 `package.json` 和 `README.md`，可以独立安装、构建和启动。
 
 ## 验证
 
-Windows PowerShell：
-
-```powershell
-npm run build
-npm run verify:windows
-npm run smoke
-npm run worker:once
-npm run verify:local
-npm run verify:llm
-```
-
-跨平台通用：
+构建全部 TypeScript：
 
 ```bash
 npm run build
-npm run smoke
-npm run worker:once
-npm run verify:local
-npm run verify:llm
-npm run verify:e2e
-npm run verify:codehub
 ```
 
-`smoke` 会检查 API health、用户、项目和 MR 列表。`worker:once` 会消费一个 queued review job。`verify:local` 会检查项目成员、规则库、Agent 配置、review policy、MR 队列、session logs、agent messages、tool calls、LLM calls 和 artifacts。`verify:llm` 会真实调用 MiniMax-M2.7，并只打印脱敏 key。`verify:e2e` 会创建一个 GitHub provider 的本机 fixture MR，跑完整 review job，验证 finding、dry-run 发布记录和误报反馈闭环。
-`verify:e2e`、`verify:codehub` 和 `verify:local` 还会校验 LangGraph 编排、DeepAgents 受控专家节点、静态工具 manifest 与过程记录。`verify:codehub` 会发送一个 CodeHub webhook fixture，验证 CodeHub MR 入队、worker 检视和静态工具记录。
+验证前端 API 分流规则：
 
-## Windows 常见问题
+```bash
+npm run verify:frontend-api-routing
+```
 
-- PowerShell 提示脚本不可执行：先执行 `Set-ExecutionPolicy -Scope Process Bypass -Force`，只影响当前终端窗口。
-- PostgreSQL 连接失败：确认 `server.postgres_url`、用户名、密码和网络访问正确，并先在系统设置中执行连接测试。
-- `Cannot find package 'pg'` 或 Python 报 `No module named psycopg`：依赖目录存在但包不完整。执行 `npm install` 和 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`；也可以直接运行 `.\scripts\start-windows.ps1 -InstallIfMissing`。
-- `Python 3 was not found`：安装 Python 3.10+，或设置 `$env:PYTHON_BIN="C:\Path\To\python.exe"`。
-- Python 报 `UnicodeEncodeError` / `UnicodeDecodeError` / `gbk codec can't encode/decode`：优先使用 `.\scripts\start-windows.ps1` 或 `npm run start:windows`。脚本会设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8` 并切换控制台到 UTF-8；如果你直接运行 Python，也先执行 `$env:PYTHONUTF8="1"; $env:PYTHONIOENCODING="utf-8"; chcp 65001`。
-- 安装后 `pmd`、`checkstyle`、`spotbugs`、`dependency-check` 等命令仍不可用：重新打开 PowerShell，让用户级 `PATH` 生效，然后执行 `npm run verify:windows`。
-- `npm run dev` 能启动但 Worker 不运行：优先使用 `.\scripts\start-windows.ps1`，它会设置 `CONFIG_PATH` 和 `PYTHON_BIN`。
-- 端口被占用：`npm run dev` / `.\scripts\start-windows.ps1` 会在启动前自动终止占用 API 端口和前端 `5173` 的旧进程；API 端口可通过 `config.json` 的 `server.port` 修改。
-- Dependency-Check 首次运行很慢：它会初始化漏洞库。生产环境建议预热缓存，并配置 `NVD_API_KEY`。
-- 内网不能下载 GitHub release：执行 `.\scripts\install-windows.ps1 -SkipStaticTools -SkipStaticRules` 先启动平台，再由管理员离线安装工具到 `%USERPROFILE%\.jolt-tools\bin` 或系统 `PATH`。
+验证 PostgreSQL SQL 兼容层：
 
-## 发布评论
+```bash
+npm run verify:pg-sql-compat
+```
 
-前端 MR 详情页可以选择 finding 并点击：
+完整三服务 + 本机 PostgreSQL 回归：
 
-- `Dry-run`：只写入 `vcs_publish_records`，不调用 GitHub。
-- `提交选中意见`：调用 GitHub issue comments API，需要 `GITHUB_TOKEN`。
+```bash
+npm run verify:split-full-regression
+```
 
-AI 不会自动发布评论，必须由用户确认。
+该回归会临时启动 PostgreSQL、导出三仓、构建并启动 `common-backend`、`mr-backend`、`frontend`，创建项目和 MR fixture，运行 worker，并通过 API 验证 review run、findings、日志、trace 和 artifacts。
+
+## API 接入总览
+
+所有面向用户的 API 使用 Bearer Token。先登录：
+
+```bash
+curl -sS http://127.0.0.1:8010/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"local-admin","password":"admin123"}'
+```
+
+响应中会返回 `token`。后续请求：
+
+```bash
+curl -sS http://127.0.0.1:8011/api/projects \
+  -H "Authorization: Bearer $JOLT_TOKEN"
+```
+
+内部 API 使用 `x-internal-service-token`，只给服务间调用或 Worker 使用：
+
+```bash
+curl -sS 'http://127.0.0.1:8010/internal/models/effective-config?project_id=project_default' \
+  -H "x-internal-service-token: $JOLT_INTERNAL_SERVICE_TOKEN"
+```
+
+## Common Backend API 功能
+
+Common Backend 默认端口 `8010`，只承载公共平台能力。
+
+| 功能 | 主要 API |
+| --- | --- |
+| 健康检查 | `GET /api/health` |
+| 登录注册与会话 | `POST /api/auth/login`、`POST /api/auth/register`、`GET /api/auth/session`、`POST /api/auth/logout`、`POST /api/auth/change-password` |
+| 当前用户 | `GET /api/me`、`PATCH /api/me/profile`、`GET /api/me/settings`、`PATCH /api/me/settings/:key` |
+| 权限 | `GET /api/permissions/roles`、`GET /api/permissions/me`、`GET /api/permissions/projects/:projectId/members`、`PATCH /api/permissions/projects/:projectId/members/:memberId` |
+| 模型配置 | `GET /api/models/effective-config`、`PATCH /api/models/projects/:projectId` |
+| 系统存储 | `GET /api/system/storage`、`POST /api/system/storage/test`、`POST /api/system/storage/init-postgres`、`POST /api/system/storage/switch` |
+| 内部鉴权 | `GET /internal/auth/introspect` |
+| 内部模型配置 | `GET /internal/models/effective-config` |
+
+详细说明见 [apps/common-backend/README.md](apps/common-backend/README.md)。
+
+## MR Backend API 功能
+
+MR Backend 默认端口 `8011`，承载项目和检视业务能力。
+
+| 功能 | 主要 API |
+| --- | --- |
+| 健康检查 | `GET /api/health` |
+| 项目与成员 | `GET/POST /api/projects`、`GET/PATCH /api/projects/:projectId`、`GET/POST /api/projects/:projectId/members`、`PATCH/DELETE /api/projects/:projectId/members/:memberId` |
+| 项目配置 | `GET /api/projects/:projectId/settings`、`GET /api/projects/:projectId/effective-config`、`PATCH /api/projects/:projectId/settings/:key`、`POST /api/projects/:projectId/settings/llm/test` |
+| 仓库 | `GET/POST /api/projects/:projectId/repositories`、`DELETE /api/projects/:projectId/repositories/:repositoryId` |
+| 规则与 Skill | `/api/projects/:projectId/rule-sets`、`/rule-documents`、`/rule-details`、`/expert-rule-bindings`、`/custom-skills`、`/custom-skill-assets`、`/expert-skill-bindings`、`/review-policy` |
+| 专家 Agent | `GET /api/projects/:projectId/agents`、`GET/POST /api/projects/:projectId/expert-profiles`、`PATCH /api/projects/:projectId/expert-profiles/:agentKey`、`GET/POST /api/projects/:projectId/expert-tool-bindings` |
+| MR 队列 | `GET /api/mr-review/projects/:projectId/merge-requests`、`POST /api/mr-review/projects/:projectId/sync`、`POST /api/mr-review/projects/:projectId/merge-requests/status-refresh`、`GET /api/mr-review/projects/:projectId/dead-letters` |
+| MR 详情与评审 | `GET /api/mr-review/merge-requests/:mrId`、`GET /api/mr-review/merge-requests/:mrId/logs`、`POST /api/mr-review/merge-requests/:mrId/review-jobs`、`POST /api/mr-review/merge-requests/:mrId/pause`、`POST /api/mr-review/merge-requests/:mrId/stop`、`POST /api/mr-review/review-jobs/:jobId/retry` |
+| Review Run | `GET /api/mr-review/review-runs/:runId`、`GET /api/mr-review/review-runs/:runId/trace`、`GET /api/mr-review/review-runs/:runId/session-logs`、`GET /api/mr-review/review-runs/:runId/artifacts` |
+| Finding 操作 | `PATCH /api/mr-review/review-findings/:findingId`、`POST /api/mr-review/review-findings/:findingId/feedback`、`POST /api/mr-review/merge-requests/:mrId/publish` |
+| Full Review | `/api/full-review/projects/:projectId/jobs`、`/api/full-review/jobs/:jobId`、`/api/full-review/jobs/:jobId/trace`、`/api/full-review/jobs/:jobId/session-logs`、`/api/full-review/repositories/:repositoryId/snapshots`、`/api/full-review/snapshots/:snapshotId/findings` |
+| VCS 代理 | `GET /api/vcs/:projectId/capabilities`、`GET /api/vcs/:projectId/merge-requests/:mrId/diff`、`/files`、`/file`、`POST /comment`、`POST /status` |
+| Webhook | `POST /api/webhooks/github/:projectId`、`POST /api/webhooks/codehub/:projectId`、`POST /api/webhooks/:provider/:projectId` |
+| 观测与质量 | `GET /api/projects/:projectId/queue/summary`、`/toolchain/status`、`/static-tools/availability`、`/agents/quality`、`/review-quality/summary`、`/evaluation-reports`、`/rule-health`、`GET /api/observability/review-quality` |
+
+详细说明见 [apps/mr-backend/README.md](apps/mr-backend/README.md)。
+
+## Frontend 接入方式
+
+Frontend 默认端口 `5173`。需要配置两个 API base：
+
+```bash
+VITE_COMMON_API_BASE=http://127.0.0.1:8010
+VITE_MR_API_BASE=http://127.0.0.1:8011
+VITE_API_BASE=http://127.0.0.1:8011
+```
+
+`VITE_API_BASE` 是旧单后端兼容项。新部署应显式配置 `VITE_COMMON_API_BASE` 和 `VITE_MR_API_BASE`。
+
+详细说明见 [apps/frontend/README.md](apps/frontend/README.md)。

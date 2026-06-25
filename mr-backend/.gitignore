@@ -1,0 +1,9 @@
+node_modules/
+build/
+data/
+logs/
+output/
+.venv/
+.env
+.env.*
+!.env.example

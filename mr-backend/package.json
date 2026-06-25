@@ -1,0 +1,28 @@
+{
+  "name": "@jolt/mr-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Jolt MR review backend for repositories, merge requests, review jobs, quality, webhooks, and worker orchestration.",
+  "scripts": {
+    "build": "tsc -p tsconfig.backend.json",
+    "dev": "npm run build && node build/backend/mr-server.js",
+    "start": "node build/backend/mr-server.js",
+    "verify": "npm run build",
+    "worker": "node scripts/run-python.mjs worker/review_worker.py --loop",
+    "worker:once": "node scripts/run-python.mjs worker/review_worker.py --once"
+  },
+  "dependencies": {
+    "@types/pg": "^8.20.0",
+    "@vitejs/plugin-react": "^5.1.1",
+    "lucide-react": "^0.555.0",
+    "pg": "^8.21.0",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "vite": "^7.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3"
+  }
+}

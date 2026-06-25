@@ -3,7 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const root = path.resolve(import.meta.dirname, "..");
-const sourcePath = path.join(root, "src", "frontend", "apiRouting.ts");
+const sourcePath = path.join(root, "frontend", "src", "frontend", "apiRouting.ts");
 const source = readFileSync(sourcePath, "utf8");
 const compiled = source
   .replace(/\bexport\s+type\s+[A-Za-z0-9_]+\s*=\s*\{[\s\S]*?\};/g, "")

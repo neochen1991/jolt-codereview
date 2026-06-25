@@ -1,6 +1,6 @@
 # Jolt CodeReview 三服务运行与接入指南
 
-Jolt CodeReview 已拆分为三个可独立启动、可独立导出的服务：
+Jolt CodeReview 已拆分为当前仓库根目录下的三个模块：
 
 - `common-backend`: 公共平台后端，负责登录、用户、权限、系统设置和模型配置。
 - `mr-backend`: MR 检视后端，负责项目、仓库、MR 队列、评审任务、规则、专家 Agent、质量观测、Webhook、VCS 代理和 Python Worker。
@@ -31,7 +31,7 @@ MR Backend (default 127.0.0.1:8011) <---- Python Review Worker
 Browser
 ```
 
-前端不会把所有请求都打到同一个后端。路由规则在 [src/frontend/apiRouting.ts](src/frontend/apiRouting.ts)：
+前端不会把所有请求都打到同一个后端。路由规则在 [frontend/src/frontend/apiRouting.ts](frontend/src/frontend/apiRouting.ts)：
 
 - Common API: `/api/auth/*`、`/api/me/*`、`/api/users/*`、`/api/permissions/*`、`/api/models/*`、`/api/system/*`、`/internal/auth/*`、`/internal/models/*`
 - MR API: 其它业务 API，主要是 `/api/projects/*`、`/api/mr-review/*`、`/api/full-review/*`、`/api/vcs/*`、`/api/webhooks/*`
@@ -39,13 +39,10 @@ Browser
 ## 目录说明
 
 ```text
-apps/common-backend/README.md   Common Backend 独立说明
-apps/mr-backend/README.md       MR Backend 和 Worker 独立说明
-apps/frontend/README.md         Frontend 独立说明
-src/backend/                    两个后端共用的 TypeScript 源码
-src/frontend/                   前端源码
-worker/                         Python review worker
-scripts/export-three-repos.mjs  导出三个独立仓库
+common-backend/                 Common Backend 模块
+mr-backend/                     MR Backend + Python Worker 模块
+frontend/                       React/Vite Frontend 模块
+scripts/export-three-repos.mjs  同步根目录三模块；传 --out 可生成临时校验副本
 ```
 
 ## 环境要求
@@ -88,40 +85,42 @@ cp config.example.json config.json
 export CONFIG_PATH=/absolute/path/to/config.json
 ```
 
-## 本仓联调启动
+## 本仓三模块联调启动
 
-安装依赖：
+三个模块各自有独立 `package.json`。首次运行先分别安装依赖：
 
 ```bash
-npm install
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+npm --prefix common-backend install
+npm --prefix mr-backend install
+npm --prefix frontend install
+python3 -m venv mr-backend/.venv
+mr-backend/.venv/bin/pip install -r mr-backend/requirements.txt
 ```
 
 启动 Common Backend：
 
 ```bash
-CONFIG_PATH=./config.json \
+CONFIG_PATH=$PWD/config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
-npm run dev:common
+npm --prefix common-backend run dev
 ```
 
 启动 MR Backend：
 
 ```bash
-CONFIG_PATH=./config.json \
+CONFIG_PATH=$PWD/config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
-PYTHON_BIN=.venv/bin/python \
-npm run dev:mr
+PYTHON_BIN=$PWD/mr-backend/.venv/bin/python \
+npm --prefix mr-backend run dev
 ```
 
 启动 Worker：
 
 ```bash
-CONFIG_PATH=./config.json \
+CONFIG_PATH=$PWD/config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
-PYTHON_BIN=.venv/bin/python \
-npm run worker
+PYTHON_BIN=$PWD/mr-backend/.venv/bin/python \
+npm --prefix mr-backend run worker
 ```
 
 启动 Frontend：
@@ -130,7 +129,7 @@ npm run worker
 VITE_COMMON_API_BASE=http://127.0.0.1:8010 \
 VITE_MR_API_BASE=http://127.0.0.1:8011 \
 VITE_API_BASE=http://127.0.0.1:8011 \
-npm run dev:web
+npm --prefix frontend run dev
 ```
 
 访问：
@@ -146,21 +145,25 @@ npm run dev:web
 
 生产环境必须先改初始化密码和密码策略。
 
-## 导出三个独立仓库
+## 同步根目录三模块
 
 ```bash
-node scripts/export-three-repos.mjs --force --out=split-repos
+npm run sync:modules
 ```
 
-输出：
+该命令会更新当前仓库根目录下的：
 
 ```text
-split-repos/common-backend
-split-repos/mr-backend
-split-repos/frontend
+common-backend/
+mr-backend/
+frontend/
 ```
 
-每个导出的仓库都有自己的 `package.json` 和 `README.md`，可以独立安装、构建和启动。
+如果只想生成一份临时校验副本，不改动根目录模块，可以显式传 `--out`：
+
+```bash
+node scripts/export-three-repos.mjs --force --out=/private/tmp/jolt-three-service-export
+```
 
 ## 验证
 
@@ -188,7 +191,7 @@ npm run verify:pg-sql-compat
 npm run verify:split-full-regression
 ```
 
-该回归会临时启动 PostgreSQL、导出三仓、构建并启动 `common-backend`、`mr-backend`、`frontend`，创建项目和 MR fixture，运行 worker，并通过 API 验证 review run、findings、日志、trace 和 artifacts。
+该回归会临时启动 PostgreSQL、生成三模块校验副本、构建并启动 `common-backend`、`mr-backend`、`frontend`，创建项目和 MR fixture，运行 worker，并通过 API 验证 review run、findings、日志、trace 和 artifacts。
 
 ## API 接入总览
 
@@ -229,7 +232,7 @@ Common Backend 默认端口 `8010`，只承载公共平台能力。
 | 内部鉴权 | `GET /internal/auth/introspect` |
 | 内部模型配置 | `GET /internal/models/effective-config` |
 
-详细说明见 [apps/common-backend/README.md](apps/common-backend/README.md)。
+详细说明见 [common-backend/README.md](common-backend/README.md)。
 
 ## MR Backend API 功能
 
@@ -252,7 +255,7 @@ MR Backend 默认端口 `8011`，承载项目和检视业务能力。
 | Webhook | `POST /api/webhooks/github/:projectId`、`POST /api/webhooks/codehub/:projectId`、`POST /api/webhooks/:provider/:projectId` |
 | 观测与质量 | `GET /api/projects/:projectId/queue/summary`、`/toolchain/status`、`/static-tools/availability`、`/agents/quality`、`/review-quality/summary`、`/evaluation-reports`、`/rule-health`、`GET /api/observability/review-quality` |
 
-详细说明见 [apps/mr-backend/README.md](apps/mr-backend/README.md)。
+详细说明见 [mr-backend/README.md](mr-backend/README.md)。
 
 ## Frontend 接入方式
 
@@ -266,4 +269,4 @@ VITE_API_BASE=http://127.0.0.1:8011
 
 `VITE_API_BASE` 是旧单后端兼容项。新部署应显式配置 `VITE_COMMON_API_BASE` 和 `VITE_MR_API_BASE`。
 
-详细说明见 [apps/frontend/README.md](apps/frontend/README.md)。
+详细说明见 [frontend/README.md](frontend/README.md)。

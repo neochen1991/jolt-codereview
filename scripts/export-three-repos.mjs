@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,11 +6,10 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = new Set(process.argv.slice(2));
 const outputArg = process.argv.find((arg) => arg.startsWith("--out="));
-const outputRoot = path.resolve(root, outputArg ? outputArg.slice("--out=".length) : "split-repos");
+const outputRoot = outputArg ? path.resolve(root, outputArg.slice("--out=".length)) : root;
 const force = args.has("--force");
 const initGit = args.has("--init-git");
-
-const rootPkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+const moduleNames = ["common-backend", "mr-backend", "frontend"];
 
 function cleanDir(dir) {
   if (existsSync(dir)) {
@@ -22,168 +21,46 @@ function cleanDir(dir) {
   mkdirSync(dir, { recursive: true });
 }
 
-function copyIfExists(from, to) {
-  const source = path.join(root, from);
-  if (!existsSync(source)) return;
-  const target = path.join(to, from);
-  mkdirSync(path.dirname(target), { recursive: true });
-  cpSync(source, target, {
-    recursive: true,
-    filter: (item) => {
-      const relative = path.relative(root, item);
-      return ![
-        "node_modules",
-        "build",
-        "dist",
-        "data",
-        "logs",
-        "output",
-        "split-repos",
-        ".git"
-      ].some((blocked) => relative === blocked || relative.startsWith(`${blocked}${path.sep}`));
-    }
-  });
+function shouldCopy(item) {
+  const basename = path.basename(item);
+  if (basename === ".DS_Store") return false;
+  const relative = path.relative(root, item);
+  return ![
+    "node_modules",
+    "build",
+    "dist",
+    "data",
+    "logs",
+    "output",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".git"
+  ].some((blocked) => relative === blocked || relative.includes(`${path.sep}${blocked}${path.sep}`) || relative.endsWith(`${path.sep}${blocked}`));
 }
 
-function writeJson(file, value) {
-  writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-function writeText(file, value) {
-  writeFileSync(file, value, "utf8");
-}
-
-function copyServiceReadme(serviceName, dir) {
-  const source = path.join(root, "apps", serviceName, "README.md");
+function copyModule(moduleName) {
+  const source = path.join(root, moduleName);
+  const target = path.join(outputRoot, moduleName);
   if (!existsSync(source)) {
-    throw new Error(`Missing README template for ${serviceName}: ${source}`);
+    throw new Error(`Missing root module: ${source}`);
   }
-  cpSync(source, path.join(dir, "README.md"));
-}
-
-function backendTsconfig() {
-  return {
-    extends: "./tsconfig.json",
-    compilerOptions: {
-      noEmit: false,
-      outDir: "build",
-      rootDir: "src",
-      module: "NodeNext",
-      moduleResolution: "NodeNext",
-      lib: ["ES2022"],
-      jsx: "react-jsx"
-    },
-    include: ["src/backend/**/*.ts"]
-  };
-}
-
-function backendBasePackage(name, description, entrypoint, extraScripts = {}) {
-  return {
-    name,
-    version: rootPkg.version,
-    private: true,
-    type: "module",
-    description,
-    scripts: {
-      build: "tsc -p tsconfig.backend.json",
-      dev: `npm run build && node build/backend/${entrypoint}`,
-      start: `node build/backend/${entrypoint}`,
-      verify: "npm run build",
-      ...extraScripts
-    },
-    dependencies: rootPkg.dependencies,
-    devDependencies: {
-      "@types/node": rootPkg.devDependencies["@types/node"],
-      typescript: rootPkg.devDependencies.typescript
-    }
-  };
-}
-
-function frontendPackage() {
-  return {
-    name: "@jolt/frontend",
-    version: rootPkg.version,
-    private: true,
-    type: "module",
-    scripts: {
-      dev: "vite --host 127.0.0.1",
-      build: "tsc --noEmit && vite build",
-      start: "vite --host 127.0.0.1",
-      verify: "npm run build"
-    },
-    dependencies: {
-      "lucide-react": rootPkg.dependencies["lucide-react"],
-      react: rootPkg.dependencies.react,
-      "react-dom": rootPkg.dependencies["react-dom"],
-      vite: rootPkg.dependencies.vite
-    },
-    devDependencies: {
-      "@types/node": rootPkg.devDependencies["@types/node"],
-      "@types/react": rootPkg.devDependencies["@types/react"],
-      "@types/react-dom": rootPkg.devDependencies["@types/react-dom"],
-      typescript: rootPkg.devDependencies.typescript
-    }
-  };
-}
-
-function commonBackendRepo(dir) {
-  cleanDir(dir);
-  for (const item of ["src/backend", "config.example.json", "tsconfig.json"]) copyIfExists(item, dir);
-  writeJson(path.join(dir, "package.json"), backendBasePackage(
-    "@jolt/common-backend",
-    "Jolt public platform backend for users, permissions, system settings, and model management.",
-    "common-server.js"
-  ));
-  writeJson(path.join(dir, "tsconfig.backend.json"), backendTsconfig());
-  writeText(path.join(dir, ".gitignore"), "node_modules/\nbuild/\ndata/\nlogs/\n.env\n.env.*\n!.env.example\n");
-  copyServiceReadme("common-backend", dir);
-}
-
-function mrBackendRepo(dir) {
-  cleanDir(dir);
-  for (const item of ["src/backend", "worker", "config", "docs/nfr-and-slo.md", "config.example.json", "requirements.txt", "tsconfig.json", "scripts/run-python.mjs"]) {
-    copyIfExists(item, dir);
+  if (source === target) {
+    return target;
   }
-  writeJson(path.join(dir, "package.json"), backendBasePackage(
-    "@jolt/mr-backend",
-    "Jolt MR review backend for repositories, merge requests, review jobs, quality, webhooks, and worker orchestration.",
-    "mr-server.js",
-    {
-      worker: "node scripts/run-python.mjs worker/review_worker.py --loop",
-      "worker:once": "node scripts/run-python.mjs worker/review_worker.py --once"
-    }
-  ));
-  writeJson(path.join(dir, "tsconfig.backend.json"), backendTsconfig());
-  writeText(path.join(dir, ".gitignore"), "node_modules/\nbuild/\ndata/\nlogs/\noutput/\n.venv/\n.env\n.env.*\n!.env.example\n");
-  copyServiceReadme("mr-backend", dir);
+  cleanDir(target);
+  cpSync(source, target, { recursive: true, filter: shouldCopy });
+  return target;
 }
 
-function frontendRepo(dir) {
-  cleanDir(dir);
-  for (const item of ["src/frontend", "index.html", "tsconfig.json"]) copyIfExists(item, dir);
-  writeJson(path.join(dir, "package.json"), frontendPackage());
-  writeText(path.join(dir, ".gitignore"), "node_modules/\ndist/\n.env\n.env.*\n!.env.example\n");
-  writeText(path.join(dir, ".env.example"), [
-    "VITE_COMMON_API_BASE=http://127.0.0.1:8010",
-    "VITE_MR_API_BASE=http://127.0.0.1:8011",
-    "VITE_API_BASE=http://127.0.0.1:8011",
-    ""
-  ].join("\n"));
-  copyServiceReadme("frontend", dir);
+if (outputRoot !== root) {
+  cleanDir(outputRoot);
 }
 
-cleanDir(outputRoot);
-const repos = {
-  "common-backend": path.join(outputRoot, "common-backend"),
-  "mr-backend": path.join(outputRoot, "mr-backend"),
-  frontend: path.join(outputRoot, "frontend")
-};
+const repos = Object.fromEntries(moduleNames.map((moduleName) => [moduleName, copyModule(moduleName)]));
 
-commonBackendRepo(repos["common-backend"]);
-mrBackendRepo(repos["mr-backend"]);
-frontendRepo(repos.frontend);
-
-if (initGit) {
+if (initGit && outputRoot !== root) {
   for (const dir of Object.values(repos)) {
     const result = spawnSync("git", ["init"], { cwd: dir, encoding: "utf8", stdio: "pipe" });
     if (result.status !== 0) {
@@ -192,7 +69,8 @@ if (initGit) {
   }
 }
 
-writeText(path.join(outputRoot, "README.md"), `# Jolt Three Repository Export
+if (outputRoot !== root) {
+  writeFileSync(path.join(outputRoot, "README.md"), `# Jolt Three Module Export
 
 Generated from ${root}.
 
@@ -200,11 +78,12 @@ Generated from ${root}.
 - mr-backend: MR review backend and worker. See \`mr-backend/README.md\`.
 - frontend: React/Vite frontend. See \`frontend/README.md\`.
 
-Regenerate:
+Regenerate from the repository root:
 
 \`\`\`bash
-node scripts/export-three-repos.mjs --force
+node scripts/export-three-repos.mjs --force --out=/path/to/output
 \`\`\`
-`);
+`, "utf8");
+}
 
 console.log(JSON.stringify({ ok: true, output_root: outputRoot, repos }, null, 2));

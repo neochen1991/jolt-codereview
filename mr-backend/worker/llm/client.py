@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from db_compat import open_app_database
+from db_postgres import open_app_database
 from llm_router import candidate_providers
 from llm.retry import call_with_retry
 from prompts.builder import build_prompt

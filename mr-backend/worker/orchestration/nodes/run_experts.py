@@ -44,7 +44,17 @@ def _deepagents_enabled_for_agent(project_config: dict[str, Any], *, effort: str
 
 def _table_columns(conn: Any, table: str) -> set[str]:
     try:
-        return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        return {
+            str(row["name"])
+            for row in conn.execute(
+                """
+                SELECT column_name AS name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = ?
+                """,
+                (table,),
+            ).fetchall()
+        }
     except Exception:
         return set()
 
@@ -115,7 +125,7 @@ def _load_feedback_examples(conn: Any, project_id: str, agent_id: str) -> list[d
                 uf.feedback_type = 'false_positive'
                 OR rf.lifecycle_state IN ('false_positive', 'rejected_false_positive', 'judge_rejected')
               )
-              AND uf.created_at >= datetime('now', '-90 days')
+              AND NULLIF(uf.created_at, '')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '90 days'
             ORDER BY uf.created_at DESC
             LIMIT 50
             """,

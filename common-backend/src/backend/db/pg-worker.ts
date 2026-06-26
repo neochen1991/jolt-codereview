@@ -1,7 +1,7 @@
 import { parentPort } from "node:worker_threads";
 import { Client } from "pg";
 import { writeFileSync } from "node:fs";
-import { translateLegacySqlToPostgres } from "./pg-sql.js";
+import { preparePostgresSql } from "./pg-sql.js";
 
 type PgWorkerRequest = {
   id: string;
@@ -46,28 +46,7 @@ async function handleRequest(request: PgWorkerRequest) {
   }
   const activeClient = await getClient(request.config);
   const sql = request.sql || "";
-  if (/^PRAGMA\s+foreign_key_list/i.test(sql.trim())) {
-    return { rows: [], rowCount: 0 };
-  }
-  const tableInfo = sql.trim().match(/^PRAGMA\s+table_info\((.+)\)$/i);
-  if (tableInfo) {
-    const tableName = tableInfo[1].trim().replace(/^["'`]|["'`]$/g, "");
-    const result = await activeClient.query(
-      `
-        SELECT column_name AS name
-        FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = $1
-        ORDER BY ordinal_position
-      `,
-      [tableName]
-    );
-    return { rows: result.rows, rowCount: result.rowCount ?? result.rows.length };
-  }
-  if (/^PRAGMA\b/i.test(sql.trim())) {
-    return { rows: [], rowCount: 0 };
-  }
-  const translated = translateLegacySqlToPostgres(sql);
-  const result = await activeClient.query(translated, request.params || []);
+  const result = await activeClient.query(preparePostgresSql(sql), request.params || []);
   return { rows: result.rows, rowCount: result.rowCount ?? 0 };
 }
 

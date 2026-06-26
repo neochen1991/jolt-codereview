@@ -36,77 +36,8 @@ export function splitSqlStatements(sql: string): string[] {
   return statements;
 }
 
-export function translateLegacySqlToPostgres(sql: string) {
-  let translated = sql.trim().replace(/;+\s*$/g, "");
-  translated = translated.replace(/BEGIN\s+IMMEDIATE/gi, "BEGIN");
-  if (/^(CREATE|ALTER)\b/i.test(translated)) {
-    translated = translateLegacySchemaToPostgres(translated);
-  }
-  translated = translated.replace(/datetime\(\s*'now'\s*,\s*\?\s*\)/gi, "(CURRENT_TIMESTAMP + ?::interval)");
-  translated = translated.replace(/datetime\(\s*'now'\s*,\s*'([^']+)'\s*\)/gi, "(CURRENT_TIMESTAMP + INTERVAL '$1')");
-  translated = translated.replace(/datetime\(\s*'now'\s*\)/gi, "CURRENT_TIMESTAMP");
-  translated = translated.replace(/strftime\(\s*'%s'\s*,\s*'now'\s*\)/gi, "EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)");
-  translated = translated.replace(/strftime\(\s*'%s'\s*,\s*([^)]+?)\s*\)/gi, (_match, expression: string) => {
-    return `EXTRACT(EPOCH FROM NULLIF(${expression.trim()}, '')::timestamptz)`;
-  });
-  translated = translated.replace(/julianday\(\s*([^)]+?)\s*\)/gi, (_match, expression: string) => {
-    return `(EXTRACT(EPOCH FROM NULLIF(${expression.trim()}, '')::timestamptz) / 86400.0)`;
-  });
-  translated = translated.replace(/lower\s*\(\s*hex\s*\(\s*randomblob\s*\(\s*(\d+)\s*\)\s*\)\s*\)/gi, (_match, size) => {
-    const hexLength = Math.max(1, Number(size) * 2);
-    return `substr(md5(random()::text || clock_timestamp()::text), 1, ${hexLength})`;
-  });
-  translated = translated.replace(/\bMAX\s*\(\s*([^(),]+?)\s*,\s*([^(),]+?)\s*\)/gi, "GREATEST($1, $2)");
-  translated = translated.replace(/\bMIN\s*\(\s*([^(),]+?)\s*,\s*([^(),]+?)\s*\)/gi, "LEAST($1, $2)");
-  translated = translated.replace(/^INSERT\s+OR\s+IGNORE\s+INTO\s+/i, "INSERT INTO ");
-  if (/^INSERT\s+INTO\s+/i.test(translated) && !/\bON\s+CONFLICT\b/i.test(translated)) {
-    translated = `${translated} ON CONFLICT DO NOTHING`;
-  }
-  translated = replacePlaceholders(translated);
-  translated = castTextTimestampComparisons(translated);
-  return translated;
-}
-
-export function translateLegacySchemaToPostgres(sql: string) {
-  return sql
-    .replace(/"([^"]+)"/g, '"$1"')
-    .replace(/\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/gi, "SERIAL PRIMARY KEY")
-    .replace(/\bDATETIME\b(?!\s*\()/gi, "TEXT")
-    .replace(/\bBOOLEAN\b/gi, "INTEGER")
-    .replace(/\b(TEXT(?:\s+NOT\s+NULL)?\s+DEFAULT\s+)CURRENT_TIMESTAMP\b/gi, "$1(CURRENT_TIMESTAMP::text)");
-}
-
-export function castTextTimestampComparisons(sql: string) {
-  const timestampColumn = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*_at`;
-  const timestampCoalesce = String.raw`COALESCE\s*\(\s*(?:${timestampColumn}\s*,\s*)+${timestampColumn}\s*\)`;
-  const timestampExpression = String.raw`(?:CURRENT_TIMESTAMP|\(CURRENT_TIMESTAMP\s*\+\s*(?:INTERVAL\s+'[^']+'|\$\d+::interval|%s::interval)\))`;
-  let translated = sql.replace(
-    new RegExp(`\\b(${timestampCoalesce})\\s*(<=|>=|<|>)\\s*(${timestampExpression})`, "gi"),
-    (_match, columnExpression: string, operator: string, rightExpression: string) =>
-      `${castTimestampOperand(columnExpression)} ${operator} ${rightExpression}`
-  );
-  translated = translated.replace(
-    new RegExp(`\\b(${timestampColumn})\\s*(<=|>=|<|>)\\s*(${timestampExpression})`, "gi"),
-    (_match, columnExpression: string, operator: string, rightExpression: string) =>
-      `${castTimestampOperand(columnExpression)} ${operator} ${rightExpression}`
-  );
-  translated = translated.replace(
-    new RegExp(`(${timestampExpression})\\s*(<=|>=|<|>)\\s*\\b(${timestampCoalesce})`, "gi"),
-    (_match, leftExpression: string, operator: string, columnExpression: string) =>
-      `${leftExpression} ${operator} ${castTimestampOperand(columnExpression)}`
-  );
-  translated = translated.replace(
-    new RegExp(`(${timestampExpression})\\s*(<=|>=|<|>)\\s*\\b(${timestampColumn})`, "gi"),
-    (_match, leftExpression: string, operator: string, columnExpression: string) =>
-      `${leftExpression} ${operator} ${castTimestampOperand(columnExpression)}`
-  );
-  return translated;
-}
-
-function castTimestampOperand(operand: string) {
-  if (/::timestamptz\b/i.test(operand)) return operand;
-  if (/^COALESCE\s*\(/i.test(operand)) return `NULLIF(${operand}, '')::timestamptz`;
-  return `NULLIF(${operand}, '')::timestamptz`;
+export function preparePostgresSql(sql: string) {
+  return replacePlaceholders(sql.trim().replace(/;+\s*$/g, ""));
 }
 
 function replacePlaceholders(sql: string) {

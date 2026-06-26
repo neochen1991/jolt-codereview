@@ -49,17 +49,17 @@ export function createHealthRoutes(ctx: BackendRouteContext, options: { serviceN
         rj.created_at AS job_created_at,
         CASE
           WHEN rr.completed_at IS NULL THEN NULL
-          ELSE strftime('%s', rr.completed_at) - strftime('%s', rr.started_at)
+          ELSE EXTRACT(EPOCH FROM NULLIF(rr.completed_at, '')::timestamptz) - EXTRACT(EPOCH FROM NULLIF(rr.started_at, '')::timestamptz)
         END AS run_seconds,
-        strftime('%s', rr.started_at) - strftime('%s', rj.created_at) AS queue_wait_seconds
+        EXTRACT(EPOCH FROM NULLIF(rr.started_at, '')::timestamptz) - EXTRACT(EPOCH FROM NULLIF(rj.created_at, '')::timestamptz) AS queue_wait_seconds
       FROM review_runs rr
       JOIN review_jobs rj ON rj.id = rr.review_job_id
-      WHERE rr.started_at >= datetime('now', '-24 hours')
+      WHERE NULLIF(rr.started_at, '')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
       `,
       []
     );
     const jobs = all<Record<string, unknown>>(
-      "SELECT status FROM review_jobs WHERE created_at >= datetime('now', '-24 hours')",
+      "SELECT status FROM review_jobs WHERE NULLIF(created_at, '')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '24 hours'",
       []
     );
     const feedback = get<Record<string, unknown>>(
@@ -68,7 +68,7 @@ export function createHealthRoutes(ctx: BackendRouteContext, options: { serviceN
         COUNT(*) AS total,
         SUM(CASE WHEN feedback_type = 'false_positive' THEN 1 ELSE 0 END) AS false_positive
       FROM user_feedback
-      WHERE created_at >= datetime('now', '-30 days')
+      WHERE NULLIF(created_at, '')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '30 days'
       `,
       []
     ) ?? { total: 0, false_positive: 0 };

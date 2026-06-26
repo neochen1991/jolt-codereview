@@ -16,8 +16,9 @@ export class ReviewJobRepository {
     requestedBy?: string | null;
   }) {
     return this.db.prepare(`
-      INSERT OR IGNORE INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level, requested_by)
+      INSERT INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level, requested_by)
       VALUES (?, ?, ?, 'queued', ?, ?, ?)
+      ON CONFLICT DO NOTHING
     `).run(input.id, input.mergeRequestId, input.headSha, input.priority, input.effortLevel ?? "standard", input.requestedBy ?? null);
   }
 
@@ -130,7 +131,7 @@ export class ReviewJobRepository {
       UPDATE review_jobs
       SET status = 'queued', locked_at = NULL, locked_by = NULL, updated_at = CURRENT_TIMESTAMP
       WHERE status IN ('fetching', 'pre_scanning', 'reviewing', 'judging')
-        AND (heartbeat_at IS NULL OR heartbeat_at < datetime('now', ?))
-    `).run(`-${seconds} seconds`);
+        AND (heartbeat_at IS NULL OR NULLIF(heartbeat_at, '')::timestamptz < CURRENT_TIMESTAMP - (? * INTERVAL '1 second'))
+    `).run(seconds);
   }
 }

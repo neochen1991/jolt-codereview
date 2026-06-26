@@ -69,12 +69,13 @@ function loadBoundStandard(agentKey: string, displayName: string, responsibility
 
 export function seed(db: Db) {
   db.prepare(`
-    INSERT OR IGNORE INTO review_policy (id, project_id, policy_json)
+    INSERT INTO review_policy (id, project_id, policy_json)
     VALUES (
       'policy_project_default',
       'project_default',
       '{"default_effort":"standard","allowed_efforts":["trivial","fast","standard","deep"],"max_findings_per_mr":40,"default_provider":"github","enable_mcp":false}'
     )
+    ON CONFLICT DO NOTHING
   `).run();
   const currentReviewPolicy = db.prepare("SELECT policy_json FROM review_policy WHERE project_id = 'project_default'").get() as { policy_json?: string } | undefined;
   if (currentReviewPolicy?.policy_json) {
@@ -86,7 +87,7 @@ export function seed(db: Db) {
   }
 
   db.prepare(`
-    INSERT OR IGNORE INTO rule_sets (id, project_id, name, version, scope_json, content, status)
+    INSERT INTO rule_sets (id, project_id, name, version, scope_json, content, status)
     VALUES (
       'rules_project_default_engineering',
       'project_default',
@@ -96,6 +97,7 @@ export function seed(db: Db) {
       '高置信、少噪声；只报告有文件位置、证据和可执行修复建议的问题。优先关注权限、注入、幂等、异常、测试覆盖。',
       'active'
     )
+    ON CONFLICT DO NOTHING
   `).run();
 
   const javaLowLevelSkillContent = [
@@ -504,9 +506,9 @@ export function seed(db: Db) {
         responsibility_scope = excluded.responsibility_scope,
         excluded_scope = excluded.excluded_scope,
         enabled = excluded.enabled,
-        max_findings = MAX(expert_profiles.max_findings, excluded.max_findings),
-        max_llm_calls = MAX(expert_profiles.max_llm_calls, excluded.max_llm_calls),
-        max_tool_calls = MAX(expert_profiles.max_tool_calls, excluded.max_tool_calls)
+        max_findings = GREATEST(expert_profiles.max_findings, excluded.max_findings),
+        max_llm_calls = GREATEST(expert_profiles.max_llm_calls, excluded.max_llm_calls),
+        max_tool_calls = GREATEST(expert_profiles.max_tool_calls, excluded.max_tool_calls)
     `).run(
       `expert_${profile.agent_key}_default`,
       profile.agent_key,
@@ -537,8 +539,9 @@ export function seed(db: Db) {
       ruleContent
     );
     db.prepare(`
-      INSERT OR IGNORE INTO expert_rule_bindings (id, project_id, agent_key, rule_document_id, priority)
+      INSERT INTO expert_rule_bindings (id, project_id, agent_key, rule_document_id, priority)
       VALUES (?, 'project_default', ?, ?, 100)
+      ON CONFLICT DO NOTHING
     `).run(`binding_${profile.agent_key}_default_rules`, profile.agent_key, ruleDocumentId);
   }
 
@@ -775,7 +778,7 @@ export function seed(db: Db) {
 
   for (const agent of agents) {
     db.prepare(`
-      INSERT OR IGNORE INTO agent_configs (
+      INSERT INTO agent_configs (
         id, project_id, agent_id, display_name, enabled, applies_to_json, tools_json,
         skills_json, rule_sets_json, min_confidence, max_findings_per_mr
       )

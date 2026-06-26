@@ -21,7 +21,7 @@ from typing import Any
 from uuid import uuid4
 
 from config import effective_project_config, load_config
-from db_compat import open_app_database
+from db_postgres import open_app_database
 from db_helpers import table_exists
 from file_logger import clear_worker_logs, write_review_run_log, write_worker_log
 from agents.registry import load_expert_profiles
@@ -77,7 +77,14 @@ def connect(config: dict[str, Any]) -> Any:
 
 def ensure_worker_schema(conn: Any) -> None:
     def add_column_if_missing(table: str, column: str, definition: str) -> None:
-        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        rows = conn.execute(
+            """
+            SELECT column_name AS name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = ?
+            """,
+            (table,),
+        ).fetchall()
         if not rows:
             return
         if any(row["name"] == column for row in rows):
@@ -3134,7 +3141,7 @@ def load_baseline_fingerprints(conn: Any, project_id: str) -> set[str]:
         SELECT fingerprint
         FROM review_baseline_suppressions
         WHERE project_id = ?
-          AND (expires_at IS NULL OR expires_at = '' OR expires_at > CURRENT_TIMESTAMP)
+          AND (expires_at IS NULL OR expires_at = '' OR NULLIF(expires_at, '')::timestamptz > CURRENT_TIMESTAMP)
         """,
         (project_id,),
     ).fetchall()
@@ -4240,7 +4247,7 @@ def load_feedback_suppressions(conn: Any, project_id: str) -> set[str]:
         JOIN repositories r ON r.id = mr.repository_id
         WHERE r.project_id = ?
           AND uf.feedback_type IN ('false_positive', 'suppress_rule')
-          AND uf.created_at >= datetime('now', '-90 days')
+          AND NULLIF(uf.created_at, '')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '90 days'
         """,
         (project_id,),
     ).fetchall()
@@ -4259,7 +4266,7 @@ def load_feedback_boosts(conn: Any, project_id: str) -> set[str]:
         JOIN repositories r ON r.id = mr.repository_id
         WHERE r.project_id = ?
           AND uf.feedback_type IN ('accepted', 'published')
-          AND uf.created_at >= datetime('now', '-90 days')
+          AND NULLIF(uf.created_at, '')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '90 days'
         """,
         (project_id,),
     ).fetchall()
@@ -4383,15 +4390,15 @@ def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
     if not table_exists(conn, "review_jobs"):
         return None
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("BEGIN")
         conn.execute(
             """
             UPDATE review_jobs
             SET status = 'queued', locked_at = NULL, locked_by = NULL
             WHERE status IN ('fetching', 'pre_scanning', 'reviewing', 'judging')
-              AND (heartbeat_at IS NULL OR heartbeat_at < datetime('now', ?))
+              AND (heartbeat_at IS NULL OR NULLIF(heartbeat_at, '')::timestamptz < CURRENT_TIMESTAMP - (? * INTERVAL '1 second'))
             """,
-            (f"-{RECLAIM_AFTER_SECONDS} seconds",),
+            (RECLAIM_AFTER_SECONDS,),
         )
         active_placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
         candidates = conn.execute(

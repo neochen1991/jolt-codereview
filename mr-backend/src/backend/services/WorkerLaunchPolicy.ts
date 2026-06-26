@@ -29,7 +29,7 @@ async function queuedReviewWorkerCapacityAsync(input: {
     JOIN merge_requests mr ON mr.id = rj.merge_request_id
     JOIN repositories r ON r.id = mr.repository_id
     WHERE rj.status IN (${ACTIVE_REVIEW_STATUSES})
-      AND COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at) >= datetime('now', '-60 seconds')
+      AND NULLIF(COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at), '')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '60 seconds'
     GROUP BY r.project_id
   `).all() as Array<{ project_id: string; count: number }>;
   const activeByProject = new Map(activeRows.map((row) => [String(row.project_id), Number(row.count || 0)]));

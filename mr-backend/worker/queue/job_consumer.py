@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from db_compat import open_app_database
+from db_postgres import open_app_database
 
 HEARTBEAT_SECONDS = 10
 RECLAIM_AFTER_SECONDS = 60

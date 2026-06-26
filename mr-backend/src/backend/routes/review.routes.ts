@@ -395,7 +395,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         JOIN repositories r ON r.id = mr.repository_id
         WHERE r.project_id = ?
           AND rj.status IN ('fetching', 'pre_scanning', 'reviewing', 'judging', 'running')
-          AND COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at) >= datetime('now', '-60 seconds')
+          AND NULLIF(COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at), '')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '60 seconds'
         ORDER BY rj.locked_at DESC, rj.updated_at DESC
       `, [params.projectId]);
       const projectEffectiveConfig = await effectiveConfig(params.projectId);

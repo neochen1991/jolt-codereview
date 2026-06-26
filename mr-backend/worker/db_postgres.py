@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Iterator
 from datetime import date, datetime
 from typing import Any
@@ -39,10 +38,10 @@ def open_app_database(config: dict[str, Any]):
     driver = str((config.get("server") or {}).get("database_driver") or "postgres").strip().lower()
     if driver and driver != "postgres":
         raise RuntimeError(f"Unsupported database driver: {driver}. Jolt services are PostgreSQL-only.")
-    return PostgresCompatConnection(config)
+    return PostgresConnection(config)
 
 
-class PostgresCompatConnection:
+class PostgresConnection:
     dialect = "postgres"
 
     def __init__(self, config: dict[str, Any]):
@@ -75,11 +74,7 @@ class PostgresCompatConnection:
         params_list = list(params or [])
         if not sql:
             return CompatCursor()
-        special = self._special_cursor(sql, params_list)
-        if special is not None:
-            return special
-        translated = translate_legacy_sql_to_postgres(sql)
-        cursor = self._conn.execute(translated, params_list)
+        cursor = self._conn.execute(prepare_postgres_sql(sql), params_list)
         rows = _wrap_rows(cursor.fetchall() if cursor.description else [])
         return CompatCursor(rows, cursor.rowcount)
 
@@ -110,27 +105,6 @@ class PostgresCompatConnection:
     @row_factory.setter
     def row_factory(self, _value: Any) -> None:
         return None
-
-    def _special_cursor(self, sql: str, params: list[Any]) -> CompatCursor | None:
-        if re.match(r"^PRAGMA\s+foreign_key_list", sql, re.I):
-            return CompatCursor([])
-        table_info = re.match(r"^PRAGMA\s+table_info\((.+)\)$", sql, re.I)
-        if table_info:
-            table_name = table_info.group(1).strip().strip("\"'`")
-            cursor = self._conn.execute(
-                """
-                SELECT column_name AS name
-                FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = %s
-                ORDER BY ordinal_position
-                """,
-                [table_name],
-            )
-            return CompatCursor(_wrap_rows(cursor.fetchall()), cursor.rowcount)
-        if re.match(r"^PRAGMA\b", sql, re.I):
-            return CompatCursor([])
-        return None
-
 
 def _wrap_rows(rows: list[dict[str, Any]]) -> list[CompatRow]:
     wrapped: list[CompatRow] = []
@@ -186,90 +160,10 @@ def split_sql_statements(sql: str) -> list[str]:
     return statements
 
 
-def translate_legacy_sql_to_postgres(sql: str) -> str:
+def prepare_postgres_sql(sql: str) -> str:
     translated = sql.strip().rstrip(";")
-    translated = re.sub(r"BEGIN\s+IMMEDIATE", "BEGIN", translated, flags=re.I)
-    if re.match(r"^(CREATE|ALTER)\b", translated, re.I):
-        translated = translate_legacy_schema_to_postgres(translated)
-    translated = re.sub(r"datetime\(\s*'now'\s*,\s*\?\s*\)", "(CURRENT_TIMESTAMP + %s::interval)", translated, flags=re.I)
-    translated = re.sub(
-        r"datetime\(\s*'now'\s*,\s*'([^']+)'\s*\)",
-        lambda match: f"(CURRENT_TIMESTAMP + INTERVAL '{match.group(1)}')",
-        translated,
-        flags=re.I,
-    )
-    translated = re.sub(r"datetime\(\s*'now'\s*\)", "CURRENT_TIMESTAMP", translated, flags=re.I)
-    translated = re.sub(r"strftime\(\s*'%s'\s*,\s*'now'\s*\)", "EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)", translated, flags=re.I)
-    translated = re.sub(
-        r"strftime\(\s*'%s'\s*,\s*([^)]+?)\s*\)",
-        lambda match: f"EXTRACT(EPOCH FROM NULLIF({match.group(1).strip()}, '')::timestamptz)",
-        translated,
-        flags=re.I,
-    )
-    translated = re.sub(
-        r"julianday\(\s*([^)]+?)\s*\)",
-        lambda match: f"(EXTRACT(EPOCH FROM NULLIF({match.group(1).strip()}, '')::timestamptz) / 86400.0)",
-        translated,
-        flags=re.I,
-    )
-    translated = re.sub(r"\bMAX\s*\(\s*([^(),]+?)\s*,\s*([^(),]+?)\s*\)", r"GREATEST(\1, \2)", translated, flags=re.I)
-    translated = re.sub(r"\bMIN\s*\(\s*([^(),]+?)\s*,\s*([^(),]+?)\s*\)", r"LEAST(\1, \2)", translated, flags=re.I)
-    translated = re.sub(r"^INSERT\s+OR\s+IGNORE\s+INTO\s+", "INSERT INTO ", translated, flags=re.I)
-    if re.match(r"^INSERT\s+INTO\s+", translated, re.I) and not re.search(r"\bON\s+CONFLICT\b", translated, re.I):
-        translated = f"{translated} ON CONFLICT DO NOTHING"
-    translated = cast_text_timestamp_comparisons(translated)
     translated = replace_qmark_placeholders(translated)
     translated = escape_psycopg_percent_literals(translated)
-    return translated
-
-
-def translate_legacy_schema_to_postgres(sql: str) -> str:
-    translated = re.sub(r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b", "SERIAL PRIMARY KEY", sql, flags=re.I)
-    translated = re.sub(r"\bDATETIME\b(?!\s*\()", "TEXT", translated, flags=re.I)
-    translated = re.sub(r"\bBOOLEAN\b", "INTEGER", translated, flags=re.I)
-    translated = re.sub(
-        r"\b(TEXT(?:\s+NOT\s+NULL)?\s+DEFAULT\s+)CURRENT_TIMESTAMP\b",
-        r"\1(CURRENT_TIMESTAMP::text)",
-        translated,
-        flags=re.I,
-    )
-    return translated
-
-
-def cast_text_timestamp_comparisons(sql: str) -> str:
-    timestamp_column = r"(?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*_at"
-    timestamp_coalesce = rf"COALESCE\s*\(\s*(?:{timestamp_column}\s*,\s*)+{timestamp_column}\s*\)"
-    timestamp_expression = r"(?:CURRENT_TIMESTAMP|\(CURRENT_TIMESTAMP\s*\+\s*(?:INTERVAL\s+'[^']+'|%s::interval|\$\d+::interval)\))"
-
-    def cast_operand(value: str) -> str:
-        if re.search(r"::timestamptz\b", value, re.I):
-            return value
-        return f"NULLIF({value}, '')::timestamptz"
-
-    translated = re.sub(
-        rf"\b({timestamp_coalesce})\s*(<=|>=|<|>)\s*({timestamp_expression})",
-        lambda match: f"{cast_operand(match.group(1))} {match.group(2)} {match.group(3)}",
-        sql,
-        flags=re.I,
-    )
-    translated = re.sub(
-        rf"\b({timestamp_column})\s*(<=|>=|<|>)\s*({timestamp_expression})",
-        lambda match: f"{cast_operand(match.group(1))} {match.group(2)} {match.group(3)}",
-        translated,
-        flags=re.I,
-    )
-    translated = re.sub(
-        rf"({timestamp_expression})\s*(<=|>=|<|>)\s*\b({timestamp_coalesce})",
-        lambda match: f"{match.group(1)} {match.group(2)} {cast_operand(match.group(3))}",
-        translated,
-        flags=re.I,
-    )
-    translated = re.sub(
-        rf"({timestamp_expression})\s*(<=|>=|<|>)\s*\b({timestamp_column})",
-        lambda match: f"{match.group(1)} {match.group(2)} {cast_operand(match.group(3))}",
-        translated,
-        flags=re.I,
-    )
     return translated
 
 
@@ -322,7 +216,3 @@ def escape_psycopg_percent_literals(sql: str) -> str:
         output.append(char)
         index += 1
     return "".join(output)
-
-
-translate_sqlite_to_postgres = translate_legacy_sql_to_postgres
-translate_sqlite_schema_to_postgres = translate_legacy_schema_to_postgres

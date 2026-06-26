@@ -42,7 +42,7 @@ export class ObservabilityService {
     const duration = this.db.prepare(`
       SELECT
         COUNT(*) AS completed_runs,
-        ROUND(CAST(AVG((julianday(rr.completed_at) - julianday(rr.started_at)) * 86400) AS NUMERIC), 2) AS avg_duration_seconds
+        ROUND(CAST(AVG(EXTRACT(EPOCH FROM NULLIF(rr.completed_at, '')::timestamptz) - EXTRACT(EPOCH FROM NULLIF(rr.started_at, '')::timestamptz)) AS NUMERIC), 2) AS avg_duration_seconds
       FROM review_runs rr
       JOIN review_jobs rj ON rj.id = rr.review_job_id
       JOIN merge_requests mr ON mr.id = rj.merge_request_id

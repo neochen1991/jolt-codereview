@@ -4,7 +4,16 @@ from typing import Any
 
 
 def load_rule_precision_history(conn: Any, project_id: str) -> dict[tuple[str, str], dict[str, Any]]:
-    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(rule_precision_history)").fetchall()}
+    columns = {
+        str(row["name"])
+        for row in conn.execute(
+            """
+            SELECT column_name AS name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'rule_precision_history'
+            """
+        ).fetchall()
+    }
     has_recent_counts = {"recent_accepted_count", "recent_rejected_count"}.issubset(columns)
     recent_select = (
         "recent_accepted_count, recent_rejected_count,"

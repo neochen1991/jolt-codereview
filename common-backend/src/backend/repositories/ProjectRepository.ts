@@ -55,7 +55,7 @@ export class ProjectRepository {
   createAuthSession(id: string, userId: string, tokenHash: string) {
     this.db.prepare(`
       INSERT INTO auth_sessions (id, user_id, token_hash, status, expires_at)
-      VALUES (?, ?, ?, 'active', datetime('now', '+7 days'))
+      VALUES (?, ?, ?, 'active', CURRENT_TIMESTAMP + INTERVAL '7 days')
     `).run(id, userId, tokenHash);
   }
 
@@ -65,7 +65,7 @@ export class ProjectRepository {
 
   findSessionUserId(tokenHash: string) {
     return this.db.prepare(
-      "SELECT user_id FROM auth_sessions WHERE token_hash = ? AND status = 'active' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)"
+      "SELECT user_id FROM auth_sessions WHERE token_hash = ? AND status = 'active' AND (expires_at IS NULL OR NULLIF(expires_at, '')::timestamptz > CURRENT_TIMESTAMP)"
     ).get(tokenHash);
   }
 
@@ -107,10 +107,11 @@ export class ProjectRepository {
         VALUES (?, ?, ?, 'project_admin')
       `).run(input.memberId, input.id, input.ownerUserId);
       this.db.prepare(`
-        INSERT OR IGNORE INTO project_settings (id, project_id, settings_key, settings_json)
+        INSERT INTO project_settings (id, project_id, settings_key, settings_json)
         SELECT 'setting_' || settings_key || '_' || ?, ?, settings_key, settings_json
         FROM project_settings
         WHERE project_id = ?
+        ON CONFLICT DO NOTHING
       `).run(input.id.replace(/[^a-zA-Z0-9]+/g, "_"), input.id, cloneFromProjectId);
       this.db.exec("COMMIT");
     } catch (error) {
@@ -199,8 +200,9 @@ export class ProjectRepository {
       ? `member_${input.projectId}_${actualUserId}`.replace(/[^a-zA-Z0-9_]+/g, "_").slice(0, 80)
       : input.memberId;
     this.db.prepare(`
-      INSERT OR IGNORE INTO users (id, username, display_name, email, status)
+      INSERT INTO users (id, username, display_name, email, status)
       VALUES (?, ?, ?, ?, 'active')
+      ON CONFLICT DO NOTHING
     `).run(actualUserId, input.username, input.displayName, input.email ?? null);
     this.db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND id <> ?")
       .run(input.projectId, actualUserId, actualMemberId);
@@ -344,7 +346,7 @@ export class ProjectRepository {
       FROM project_invitations
       WHERE invite_code_hash = ?
         AND status = 'active'
-        AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+        AND (expires_at IS NULL OR NULLIF(expires_at, '')::timestamptz > CURRENT_TIMESTAMP)
         AND (max_uses = 0 OR used_count < max_uses)
     `).get(input.inviteCodeHash) as { id: string; project_id: string; role: string; used_count: number; max_uses: number } | undefined;
     if (!invitation) return null;

@@ -268,9 +268,9 @@ def make_verify_findings_node(
     def verify_findings_node(state: dict[str, Any]) -> dict[str, Any]:
         files = state["files"]
         all_findings = state["all_findings"]
-        conn.execute("UPDATE review_jobs SET status = 'judging', heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?", (job["id"],))
+        conn.execute("UPDATE review_jobs SET status = 'judging', heartbeat_at = CURRENT_TIMESTAMP WHERE id = %s", (job["id"],))
         conn.execute(
-            "UPDATE merge_requests SET review_status = 'judging' WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            "UPDATE merge_requests SET review_status = 'judging' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
             (job["merge_request_id"],),
         )
         conn.commit()

@@ -5,11 +5,11 @@ export class MergeRequestRepository {
   constructor(private readonly db: Db) {}
 
   findById(id: string) {
-    return this.db.prepare("SELECT * FROM merge_requests WHERE id = ?").get(id) as MergeRequestRow | undefined;
+    return this.db.prepare("SELECT * FROM merge_requests WHERE id = $1").get(id) as MergeRequestRow | undefined;
   }
 
   findByRepositoryAndExternalId(repositoryId: string, externalMrId: string) {
-    return this.db.prepare("SELECT * FROM merge_requests WHERE repository_id = ? AND external_mr_id = ?").get(repositoryId, externalMrId) as MergeRequestRow | undefined;
+    return this.db.prepare("SELECT * FROM merge_requests WHERE repository_id = $1 AND external_mr_id = $2").get(repositoryId, externalMrId) as MergeRequestRow | undefined;
   }
 
   findDetailById(id: string) {
@@ -17,7 +17,7 @@ export class MergeRequestRepository {
       SELECT mr.*, r.name AS repository_name, r.provider, r.external_repo_id
       FROM merge_requests mr
       JOIN repositories r ON r.id = mr.repository_id
-      WHERE mr.id = ?
+      WHERE mr.id = $1
     `).get(id);
   }
 
@@ -61,7 +61,7 @@ export class MergeRequestRepository {
         ) AS latest_job_status
       FROM merge_requests mr
       JOIN repositories r ON r.id = mr.repository_id
-      WHERE r.project_id = ?
+      WHERE r.project_id = $1
         AND r.status = 'active'
     `;
     const orderSql = `
@@ -70,7 +70,7 @@ export class MergeRequestRepository {
     if (status === null) {
       return this.db.prepare(`${baseSql}${orderSql}`).all(projectId);
     }
-    return this.db.prepare(`${baseSql} AND mr.review_status = ? ${orderSql}`).all(projectId, status);
+    return this.db.prepare(`${baseSql} AND mr.review_status = $2 ${orderSql}`).all(projectId, status);
   }
 
   listRemoteStatusCandidates(projectId: string) {
@@ -78,7 +78,7 @@ export class MergeRequestRepository {
       SELECT mr.*, r.project_id, r.provider, r.external_repo_id, r.name AS repository_name, r.provider_config_json
       FROM merge_requests mr
       JOIN repositories r ON r.id = mr.repository_id
-      WHERE r.project_id = ?
+      WHERE r.project_id = $1
         AND r.status = 'active'
         AND mr.review_status IN ('queued', 'paused', 'waiting_confirmation', 'no_issue', 'too_large')
       ORDER BY mr.updated_at DESC
@@ -105,7 +105,7 @@ export class MergeRequestRepository {
         id, repository_id, external_mr_id, number, title, author, source_branch, target_branch,
         review_status, risk_score, latest_head_sha, html_url, metadata_json, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP)
       ON CONFLICT(repository_id, external_mr_id) DO UPDATE SET
         title = excluded.title,
         author = excluded.author,
@@ -138,7 +138,7 @@ export class MergeRequestRepository {
   }
 
   updateReviewStatus(id: string, status: string) {
-    this.db.prepare("UPDATE merge_requests SET review_status = ? WHERE id = ?").run(status, id);
+    this.db.prepare("UPDATE merge_requests SET review_status = $1 WHERE id = $2").run(status, id);
   }
 
   deleteById(id: string) {
@@ -153,26 +153,26 @@ export class MergeRequestRepository {
       };
     }
 
-    const jobIds = this.db.prepare("SELECT id FROM review_jobs WHERE merge_request_id = ?").all(id).map((row: any) => String(row.id));
+    const jobIds = this.db.prepare("SELECT id FROM review_jobs WHERE merge_request_id = $1").all(id).map((row: any) => String(row.id));
     const runIds = this.db.prepare(`
       SELECT rr.id
       FROM review_runs rr
       JOIN review_jobs rj ON rj.id = rr.review_job_id
-      WHERE rj.merge_request_id = ?
+      WHERE rj.merge_request_id = $1
     `).all(id).map((row: any) => String(row.id));
     const findingIds = this.db.prepare(`
       SELECT rf.id
       FROM review_findings rf
       JOIN review_runs rr ON rr.id = rf.review_run_id
       JOIN review_jobs rj ON rj.id = rr.review_job_id
-      WHERE rj.merge_request_id = ?
+      WHERE rj.merge_request_id = $1
     `).all(id).map((row: any) => String(row.id));
     const spanIds = this.db.prepare(`
       SELECT s.id
       FROM agent_trace_spans s
       JOIN review_runs rr ON rr.id = s.review_run_id
       JOIN review_jobs rj ON rj.id = rr.review_job_id
-      WHERE rj.merge_request_id = ?
+      WHERE rj.merge_request_id = $1
     `).all(id).map((row: any) => String(row.id));
 
     let changes = 0;
@@ -185,28 +185,28 @@ export class MergeRequestRepository {
 
     this.db.exec("BEGIN");
     try {
-      runEach("DELETE FROM vcs_publish_records WHERE finding_id = ?", findingIds);
-      runEach("DELETE FROM user_feedback WHERE finding_id = ?", findingIds);
-      runEach("DELETE FROM evaluation_gold_set WHERE finding_id = ?", findingIds);
-      run("DELETE FROM mr_finding_history WHERE merge_request_id = ?", id);
-      runEach("DELETE FROM review_findings WHERE id = ?", findingIds);
+      runEach("DELETE FROM vcs_publish_records WHERE finding_id = $1", findingIds);
+      runEach("DELETE FROM user_feedback WHERE finding_id = $1", findingIds);
+      runEach("DELETE FROM evaluation_gold_set WHERE finding_id = $1", findingIds);
+      run("DELETE FROM mr_finding_history WHERE merge_request_id = $1", id);
+      runEach("DELETE FROM review_findings WHERE id = $1", findingIds);
 
-      runEach("DELETE FROM agent_trace_events WHERE span_id = ?", spanIds);
-      runEach("DELETE FROM agent_messages WHERE span_id = ?", spanIds);
-      runEach("DELETE FROM llm_call_records WHERE span_id = ?", spanIds);
-      runEach("DELETE FROM tool_call_records WHERE span_id = ?", spanIds);
-      runEach("DELETE FROM mcp_call_records WHERE span_id = ?", spanIds);
-      runEach("DELETE FROM agent_trace_spans WHERE id = ?", spanIds);
+      runEach("DELETE FROM agent_trace_events WHERE span_id = $1", spanIds);
+      runEach("DELETE FROM agent_messages WHERE span_id = $1", spanIds);
+      runEach("DELETE FROM llm_call_records WHERE span_id = $1", spanIds);
+      runEach("DELETE FROM tool_call_records WHERE span_id = $1", spanIds);
+      runEach("DELETE FROM mcp_call_records WHERE span_id = $1", spanIds);
+      runEach("DELETE FROM agent_trace_spans WHERE id = $1", spanIds);
 
-      runEach("DELETE FROM tool_observations WHERE review_run_id = ?", runIds);
-      runEach("DELETE FROM review_artifacts WHERE review_run_id = ?", runIds);
-      runEach("DELETE FROM code_index_snapshots WHERE review_run_id = ?", runIds);
-      runEach("DELETE FROM review_runs WHERE id = ?", runIds);
+      runEach("DELETE FROM tool_observations WHERE review_run_id = $1", runIds);
+      runEach("DELETE FROM review_artifacts WHERE review_run_id = $1", runIds);
+      runEach("DELETE FROM code_index_snapshots WHERE review_run_id = $1", runIds);
+      runEach("DELETE FROM review_runs WHERE id = $1", runIds);
 
-      runEach("DELETE FROM review_jobs_dead_letter WHERE review_job_id = ?", jobIds);
-      runEach("DELETE FROM review_jobs WHERE id = ?", jobIds);
-      run("DELETE FROM external_review_reports WHERE merge_request_id = ?", id);
-      const deletedMr = Number(this.db.prepare("DELETE FROM merge_requests WHERE id = ?").run(id).changes);
+      runEach("DELETE FROM review_jobs_dead_letter WHERE review_job_id = $1", jobIds);
+      runEach("DELETE FROM review_jobs WHERE id = $1", jobIds);
+      run("DELETE FROM external_review_reports WHERE merge_request_id = $1", id);
+      const deletedMr = Number(this.db.prepare("DELETE FROM merge_requests WHERE id = $1").run(id).changes);
       changes += deletedMr;
 
       this.db.exec("COMMIT");

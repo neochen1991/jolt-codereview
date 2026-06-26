@@ -7,7 +7,7 @@ export class AgentToolBindingService {
     return this.db.prepare(`
       SELECT *
       FROM expert_tool_bindings
-      WHERE project_id = ?
+      WHERE project_id = $1
       ORDER BY agent_key, tool_name
     `).all(projectId);
   }
@@ -23,7 +23,7 @@ export class AgentToolBindingService {
   }) {
     this.db.prepare(`
       INSERT INTO expert_tool_bindings (id, project_id, agent_key, tool_name, permission_level, max_calls, enabled)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       ON CONFLICT(project_id, agent_key, tool_name) DO UPDATE SET
         permission_level = excluded.permission_level,
         max_calls = excluded.max_calls,

@@ -20,7 +20,7 @@ export function createVcsProxyRoutes(ctx: BackendRouteContext): Route[] {
       SELECT mr.*, r.provider, r.provider_config_json, r.project_id, r.external_repo_id, r.name, r.default_branch, r.status, r.created_at
       FROM merge_requests mr
       JOIN repositories r ON r.id = mr.repository_id
-      WHERE mr.id = ? AND r.project_id = ?
+      WHERE mr.id = $1 AND r.project_id = $2
       `,
       [mrId, projectId]
     );
@@ -53,7 +53,7 @@ export function createVcsProxyRoutes(ctx: BackendRouteContext): Route[] {
 
   return [
     route("GET", "/api/vcs/:projectId/capabilities", ({ params }) => {
-      const rows = ctx.all<{ provider: string }>("SELECT DISTINCT provider FROM repositories WHERE project_id = ?", [params.projectId]);
+      const rows = ctx.all<{ provider: string }>("SELECT DISTINCT provider FROM repositories WHERE project_id = $1", [params.projectId]);
       return {
         project_id: params.projectId,
         providers: rows.map((row) => {

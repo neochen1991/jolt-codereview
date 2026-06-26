@@ -55,7 +55,7 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
   }
 
   function findJobWithAccess(jobId: string, userId: string, minRole: string) {
-    const job = get<FullReviewJobRow>("SELECT * FROM full_review_jobs WHERE id = ?", [jobId]);
+    const job = get<FullReviewJobRow>("SELECT * FROM full_review_jobs WHERE id = $1", [jobId]);
     if (!job) return { result: notFound() };
     const denied = ensureProjectRole(job.project_id, userId, minRole);
     if (denied) return { result: denied };
@@ -71,11 +71,11 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
       const status = url.searchParams.get("status");
       const rows = status
         ? all<FullReviewJobRow>(
-            "SELECT * FROM full_review_jobs WHERE project_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?",
+            "SELECT * FROM full_review_jobs WHERE project_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3",
             [params.projectId, status, limit]
           )
         : all<FullReviewJobRow>(
-            "SELECT * FROM full_review_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT ?",
+            "SELECT * FROM full_review_jobs WHERE project_id = $1 ORDER BY created_at DESC LIMIT $2",
             [params.projectId, limit]
           );
       return { project_id: params.projectId, items: rows.map(normalizeJob) };
@@ -98,7 +98,7 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
         INSERT INTO full_review_jobs (
           id, project_id, repository_id, commit_sha, scope_json, status, requested_by
         )
-        VALUES (?, ?, ?, ?, ?, 'queued', ?)
+        VALUES ($1, $2, $3, $4, $5, 'queued', $6)
       `).run(jobId, params.projectId, repositoryId, commitSha, JSON.stringify(scope), actorId);
       auditLog({
         userId: actorId,
@@ -109,7 +109,7 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
         summary: repositoryId ? `queued repository ${repositoryId}` : "queued project full review",
         metadata: { repository_id: repositoryId, commit_sha: commitSha || null, scope }
       });
-      const job = get<FullReviewJobRow>("SELECT * FROM full_review_jobs WHERE id = ?", [jobId]);
+      const job = get<FullReviewJobRow>("SELECT * FROM full_review_jobs WHERE id = $1", [jobId]);
       return job ? normalizeJob(job) : notFound();
     }),
 
@@ -117,7 +117,7 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
       const actorId = currentUserId(req);
       const { job, result } = findJobWithAccess(params.jobId, actorId, "observer");
       if (!job) return result;
-      const snapshots = all("SELECT * FROM full_review_snapshots WHERE job_id = ? ORDER BY created_at DESC", [params.jobId]);
+      const snapshots = all("SELECT * FROM full_review_snapshots WHERE job_id = $1 ORDER BY created_at DESC", [params.jobId]);
       return { ...normalizeJob(job), snapshots };
     }),
 
@@ -131,7 +131,7 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
       db.prepare(`
         UPDATE full_review_jobs
         SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        WHERE id = $1
       `).run(params.jobId);
       auditLog({
         userId: actorId,
@@ -141,7 +141,7 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
         resourceId: params.jobId,
         summary: "cancelled full review job"
       });
-      const updated = get<FullReviewJobRow>("SELECT * FROM full_review_jobs WHERE id = ?", [params.jobId]);
+      const updated = get<FullReviewJobRow>("SELECT * FROM full_review_jobs WHERE id = $1", [params.jobId]);
       return updated ? { ...normalizeJob(updated), cancelled: true } : notFound();
     }),
 
@@ -151,7 +151,7 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
       if (!job) return result;
       return {
         job_id: params.jobId,
-        items: all("SELECT * FROM audit_logs WHERE resource_type = 'full_review_job' AND resource_id = ? ORDER BY created_at", [params.jobId])
+        items: all("SELECT * FROM audit_logs WHERE resource_type = 'full_review_job' AND resource_id = $1 ORDER BY created_at", [params.jobId])
       };
     }),
 
@@ -159,7 +159,7 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
       const actorId = currentUserId(req);
       const { job, result } = findJobWithAccess(params.jobId, actorId, "observer");
       if (!job) return result;
-      const logs = all<Record<string, any>>("SELECT * FROM audit_logs WHERE resource_type = 'full_review_job' AND resource_id = ? ORDER BY created_at", [params.jobId]);
+      const logs = all<Record<string, any>>("SELECT * FROM audit_logs WHERE resource_type = 'full_review_job' AND resource_id = $1 ORDER BY created_at", [params.jobId]);
       const toolCalls = logs
         .filter((item) => item.action === "full_review.tool_call")
         .map((item) => ({ ...item, metadata: parseJson(item.metadata_json) }));
@@ -186,7 +186,7 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       return {
         repository_id: params.repositoryId,
-        items: all("SELECT * FROM full_review_snapshots WHERE repository_id = ? ORDER BY created_at DESC", [params.repositoryId])
+        items: all("SELECT * FROM full_review_snapshots WHERE repository_id = $1 ORDER BY created_at DESC", [params.repositoryId])
       };
     }),
 
@@ -196,14 +196,14 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
         SELECT s.id, j.project_id
         FROM full_review_snapshots s
         JOIN full_review_jobs j ON j.id = s.job_id
-        WHERE s.id = ?
+        WHERE s.id = $1
       `, [params.snapshotId]);
       if (!snapshot) return notFound();
       const denied = ensureProjectRole(snapshot.project_id, actorId, "observer");
       if (denied) return denied;
       return {
         snapshot_id: params.snapshotId,
-        items: all("SELECT * FROM full_review_findings WHERE snapshot_id = ? ORDER BY severity DESC, confidence DESC, created_at", [params.snapshotId])
+        items: all("SELECT * FROM full_review_findings WHERE snapshot_id = $1 ORDER BY severity DESC, confidence DESC, created_at", [params.snapshotId])
       };
     }),
 
@@ -215,13 +215,13 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
         FROM full_review_findings f
         JOIN full_review_snapshots s ON s.id = f.snapshot_id
         JOIN full_review_jobs j ON j.id = s.job_id
-        WHERE f.id = ?
+        WHERE f.id = $1
       `, [params.findingId]);
       if (!finding) return notFound();
       const denied = ensureProjectRole(finding.project_id, actorId, "developer");
       if (denied) return denied;
       if (typeof input.selected === "boolean") {
-        db.prepare("UPDATE full_review_findings SET selected = ? WHERE id = ?").run(input.selected ? 1 : 0, params.findingId);
+        db.prepare("UPDATE full_review_findings SET selected = $1 WHERE id = $2").run(input.selected ? 1 : 0, params.findingId);
         auditLog({
           userId: actorId,
           projectId: finding.project_id,
@@ -234,7 +234,7 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
       if (typeof input.lifecycle_state === "string") {
         const lifecycleState = input.lifecycle_state.trim();
         if (!MUTABLE_FINDING_STATES.has(lifecycleState)) return badRequest("unsupported lifecycle_state");
-        db.prepare("UPDATE full_review_findings SET lifecycle_state = ? WHERE id = ?").run(lifecycleState, params.findingId);
+        db.prepare("UPDATE full_review_findings SET lifecycle_state = $1 WHERE id = $2").run(lifecycleState, params.findingId);
         auditLog({
           userId: actorId,
           projectId: finding.project_id,
@@ -244,7 +244,7 @@ export function createFullReviewRoutes(ctx: BackendRouteContext): Route[] {
           summary: lifecycleState
         });
       }
-      return get("SELECT * FROM full_review_findings WHERE id = ?", [params.findingId]);
+      return get("SELECT * FROM full_review_findings WHERE id = $1", [params.findingId]);
     })
   ];
   return routes;

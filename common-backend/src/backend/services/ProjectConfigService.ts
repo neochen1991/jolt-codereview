@@ -42,7 +42,7 @@ export class ProjectConfigService {
     const rows = this.db.prepare(`
       SELECT settings_key, settings_json, updated_at
       FROM project_settings
-      WHERE project_id = ?
+      WHERE project_id = $1
       ORDER BY settings_key
     `).all(projectId) as Array<{ settings_key: string; settings_json: string; updated_at: string }>;
     const settings = Object.fromEntries(
@@ -67,7 +67,7 @@ export class ProjectConfigService {
     const settingId = `setting_${projectId}_${key}`;
     this.db.prepare(`
       INSERT INTO project_settings (id, project_id, settings_key, settings_json, updated_at)
-      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
       ON CONFLICT(project_id, settings_key) DO UPDATE SET
         settings_json = excluded.settings_json,
         updated_at = CURRENT_TIMESTAMP
@@ -75,7 +75,7 @@ export class ProjectConfigService {
     return this.db.prepare(`
       SELECT settings_key AS key, settings_json, updated_at
       FROM project_settings
-      WHERE project_id = ? AND settings_key = ?
+      WHERE project_id = $1 AND settings_key = $2
     `).get(projectId, key) as { key: string; settings_json: string; updated_at: string } | undefined;
   }
 

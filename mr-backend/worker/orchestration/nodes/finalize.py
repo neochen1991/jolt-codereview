@@ -32,7 +32,7 @@ def update_mr_finding_history(
     final_findings: list[dict[str, Any]],
 ) -> dict[str, Any]:
     finding_rows = conn.execute(
-        "SELECT id, dedupe_hash FROM review_findings WHERE review_run_id = ?",
+        "SELECT id, dedupe_hash FROM review_findings WHERE review_run_id = %s",
         (run_id,),
     ).fetchall()
     finding_id_by_hash = {str(row["dedupe_hash"]): str(row["id"]) for row in finding_rows}
@@ -41,7 +41,7 @@ def update_mr_finding_history(
         """
         SELECT dedupe_hash, finding_id
         FROM mr_finding_history
-        WHERE merge_request_id = ? AND status = 'active'
+        WHERE merge_request_id = %s AND status = 'active'
         """,
         (merge_request_id,),
     ).fetchall()
@@ -55,7 +55,7 @@ def update_mr_finding_history(
             INSERT INTO mr_finding_history (
               id, merge_request_id, dedupe_hash, finding_id, first_seen_head_sha, last_seen_head_sha, status, resolved_in_commit
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'active', NULL)
+            VALUES (%s, %s, %s, %s, %s, %s, 'active', NULL)
             ON CONFLICT(merge_request_id, dedupe_hash) DO UPDATE SET
               finding_id = excluded.finding_id,
               last_seen_head_sha = excluded.last_seen_head_sha,
@@ -70,9 +70,9 @@ def update_mr_finding_history(
             """
             UPDATE mr_finding_history
             SET status = 'resolved',
-                resolved_in_commit = ?,
+                resolved_in_commit = %s,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE merge_request_id = ? AND dedupe_hash = ?
+            WHERE merge_request_id = %s AND dedupe_hash = %s
             """,
             [(head_sha, merge_request_id, dedupe_hash) for dedupe_hash in resolved_hashes],
         )
@@ -80,7 +80,7 @@ def update_mr_finding_history(
             """
             UPDATE review_findings
             SET lifecycle_state = 'resolved'
-            WHERE id = ?
+            WHERE id = %s
             """,
             [(str(row["finding_id"]),) for row in resolved_rows if str(row["dedupe_hash"]) in resolved_hashes and row["finding_id"]],
         )
@@ -157,7 +157,7 @@ def make_finalize_node(
               COALESCE(SUM(l.duration_ms), 0) AS llm_duration_ms
             FROM llm_call_records l
             JOIN agent_trace_spans s ON s.id = l.span_id
-            WHERE s.review_run_id = ?
+            WHERE s.review_run_id = %s
             """,
             (run_id,),
         ).fetchone()
@@ -166,7 +166,7 @@ def make_finalize_node(
             SELECT COUNT(t.id) AS tool_calls, COALESCE(SUM(t.duration_ms), 0) AS tool_duration_ms
             FROM tool_call_records t
             JOIN agent_trace_spans s ON s.id = t.span_id
-            WHERE s.review_run_id = ?
+            WHERE s.review_run_id = %s
             """,
             (run_id,),
         ).fetchone()
@@ -176,12 +176,12 @@ def make_finalize_node(
               t.tool_name,
               COUNT(*) AS calls,
               SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) AS completed_calls,
-              SUM(CASE WHEN t.status LIKE 'skipped%' THEN 1 ELSE 0 END) AS skipped_calls,
-              SUM(CASE WHEN t.status IN ('failed', 'timeout', 'output_missing') OR t.status LIKE 'failed:%' THEN 1 ELSE 0 END) AS failed_calls,
+              SUM(CASE WHEN t.status LIKE 'skipped%%' THEN 1 ELSE 0 END) AS skipped_calls,
+              SUM(CASE WHEN t.status IN ('failed', 'timeout', 'output_missing') OR t.status LIKE 'failed:%%' THEN 1 ELSE 0 END) AS failed_calls,
               COALESCE(SUM(t.duration_ms), 0) AS duration_ms
             FROM tool_call_records t
             JOIN agent_trace_spans s ON s.id = t.span_id
-            WHERE s.review_run_id = ?
+            WHERE s.review_run_id = %s
             GROUP BY t.tool_name
             ORDER BY t.tool_name
             """,
@@ -191,7 +191,7 @@ def make_finalize_node(
             """
             SELECT tool_name, COUNT(*) AS hits, COUNT(DISTINCT rule_id) AS rules_hit, COUNT(DISTINCT file_path) AS files_hit
             FROM tool_observations
-            WHERE review_run_id = ?
+            WHERE review_run_id = %s
             GROUP BY tool_name
             """,
             (run_id,),
@@ -206,7 +206,7 @@ def make_finalize_node(
             SELECT s.agent_id, COUNT(*) AS starts
             FROM agent_trace_spans s
             JOIN agent_trace_events e ON e.span_id = s.id
-            WHERE review_run_id = ? AND agent_id IS NOT NULL AND agent_id <> ''
+            WHERE review_run_id = %s AND agent_id IS NOT NULL AND agent_id <> ''
               AND e.event_type = 'agent_started'
             GROUP BY s.agent_id
             ORDER BY s.agent_id
@@ -256,12 +256,12 @@ def make_finalize_node(
         if budget_used.get("truncated_reason"):
             summary = f"{summary}；预算截断：{budget_used['truncated_reason']}"
         conn.execute(
-            "UPDATE review_runs SET status = ?, report_summary = ?, budget_used_json = ?, coverage_json = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+            "UPDATE review_runs SET status = %s, report_summary = %s, budget_used_json = %s, coverage_json = %s, completed_at = CURRENT_TIMESTAMP WHERE id = %s",
             (status, summary, json.dumps(budget_used, ensure_ascii=False), json.dumps(coverage, ensure_ascii=False), run_id),
         )
-        conn.execute("UPDATE review_jobs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, job["id"]))
+        conn.execute("UPDATE review_jobs SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (status, job["id"]))
         conn.execute(
-            "UPDATE merge_requests SET review_status = ? WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            "UPDATE merge_requests SET review_status = %s WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
             (status, mr["id"]),
         )
         if recorder:

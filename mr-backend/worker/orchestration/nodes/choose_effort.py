@@ -67,12 +67,12 @@ def make_choose_effort_node(
         effort = choose_effort(job["requested_effort_level"], files, int(mr["risk_score"]), bool(state["fetch_degraded"]))
         budget = budget_for_effort(effort, (project_config or {}).get("budget_policy") or {})
         conn.execute(
-            "UPDATE review_runs SET effort_level = ?, budget_json = ? WHERE id = ?",
+            "UPDATE review_runs SET effort_level = %s, budget_json = %s WHERE id = %s",
             (effort, json.dumps(budget, ensure_ascii=False), run_id),
         )
-        conn.execute("UPDATE review_jobs SET status = 'pre_scanning', heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?", (job["id"],))
+        conn.execute("UPDATE review_jobs SET status = 'pre_scanning', heartbeat_at = CURRENT_TIMESTAMP WHERE id = %s", (job["id"],))
         conn.execute(
-            "UPDATE merge_requests SET review_status = 'pre_scanning' WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            "UPDATE merge_requests SET review_status = 'pre_scanning' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
             (job["merge_request_id"],),
         )
         conn.commit()

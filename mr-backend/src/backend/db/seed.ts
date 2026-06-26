@@ -81,7 +81,7 @@ export function seed(db: Db) {
   if (currentReviewPolicy?.policy_json) {
     const policy = JSON.parse(currentReviewPolicy.policy_json) as Record<string, unknown>;
     if (Number(policy.max_findings_per_mr ?? 0) < 40) {
-      db.prepare("UPDATE review_policy SET policy_json = ?, updated_at = CURRENT_TIMESTAMP WHERE project_id = 'project_default'")
+      db.prepare("UPDATE review_policy SET policy_json = $1, updated_at = CURRENT_TIMESTAMP WHERE project_id = 'project_default'")
         .run(JSON.stringify({ ...policy, max_findings_per_mr: 40 }));
     }
   }
@@ -370,7 +370,7 @@ export function seed(db: Db) {
       'java-low-level-defect-review',
       'Java 低级缺陷检视 Skill',
       '用于低级缺陷 Agent 的标准 Skill，包含 Java 常见低级缺陷 references 规范。',
-      ?,
+      $1,
       'v1',
       'active'
     )
@@ -404,7 +404,7 @@ export function seed(db: Db) {
       INSERT INTO custom_skill_assets (
         id, project_id, skill_key, asset_path, asset_type, content, executable
       )
-      VALUES (?, 'project_default', 'java-low-level-defect-review', ?, ?, ?, ?)
+      VALUES ($1, 'project_default', 'java-low-level-defect-review', $2, $3, $4, $5)
       ON CONFLICT(project_id, skill_key, asset_path) DO UPDATE SET
         asset_type = excluded.asset_type,
         content = excluded.content,
@@ -499,7 +499,7 @@ export function seed(db: Db) {
         id, project_id, agent_key, display_name, role_profile, responsibility_scope, excluded_scope,
         enabled, min_confidence, max_findings, max_llm_calls, max_tool_calls, output_schema_version
       )
-      VALUES (?, 'project_default', ?, ?, ?, ?, ?, 1, 0.75, 12, 6, 12, 'finding_v1')
+      VALUES ($1, 'project_default', $2, $3, $4, $5, $6, 1, 0.75, 12, 6, 12, 'finding_v1')
       ON CONFLICT(project_id, agent_key) DO UPDATE SET
         display_name = excluded.display_name,
         role_profile = excluded.role_profile,
@@ -527,7 +527,7 @@ export function seed(db: Db) {
     );
     db.prepare(`
       INSERT INTO rule_documents (id, project_id, name, doc_type, content, version, status)
-      VALUES (?, 'project_default', ?, 'markdown', ?, 'v1', 'active')
+      VALUES ($1, 'project_default', $2, 'markdown', $3, 'v1', 'active')
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         content = excluded.content,
@@ -540,7 +540,7 @@ export function seed(db: Db) {
     );
     db.prepare(`
       INSERT INTO expert_rule_bindings (id, project_id, agent_key, rule_document_id, priority)
-      VALUES (?, 'project_default', ?, ?, 100)
+      VALUES ($1, 'project_default', $2, $3, 100)
       ON CONFLICT DO NOTHING
     `).run(`binding_${profile.agent_key}_default_rules`, profile.agent_key, ruleDocumentId);
   }
@@ -782,7 +782,7 @@ export function seed(db: Db) {
         id, project_id, agent_id, display_name, enabled, applies_to_json, tools_json,
         skills_json, rule_sets_json, min_confidence, max_findings_per_mr
       )
-      VALUES (?, 'project_default', ?, ?, 1, ?, ?, ?, '["rules_project_default_engineering"]', ?, ?)
+      VALUES ($1, 'project_default', $2, $3, 1, $4, $5, $6, '["rules_project_default_engineering"]', $7, $8)
       ON CONFLICT(project_id, agent_id) DO UPDATE SET
         display_name = excluded.display_name,
         applies_to_json = excluded.applies_to_json,
@@ -807,7 +807,7 @@ export function seed(db: Db) {
     for (const tool of agent.tools) {
       db.prepare(`
         INSERT INTO expert_tool_bindings (id, project_id, agent_key, tool_name, permission_level, max_calls, enabled)
-        VALUES (?, 'project_default', ?, ?, 'read_only', 5, 1)
+        VALUES ($1, 'project_default', $2, $3, 'read_only', 5, 1)
         ON CONFLICT(project_id, agent_key, tool_name) DO UPDATE SET
           permission_level = excluded.permission_level,
           max_calls = excluded.max_calls,

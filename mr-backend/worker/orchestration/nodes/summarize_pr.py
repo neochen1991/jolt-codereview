@@ -8,7 +8,7 @@ from llm.client import fallback_pr_summary
 
 def persist_pr_summary(conn: Any, job_id: str, summary: dict[str, Any]) -> None:
     conn.execute(
-        "UPDATE review_jobs SET pr_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        "UPDATE review_jobs SET pr_summary = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
         (json.dumps(summary, ensure_ascii=False), job_id),
     )
     conn.commit()

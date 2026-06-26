@@ -81,7 +81,7 @@ def ensure_worker_schema(conn: Any) -> None:
             """
             SELECT column_name AS name
             FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = ?
+            WHERE table_schema = 'public' AND table_name = %s
             """,
             (table,),
         ).fetchall()
@@ -328,7 +328,7 @@ class Recorder:
         self.conn.execute(
             """
             INSERT INTO agent_trace_spans (id, review_run_id, span_key, agent_id, status)
-            VALUES (?, ?, ?, ?, 'running')
+            VALUES (%s, %s, %s, %s, 'running')
             """,
             (span_id, self.run_id, key, agent_id),
         )
@@ -340,7 +340,7 @@ class Recorder:
         self.conn.execute(
             """
             INSERT INTO agent_trace_events (id, span_id, event_type, summary, payload_json)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
             """,
             (new_id("event"), span_id, event_type, summary, json.dumps(payload or {}, ensure_ascii=False)),
         )
@@ -359,7 +359,7 @@ class Recorder:
         self.conn.execute(
             """
             INSERT INTO agent_messages (id, span_id, from_agent, to_agent, role, content_summary, artifact_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (new_id("msg"), span_id, from_agent, to_agent, role, content_summary[:1000], artifact_id),
         )
@@ -378,7 +378,7 @@ class Recorder:
 
     def finish(self, span_id: str, status: str = "completed") -> None:
         self.conn.execute(
-            "UPDATE agent_trace_spans SET status = ?, ended_at = CURRENT_TIMESTAMP WHERE id = ?",
+            "UPDATE agent_trace_spans SET status = %s, ended_at = CURRENT_TIMESTAMP WHERE id = %s",
             (status, span_id),
         )
         self._mark_write(force=True)
@@ -404,7 +404,7 @@ class Recorder:
               id, span_id, provider, model, request_id, prompt_hash,
               input_tokens, output_tokens, duration_ms, status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 new_id("llm"),
@@ -457,7 +457,7 @@ class Recorder:
               id, span_id, tool_name, tool_version, args_summary, input_ref_json,
               output_summary, output_ref_json, duration_ms, status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 new_id("tool"),
@@ -495,7 +495,7 @@ class Recorder:
             INSERT INTO review_artifacts (
               id, review_run_id, artifact_type, name, storage_uri, sha256, size_bytes, metadata_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 new_id("artifact"),
@@ -2575,8 +2575,8 @@ def external_report_findings(
         """
         SELECT *
         FROM external_review_reports
-        WHERE merge_request_id = ?
-          AND (commit_sha = ? OR commit_sha = '')
+        WHERE merge_request_id = %s
+          AND (commit_sha = %s OR commit_sha = '')
           AND status IN ('received', 'completed')
         ORDER BY created_at
         """,
@@ -3124,7 +3124,7 @@ def project_id_for_merge_request(conn: Any | None, mr_id: str | None) -> str | N
             SELECT r.project_id
             FROM merge_requests mr
             JOIN repositories r ON r.id = mr.repository_id
-            WHERE mr.id = ?
+            WHERE mr.id = %s
             """,
             (mr_id,),
         ).fetchone()
@@ -3140,7 +3140,7 @@ def load_baseline_fingerprints(conn: Any, project_id: str) -> set[str]:
         """
         SELECT fingerprint
         FROM review_baseline_suppressions
-        WHERE project_id = ?
+        WHERE project_id = %s
           AND (expires_at IS NULL OR expires_at = '' OR NULLIF(expires_at, '')::timestamptz > CURRENT_TIMESTAMP)
         """,
         (project_id,),
@@ -3555,7 +3555,7 @@ def make_finding(
 
 def load_agent_configs(conn: Any, project_id: str) -> list[dict[str, Any]]:
     rows = conn.execute(
-        "SELECT * FROM agent_configs WHERE project_id = ? ORDER BY agent_id",
+        "SELECT * FROM agent_configs WHERE project_id = %s ORDER BY agent_id",
         (project_id,),
     ).fetchall()
     config_by_agent: dict[str, Any] = {row["agent_id"]: row for row in rows}
@@ -3672,8 +3672,8 @@ def load_bound_custom_skill_keys(conn: Any, project_id: str, agent_key: str) -> 
         JOIN custom_skills cs
           ON cs.project_id = esb.project_id
          AND cs.skill_key = esb.skill_key
-        WHERE esb.project_id = ?
-          AND esb.agent_key = ?
+        WHERE esb.project_id = %s
+          AND esb.agent_key = %s
           AND esb.enabled = 1
           AND cs.status = 'active'
         ORDER BY esb.priority, esb.skill_key
@@ -3730,8 +3730,8 @@ def load_custom_skill_summary(
         """
         SELECT skill_key, name, description, content, version
         FROM custom_skills
-        WHERE project_id = ?
-          AND skill_key = ?
+        WHERE project_id = %s
+          AND skill_key = %s
           AND status = 'active'
         """,
         (project_id, skill_name),
@@ -3757,12 +3757,12 @@ def load_bound_custom_skill_assets(
         return []
     if not table_exists(conn, "custom_skill_assets"):
         return []
-    placeholders = ",".join("?" for _ in skill_keys)
+    placeholders = ",".join("%s" for _ in skill_keys)
     rows = conn.execute(
         f"""
         SELECT skill_key, asset_path, asset_type, content, executable
         FROM custom_skill_assets
-        WHERE project_id = ?
+        WHERE project_id = %s
           AND skill_key IN ({placeholders})
         ORDER BY skill_key, asset_path
         """,
@@ -4245,7 +4245,7 @@ def load_feedback_suppressions(conn: Any, project_id: str) -> set[str]:
         JOIN review_jobs rj ON rj.id = rr.review_job_id
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories r ON r.id = mr.repository_id
-        WHERE r.project_id = ?
+        WHERE r.project_id = %s
           AND uf.feedback_type IN ('false_positive', 'suppress_rule')
           AND NULLIF(uf.created_at, '')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '90 days'
         """,
@@ -4264,7 +4264,7 @@ def load_feedback_boosts(conn: Any, project_id: str) -> set[str]:
         JOIN review_jobs rj ON rj.id = rr.review_job_id
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories r ON r.id = mr.repository_id
-        WHERE r.project_id = ?
+        WHERE r.project_id = %s
           AND uf.feedback_type IN ('accepted', 'published')
           AND NULLIF(uf.created_at, '')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '90 days'
         """,
@@ -4381,7 +4381,7 @@ def lock_project_claim_if_needed(conn: Any, project_id: str) -> None:
     if getattr(conn, "dialect", "postgres") != "postgres":
         return
     conn.execute(
-        "SELECT pg_advisory_xact_lock(hashtext(?)::bigint)",
+        "SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)",
         (f"jolt-review-project:{project_id}",),
     )
 
@@ -4396,11 +4396,11 @@ def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
             UPDATE review_jobs
             SET status = 'queued', locked_at = NULL, locked_by = NULL
             WHERE status IN ('fetching', 'pre_scanning', 'reviewing', 'judging')
-              AND (heartbeat_at IS NULL OR NULLIF(heartbeat_at, '')::timestamptz < CURRENT_TIMESTAMP - (? * INTERVAL '1 second'))
+              AND (heartbeat_at IS NULL OR NULLIF(heartbeat_at, '')::timestamptz < CURRENT_TIMESTAMP - (%s * INTERVAL '1 second'))
             """,
             (RECLAIM_AFTER_SECONDS,),
         )
-        active_placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
+        active_placeholders = ",".join("%s" for _ in ACTIVE_STATUSES)
         candidates = conn.execute(
             f"""
             SELECT queued.*, queued_repo.project_id AS project_id
@@ -4408,7 +4408,7 @@ def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
             JOIN merge_requests queued_mr ON queued_mr.id = queued.merge_request_id
             JOIN repositories queued_repo ON queued_repo.id = queued_mr.repository_id
             WHERE queued.status = 'queued'
-              AND queued.attempt < ?
+              AND queued.attempt < %s
             ORDER BY queued.priority DESC, queued.created_at ASC
             LIMIT 100
             """,
@@ -4423,27 +4423,27 @@ def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
                 f"""
                 UPDATE review_jobs
                 SET status = 'fetching', locked_at = CURRENT_TIMESTAMP, locked_by = 'python-worker', heartbeat_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                WHERE id = %s
                   AND status = 'queued'
                   AND (
                     SELECT COUNT(*)
                     FROM review_jobs active
                     JOIN merge_requests active_mr ON active_mr.id = active.merge_request_id
                     JOIN repositories active_repo ON active_repo.id = active_mr.repository_id
-                    WHERE active_repo.project_id = ?
+                    WHERE active_repo.project_id = %s
                       AND active.status IN ({active_placeholders})
-                  ) < ?
+                  ) < %s
                 """,
                 (candidate["id"], project_id, *ACTIVE_STATUSES, max_concurrency),
             ).rowcount
             if changed == 1:
-                job = conn.execute("SELECT * FROM review_jobs WHERE id = ?", (candidate["id"],)).fetchone()
+                job = conn.execute("SELECT * FROM review_jobs WHERE id = %s", (candidate["id"],)).fetchone()
                 break
         if not job:
             conn.commit()
             return None
         conn.execute(
-            "UPDATE merge_requests SET review_status = 'fetching' WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            "UPDATE merge_requests SET review_status = 'fetching' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
             (job["merge_request_id"],),
         )
         conn.commit()
@@ -4458,7 +4458,7 @@ def load_incremental_context(conn: Any, merge_request_id: str, head_sha: str) ->
         """
         SELECT dedupe_hash, last_seen_head_sha, status, resolved_in_commit
         FROM mr_finding_history
-        WHERE merge_request_id = ?
+        WHERE merge_request_id = %s
         ORDER BY updated_at DESC
         LIMIT 100
         """,
@@ -4492,8 +4492,8 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             "effort_level": job["requested_effort_level"],
         },
     )
-    mr = conn.execute("SELECT * FROM merge_requests WHERE id = ?", (job["merge_request_id"],)).fetchone()
-    repo = conn.execute("SELECT * FROM repositories WHERE id = ?", (mr["repository_id"],)).fetchone()
+    mr = conn.execute("SELECT * FROM merge_requests WHERE id = %s", (job["merge_request_id"],)).fetchone()
+    repo = conn.execute("SELECT * FROM repositories WHERE id = %s", (mr["repository_id"],)).fetchone()
     project_id = repo["project_id"]
     project_config = effective_project_config(config, conn, project_id, job["requested_by"])
 
@@ -4523,12 +4523,12 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             """
             UPDATE review_jobs
             SET status = 'cancelled', locked_at = NULL, locked_by = NULL, heartbeat_at = NULL, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
+            WHERE id = %s
             """,
             (job["id"],),
         )
         conn.execute(
-            "UPDATE merge_requests SET review_status = 'too_large' WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            "UPDATE merge_requests SET review_status = 'too_large' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
             (job["merge_request_id"],),
         )
         conn.commit()
@@ -4567,10 +4567,10 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
           id, review_job_id, effort_level, risk_score, sandbox_uri, budget_json,
           toolchain_manifest, data_policy_snapshot, status
         )
-        SELECT ?, j.id, j.requested_effort_level, mr.risk_score, ?, ?, ?, ?, 'running'
+        SELECT %s, j.id, j.requested_effort_level, mr.risk_score, %s, %s, %s, %s, 'running'
         FROM review_jobs j
         JOIN merge_requests mr ON mr.id = j.merge_request_id
-        WHERE j.id = ?
+        WHERE j.id = %s
         """,
         (
             run_id,
@@ -4583,7 +4583,7 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     )
     tool_gateway = ToolGateway(conn, project_id, project_config)
     conn.execute(
-        "UPDATE review_runs SET toolchain_manifest = ? WHERE id = ?",
+        "UPDATE review_runs SET toolchain_manifest = %s WHERE id = %s",
         (
             json.dumps({"static": "open_source_tools_first", "llm": project_config.get("llm", {}).get("default_model")}),
             run_id,
@@ -4593,7 +4593,7 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
 
     configured_data_policy = project_config.get("data_policy") or {}
     data_policy = normalize_data_policy(configured_data_policy)
-    conn.execute("UPDATE review_runs SET data_policy_snapshot = ? WHERE id = ?", (json.dumps(data_policy, ensure_ascii=False), run_id))
+    conn.execute("UPDATE review_runs SET data_policy_snapshot = %s WHERE id = %s", (json.dumps(data_policy, ensure_ascii=False), run_id))
     conn.commit()
     agent_configs = merge_custom_agents(load_agent_configs(conn, project_id), project_config)
     agent_config_by_id = {agent["agent_id"]: agent for agent in agent_configs}
@@ -4753,8 +4753,8 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
                 {"error_message": str(report_exc)},
                 "error",
             )
-        run_status = conn.execute("SELECT status FROM review_runs WHERE id = ?", (run_id,)).fetchone()
-        finding_count = conn.execute("SELECT COUNT(*) AS count FROM review_findings WHERE review_run_id = ?", (run_id,)).fetchone()
+        run_status = conn.execute("SELECT status FROM review_runs WHERE id = %s", (run_id,)).fetchone()
+        finding_count = conn.execute("SELECT COUNT(*) AS count FROM review_findings WHERE review_run_id = %s", (run_id,)).fetchone()
         write_worker_log(
             config,
             "review_run_completed",
@@ -4790,7 +4790,7 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             conn.execute(
                 """
                 INSERT INTO review_jobs_dead_letter (id, review_job_id, failure_reason, final_attempt)
-                VALUES (?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s)
                 """,
                 (new_id("dead"), job["id"], str(exc), next_attempt),
             )
@@ -4799,17 +4799,17 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
         else:
             job_status = "queued"
             mr_status = "queued"
-        conn.execute("UPDATE review_runs SET status = 'failed', report_summary = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?", (str(exc), run_id))
+        conn.execute("UPDATE review_runs SET status = 'failed', report_summary = %s, completed_at = CURRENT_TIMESTAMP WHERE id = %s", (str(exc), run_id))
         conn.execute(
             """
             UPDATE review_jobs
-            SET status = ?, attempt = ?, locked_at = NULL, locked_by = NULL, heartbeat_at = NULL, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
+            SET status = %s, attempt = %s, locked_at = NULL, locked_by = NULL, heartbeat_at = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
             """,
             (job_status, next_attempt, job["id"]),
         )
         conn.execute(
-            "UPDATE merge_requests SET review_status = ? WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            "UPDATE merge_requests SET review_status = %s WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
             (mr_status, mr["id"]),
         )
         conn.commit()

@@ -9,7 +9,7 @@ def table_exists(conn: Any, table_name: str) -> bool:
         SELECT table_name AS name
         FROM information_schema.tables
         WHERE table_schema = 'public'
-          AND table_name = ?
+          AND table_name = %s
         """,
         (table_name,),
     ).fetchone()

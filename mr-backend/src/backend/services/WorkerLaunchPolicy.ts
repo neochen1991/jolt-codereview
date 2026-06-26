@@ -39,7 +39,7 @@ async function queuedReviewWorkerCapacityAsync(input: {
     JOIN merge_requests mr ON mr.id = rj.merge_request_id
     JOIN repositories r ON r.id = mr.repository_id
     WHERE rj.status = 'queued'
-      AND rj.attempt < ?
+      AND rj.attempt < $1
     GROUP BY r.project_id
   `).all(maxAttempts) as Array<{ project_id: string; count: number }>;
   let capacity = 0;

@@ -14,8 +14,8 @@ def load_bound_rules(conn: Any, project_id: str, agent_key: str) -> list[dict[st
         SELECT rd.id, rd.name, rd.version, rd.content, erb.priority
         FROM expert_rule_bindings erb
         JOIN rule_documents rd ON rd.id = erb.rule_document_id
-        WHERE erb.project_id = ?
-          AND erb.agent_key = ?
+        WHERE erb.project_id = %s
+          AND erb.agent_key = %s
           AND rd.status = 'active'
         ORDER BY erb.priority, rd.name
         """,

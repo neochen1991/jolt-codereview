@@ -67,9 +67,9 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
       if (!command) return badRequest("comment body must start with @jolt");
       const actorId = currentUserId(req);
       const mr = input.mr_id
-        ? get<any>("SELECT mr.*, r.project_id, r.provider, r.provider_config_json FROM merge_requests mr JOIN repositories r ON r.id = mr.repository_id WHERE mr.id = ?", [String(input.mr_id)])
+        ? get<any>("SELECT mr.*, r.project_id, r.provider, r.provider_config_json FROM merge_requests mr JOIN repositories r ON r.id = mr.repository_id WHERE mr.id = $1", [String(input.mr_id)])
         : get<any>(
-            "SELECT mr.*, r.project_id, r.provider, r.provider_config_json FROM merge_requests mr JOIN repositories r ON r.id = mr.repository_id WHERE r.project_id = ? AND r.provider = ? AND mr.number = ?",
+            "SELECT mr.*, r.project_id, r.provider, r.provider_config_json FROM merge_requests mr JOIN repositories r ON r.id = mr.repository_id WHERE r.project_id = $1 AND r.provider = $2 AND mr.number = $3",
             [params.projectId, provider, Number(input.mr_number ?? input.number ?? 0)]
           );
       if (!mr) return notFound();
@@ -77,13 +77,13 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       let responseBody = "";
       if (command.command === "explain") {
-        const finding = get<FindingRow>("SELECT * FROM review_findings WHERE id = ?", [command.arg]);
+        const finding = get<FindingRow>("SELECT * FROM review_findings WHERE id = $1", [command.arg]);
         if (!finding) return notFound();
         responseBody = buildFindingExplanation(finding);
       } else if (command.command === "dismiss") {
-        const finding = get<FindingRow>("SELECT * FROM review_findings WHERE id = ?", [command.arg]);
+        const finding = get<FindingRow>("SELECT * FROM review_findings WHERE id = $1", [command.arg]);
         if (!finding) return notFound();
-        db.prepare("UPDATE review_findings SET lifecycle_state = 'dismissed', selected = 0 WHERE id = ?").run(finding.id);
+        db.prepare("UPDATE review_findings SET lifecycle_state = 'dismissed', selected = 0 WHERE id = $1").run(finding.id);
         responseBody = `@jolt dismiss\n\n已将 ${finding.id} 标记为 dismissed。`;
       } else if (command.command === "recheck") {
         reviewQueueService.enqueueOrReset({
@@ -104,8 +104,8 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
           FROM review_findings rf
           JOIN review_runs rr ON rr.id = rf.review_run_id
           JOIN review_jobs rj ON rj.id = rr.review_job_id
-          WHERE rj.merge_request_id = ? AND rf.file_path = ?
-            AND (? = 0 OR rf.line_start IS NULL OR ABS(rf.line_start - ?) <= 5)
+          WHERE rj.merge_request_id = $1 AND rf.file_path = $2
+            AND ($3 = 0 OR rf.line_start IS NULL OR ABS(rf.line_start - $4) <= 5)
           ORDER BY rr.started_at DESC, rf.confidence DESC
           LIMIT 3
           `,
@@ -155,7 +155,7 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
         if (!normalized.externalId || !normalized.number || !normalized.title || !normalized.headSha) {
           db.prepare(`
             INSERT INTO webhook_dead_letter (id, project_id, provider, event_type, payload_sha, failure_reason)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4, $5, $6)
           `).run(
             id("webhook_dl"),
             params.projectId,
@@ -172,7 +172,7 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
         if (!repo) {
           db.prepare(`
             INSERT INTO webhook_dead_letter (id, project_id, provider, event_type, payload_sha, failure_reason)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4, $5, $6)
           `).run(id("webhook_dl"), params.projectId, provider, eventType, payloadSha, `repository not bound: ${normalized.repoFullName || "<unknown>"}`);
           return { ok: true, provider, status: "ignored_unbound_repository", repository: normalized.repoFullName };
         }
@@ -229,7 +229,7 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
       if (!repo) {
         db.prepare(`
           INSERT INTO webhook_dead_letter (id, project_id, provider, event_type, payload_sha, failure_reason)
-          VALUES (?, ?, ?, ?, ?, ?)
+          VALUES ($1, $2, $3, $4, $5, $6)
         `).run(id("webhook_dl"), params.projectId, provider, eventType, payloadSha, `repository not bound: ${fullName}`);
         return { ok: true, provider, status: "ignored_unbound_repository", repository: fullName };
       }

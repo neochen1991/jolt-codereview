@@ -46,14 +46,14 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       SELECT rr.id, rr.review_job_id, rr.started_at
       FROM review_runs rr
       JOIN review_jobs rj ON rj.id = rr.review_job_id
-      WHERE rj.merge_request_id = ?
+      WHERE rj.merge_request_id = $1
       ORDER BY rr.started_at DESC
       LIMIT 2
     `, [mrId]);
     if (runs.length < 2) return { base_run: runs[1] ?? null, head_run: runs[0] ?? null, added: [], resolved: [], retained: [] };
     const [headRun, baseRun] = runs;
-    const head = all<FindingRow>("SELECT * FROM review_findings WHERE review_run_id = ?", [headRun.id]);
-    const base = all<FindingRow>("SELECT * FROM review_findings WHERE review_run_id = ?", [baseRun.id]);
+    const head = all<FindingRow>("SELECT * FROM review_findings WHERE review_run_id = $1", [headRun.id]);
+    const base = all<FindingRow>("SELECT * FROM review_findings WHERE review_run_id = $1", [baseRun.id]);
     const headByHash = new Map(head.map((finding) => [finding.dedupe_hash, finding]));
     const baseByHash = new Map(base.map((finding) => [finding.dedupe_hash, finding]));
     return {
@@ -170,7 +170,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     const runs = all<Record<string, any>>(`
       SELECT rr.* FROM review_runs rr
       JOIN review_jobs rj ON rj.id = rr.review_job_id
-      WHERE rj.merge_request_id = ?
+      WHERE rj.merge_request_id = $1
       ORDER BY rr.started_at DESC
     `, [mrId]);
     const selectedRun = runId ? runs.find((run) => run.id === runId) : runs[0];
@@ -233,7 +233,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         SELECT e.*, s.span_key, s.agent_id, s.status AS span_status
         FROM agent_trace_events e
         JOIN agent_trace_spans s ON s.id = e.span_id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = $1
         ORDER BY e.created_at
       `, [selectedRun.id])) {
         items.push({
@@ -254,7 +254,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         SELECT msg.*, s.span_key, s.agent_id
         FROM agent_messages msg
         JOIN agent_trace_spans s ON s.id = msg.span_id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = $1
         ORDER BY msg.created_at
       `, [selectedRun.id])) {
         items.push({
@@ -277,7 +277,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         SELECT t.*, s.span_key, s.agent_id
         FROM tool_call_records t
         JOIN agent_trace_spans s ON s.id = t.span_id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = $1
         ORDER BY t.created_at
       `, [selectedRun.id])) {
         items.push({
@@ -303,7 +303,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         SELECT l.*, s.span_key, s.agent_id
         FROM llm_call_records l
         JOIN agent_trace_spans s ON s.id = l.span_id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = $1
         ORDER BY l.created_at
       `, [selectedRun.id])) {
         items.push({
@@ -329,7 +329,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         SELECT m.*, s.span_key, s.agent_id
         FROM mcp_call_records m
         JOIN agent_trace_spans s ON s.id = m.span_id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = $1
         ORDER BY m.created_at
       `, [selectedRun.id])) {
         items.push({
@@ -349,7 +349,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         });
       }
 
-      for (const row of all<Record<string, any>>("SELECT * FROM review_artifacts WHERE review_run_id = ? ORDER BY created_at", [selectedRun.id])) {
+      for (const row of all<Record<string, any>>("SELECT * FROM review_artifacts WHERE review_run_id = $1 ORDER BY created_at", [selectedRun.id])) {
         items.push({
           kind: "artifact",
           id: row.id,
@@ -393,7 +393,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         FROM review_jobs rj
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories r ON r.id = mr.repository_id
-        WHERE r.project_id = ?
+        WHERE r.project_id = $1
           AND rj.status IN ('fetching', 'pre_scanning', 'reviewing', 'judging', 'running')
           AND NULLIF(COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at), '')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '60 seconds'
         ORDER BY rj.locked_at DESC, rj.updated_at DESC
@@ -459,7 +459,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         JOIN review_jobs rj ON rj.id = dl.review_job_id
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories r ON r.id = mr.repository_id
-        WHERE r.project_id = ?
+        WHERE r.project_id = $1
         ORDER BY dl.created_at DESC
       `, [params.projectId])
     })),
@@ -470,22 +470,22 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const runs = all(`
         SELECT rr.* FROM review_runs rr
         JOIN review_jobs rj ON rj.id = rr.review_job_id
-        WHERE rj.merge_request_id = ?
+        WHERE rj.merge_request_id = $1
         ORDER BY rr.started_at DESC
       `, [params.mrId]);
       const latestRun = runs[0] as { id: string } | undefined;
       const findings = latestRun
-        ? all("SELECT * FROM review_findings WHERE review_run_id = ? ORDER BY severity DESC, confidence DESC", [latestRun.id])
+        ? all("SELECT * FROM review_findings WHERE review_run_id = $1 ORDER BY severity DESC, confidence DESC", [latestRun.id])
         : [];
       const toolObservations = latestRun
-        ? all("SELECT * FROM tool_observations WHERE review_run_id = ? ORDER BY created_at", [latestRun.id])
+        ? all("SELECT * FROM tool_observations WHERE review_run_id = $1 ORDER BY created_at", [latestRun.id])
         : [];
       const trace = latestRun
         ? all(`
             SELECT s.span_key, s.agent_id, s.status, e.event_type, e.summary, e.payload_json, e.created_at
             FROM agent_trace_spans s
             LEFT JOIN agent_trace_events e ON e.span_id = s.id
-            WHERE s.review_run_id = ?
+            WHERE s.review_run_id = $1
             ORDER BY s.started_at, e.created_at
           `, [latestRun.id])
         : [];
@@ -495,31 +495,31 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
               SELECT msg.*, s.span_key, s.agent_id
               FROM agent_messages msg
               JOIN agent_trace_spans s ON s.id = msg.span_id
-              WHERE s.review_run_id = ?
+              WHERE s.review_run_id = $1
               ORDER BY msg.created_at
             `, [latestRun.id]),
             tool_calls: all(`
               SELECT t.*, s.span_key, s.agent_id
               FROM tool_call_records t
               JOIN agent_trace_spans s ON s.id = t.span_id
-              WHERE s.review_run_id = ?
+              WHERE s.review_run_id = $1
               ORDER BY t.created_at
             `, [latestRun.id]),
             llm_calls: all(`
               SELECT l.*, s.span_key, s.agent_id
               FROM llm_call_records l
               JOIN agent_trace_spans s ON s.id = l.span_id
-              WHERE s.review_run_id = ?
+              WHERE s.review_run_id = $1
               ORDER BY l.created_at
             `, [latestRun.id]),
             mcp_calls: all(`
               SELECT m.*, s.span_key, s.agent_id
               FROM mcp_call_records m
               JOIN agent_trace_spans s ON s.id = m.span_id
-              WHERE s.review_run_id = ?
+              WHERE s.review_run_id = $1
               ORDER BY m.created_at
             `, [latestRun.id]),
-            artifacts: all("SELECT * FROM review_artifacts WHERE review_run_id = ? ORDER BY created_at", [latestRun.id])
+            artifacts: all("SELECT * FROM review_artifacts WHERE review_run_id = $1 ORDER BY created_at", [latestRun.id])
           }
         : { messages: [], tool_calls: [], llm_calls: [], mcp_calls: [], artifacts: [] };
       return { mr, jobs, runs, findings, tool_observations: toolObservations, trace, session_logs: sessionLogs, compare: compareRunsForMr(params.mrId) };
@@ -568,12 +568,12 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const runs = all(`
         SELECT rr.* FROM review_runs rr
         JOIN review_jobs rj ON rj.id = rr.review_job_id
-        WHERE rj.merge_request_id = ?
+        WHERE rj.merge_request_id = $1
         ORDER BY rr.started_at DESC
       `, [params.mrId]);
       const latestRun = runs[0] as { id: string } | undefined;
       const findings = latestRun
-        ? all<FindingRow>("SELECT * FROM review_findings WHERE review_run_id = ? ORDER BY severity DESC, confidence DESC", [latestRun.id])
+        ? all<FindingRow>("SELECT * FROM review_findings WHERE review_run_id = $1 ORDER BY severity DESC, confidence DESC", [latestRun.id])
         : [];
       const content = formatMrReviewMarkdown({ mr, run: latestRun as any, findings });
       auditLog({
@@ -706,58 +706,58 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       return updated;
     }),
     route("GET", "/api/mr-review/review-runs/:runId", ({ params }) =>
-      get("SELECT * FROM review_runs WHERE id = ?", [params.runId]) ?? notFound()
+      get("SELECT * FROM review_runs WHERE id = $1", [params.runId]) ?? notFound()
     ),
     route("GET", "/api/mr-review/review-runs/:runId/trace", ({ params }) => ({
       items: all(`
         SELECT s.*, e.event_type, e.summary, e.payload_json, e.created_at AS event_created_at
         FROM agent_trace_spans s
         LEFT JOIN agent_trace_events e ON e.span_id = s.id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = $1
         ORDER BY s.started_at, e.created_at
       `, [params.runId])
     })),
     route("GET", "/api/mr-review/review-runs/:runId/session-logs", ({ params }) => {
-      const spans = all("SELECT * FROM agent_trace_spans WHERE review_run_id = ? ORDER BY started_at", [params.runId]);
+      const spans = all("SELECT * FROM agent_trace_spans WHERE review_run_id = $1 ORDER BY started_at", [params.runId]);
       const events = all(`
         SELECT e.*, s.span_key, s.agent_id
         FROM agent_trace_events e
         JOIN agent_trace_spans s ON s.id = e.span_id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = $1
         ORDER BY e.created_at
       `, [params.runId]);
       const llmCalls = all(`
         SELECT l.*, s.span_key, s.agent_id
         FROM llm_call_records l
         JOIN agent_trace_spans s ON s.id = l.span_id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = $1
         ORDER BY l.created_at
       `, [params.runId]);
       const toolCalls = all(`
         SELECT t.*, s.span_key, s.agent_id
         FROM tool_call_records t
         JOIN agent_trace_spans s ON s.id = t.span_id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = $1
         ORDER BY t.created_at
       `, [params.runId]);
       const mcpCalls = all(`
         SELECT m.*, s.span_key, s.agent_id
         FROM mcp_call_records m
         JOIN agent_trace_spans s ON s.id = m.span_id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = $1
         ORDER BY m.created_at
       `, [params.runId]);
       const messages = all(`
         SELECT msg.*, s.span_key, s.agent_id
         FROM agent_messages msg
         JOIN agent_trace_spans s ON s.id = msg.span_id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = $1
         ORDER BY msg.created_at
       `, [params.runId]);
       return { spans, events, messages, llm_calls: llmCalls, tool_calls: toolCalls, mcp_calls: mcpCalls };
     }),
     route("GET", "/api/mr-review/review-runs/:runId/artifacts", ({ params }) => ({
-      items: all("SELECT * FROM review_artifacts WHERE review_run_id = ? ORDER BY created_at", [params.runId])
+      items: all("SELECT * FROM review_artifacts WHERE review_run_id = $1 ORDER BY created_at", [params.runId])
     })),
     route("GET", "/api/mr-review/merge-requests/:mrId/review-runs/compare", ({ params }) => {
       return compareRunsForMr(params.mrId);
@@ -782,7 +782,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
           id, merge_request_id, report_type, commit_sha, report_format, report_url,
           payload_json, metadata_json, status, created_by
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'received', ?)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'received', $9)
       `).run(
         reportId,
         params.mrId,
@@ -803,7 +803,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         summary: `${reportType}:${reportFormat}`,
         metadata: { report_id: reportId, commit_sha: commitSha }
       });
-      return get("SELECT * FROM external_review_reports WHERE id = ?", [reportId]);
+      return get("SELECT * FROM external_review_reports WHERE id = $1", [reportId]);
     }),
     route("GET", "/api/mr-review/merge-requests/:mrId/external-reports", ({ params, req }) => {
       const actorId = currentUserId(req);
@@ -815,7 +815,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       return {
         items: all(
-          "SELECT * FROM external_review_reports WHERE merge_request_id = ? ORDER BY created_at DESC",
+          "SELECT * FROM external_review_reports WHERE merge_request_id = $1 ORDER BY created_at DESC",
           [params.mrId]
         )
       };
@@ -830,20 +830,20 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         JOIN review_jobs rj ON rj.id = rr.review_job_id
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories r ON r.id = mr.repository_id
-        WHERE rf.id = ?
+        WHERE rf.id = $1
       `, [params.findingId]);
       if (!finding) return notFound();
       const denied = ensureProjectRole(finding.project_id, actorId, "developer");
       if (denied) return denied;
       if (typeof input.selected === "boolean") {
-        db.prepare("UPDATE review_findings SET selected = ? WHERE id = ?").run(input.selected ? 1 : 0, params.findingId);
+        db.prepare("UPDATE review_findings SET selected = $1 WHERE id = $2").run(input.selected ? 1 : 0, params.findingId);
         auditLog({ userId: actorId, projectId: finding.project_id, action: "finding.select", resourceType: "review_finding", resourceId: params.findingId, summary: `selected=${input.selected}` });
       }
       if (typeof input.lifecycle_state === "string") {
-        db.prepare("UPDATE review_findings SET lifecycle_state = ? WHERE id = ?").run(input.lifecycle_state, params.findingId);
+        db.prepare("UPDATE review_findings SET lifecycle_state = $1 WHERE id = $2").run(input.lifecycle_state, params.findingId);
         auditLog({ userId: actorId, projectId: finding.project_id, action: "finding.lifecycle", resourceType: "review_finding", resourceId: params.findingId, summary: String(input.lifecycle_state) });
       }
-      return get("SELECT * FROM review_findings WHERE id = ?", [params.findingId]);
+      return get("SELECT * FROM review_findings WHERE id = $1", [params.findingId]);
     }),
     route("POST", "/api/mr-review/review-findings/:findingId/feedback", ({ params, body, req }) => {
       const actorId = currentUserId(req);
@@ -856,7 +856,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         JOIN review_jobs rj ON rj.id = rr.review_job_id
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories r ON r.id = mr.repository_id
-        WHERE rf.id = ?
+        WHERE rf.id = $1
       `, [params.findingId]);
       if (!finding) return notFound();
       const denied = ensureProjectRole(finding.project_id, actorId, "developer");
@@ -870,7 +870,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         reason: input.reason ? String(input.reason) : null
       });
       auditLog({ userId: actorId, projectId: finding.project_id, action: "finding.feedback", resourceType: "review_finding", resourceId: params.findingId, summary: state, metadata: { scope: input.scope ?? null } });
-      return get("SELECT * FROM review_findings WHERE id = ?", [params.findingId]);
+      return get("SELECT * FROM review_findings WHERE id = $1", [params.findingId]);
     }),
     route("POST", "/api/mr-review/merge-requests/:mrId/publish", async ({ params, body, req }) => {
       const input = body as Record<string, unknown>;

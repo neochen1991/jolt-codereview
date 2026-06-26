@@ -87,7 +87,7 @@ def load_expert_profiles(conn: Any, project_id: str) -> list[ExpertProfile]:
         """
         SELECT *
         FROM expert_profiles
-        WHERE project_id = ? AND enabled = 1
+        WHERE project_id = %s AND enabled = 1
         ORDER BY agent_key
         """,
         (project_id,),

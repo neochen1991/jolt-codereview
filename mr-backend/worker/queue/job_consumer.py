@@ -27,13 +27,13 @@ def start_heartbeat(db_file: Path | None, job_id: str, interval_seconds: int = H
         try:
             while True:
                 time.sleep(interval_seconds)
-                placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
+                placeholders = ",".join("%s" for _ in ACTIVE_STATUSES)
                 try:
                     result = conn.execute(
                         f"""
                         UPDATE review_jobs
                         SET heartbeat_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ? AND status IN ({placeholders})
+                        WHERE id = %s AND status IN ({placeholders})
                         """,
                         (job_id, *ACTIVE_STATUSES),
                     )

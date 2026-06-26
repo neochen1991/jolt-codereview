@@ -362,7 +362,7 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     }
     const requestedFindingIds = Array.from(new Set(findingIds.filter(Boolean)));
     if (requestedFindingIds.length === 0) return badRequest("finding_ids is required");
-    const placeholders = requestedFindingIds.map(() => "?").join(",");
+    const placeholders = requestedFindingIds.map((_, index) => `$${index + 1}`).join(",");
     const findings = all<FindingRow>(`SELECT * FROM review_findings WHERE id IN (${placeholders})`, requestedFindingIds);
     if (!findings.length) return badRequest("no publishable findings");
     const publishedRecords = dryRun
@@ -396,9 +396,9 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
         INSERT INTO vcs_publish_records (
           id, finding_id, provider, external_comment_id, external_thread_id, publish_status, published_by, body
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `).run(publishId, finding.id, repo.provider, commentRef, commentRef, dryRun ? "dry_run" : "published", userId, body);
-      db.prepare("UPDATE review_findings SET publish_state = ?, lifecycle_state = 'accepted' WHERE id = ?")
+      db.prepare("UPDATE review_findings SET publish_state = $1, lifecycle_state = 'accepted' WHERE id = $2")
         .run(dryRun ? "dry_run" : "published", finding.id);
       feedbackLearningService.recordFeedback({
         userId,

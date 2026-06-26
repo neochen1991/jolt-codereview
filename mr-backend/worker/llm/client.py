@@ -296,7 +296,7 @@ def _read_cached_llm_response(config: dict[str, Any], cache_key: str) -> dict[st
     try:
         conn = open_app_database(config)
         _ensure_llm_cache_schema(conn)
-        row = conn.execute("SELECT response_json FROM llm_response_cache WHERE cache_key = ?", (cache_key,)).fetchone()
+        row = conn.execute("SELECT response_json FROM llm_response_cache WHERE cache_key = %s", (cache_key,)).fetchone()
         if not row:
             return None
         raw = row["response_json"] if hasattr(row, "keys") else row[0]
@@ -334,7 +334,7 @@ def _write_cached_llm_response(
             INSERT INTO llm_response_cache (
               cache_key, provider, model, schema_name, seed, prompt_hash, response_json, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
             ON CONFLICT(cache_key) DO UPDATE SET
               response_json = excluded.response_json,
               updated_at = CURRENT_TIMESTAMP

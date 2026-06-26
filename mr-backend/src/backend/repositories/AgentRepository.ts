@@ -4,7 +4,7 @@ export class AgentRepository {
   constructor(private readonly db: Db) {}
 
   listByProject(projectId: string) {
-    return this.db.prepare("SELECT * FROM agent_configs WHERE project_id = ? ORDER BY agent_id").all(projectId);
+    return this.db.prepare("SELECT * FROM agent_configs WHERE project_id = $1 ORDER BY agent_id").all(projectId);
   }
 
   listWithProfiles(projectId: string) {
@@ -21,21 +21,21 @@ export class AgentRepository {
       LEFT JOIN expert_profiles ep
         ON ep.project_id = ac.project_id
        AND ep.agent_key = ac.agent_id
-      WHERE ac.project_id = ?
+      WHERE ac.project_id = $1
       ORDER BY ac.agent_id
     `).all(projectId);
   }
 
   listExpertProfiles(projectId: string) {
-    return this.db.prepare("SELECT * FROM expert_profiles WHERE project_id = ? ORDER BY agent_key").all(projectId);
+    return this.db.prepare("SELECT * FROM expert_profiles WHERE project_id = $1 ORDER BY agent_key").all(projectId);
   }
 
   findExpertProfile(projectId: string, agentKey: string) {
-    return this.db.prepare("SELECT * FROM expert_profiles WHERE project_id = ? AND agent_key = ?").get(projectId, agentKey);
+    return this.db.prepare("SELECT * FROM expert_profiles WHERE project_id = $1 AND agent_key = $2").get(projectId, agentKey);
   }
 
   findByProjectAndAgent(projectId: string, agentId: string) {
-    return this.db.prepare("SELECT * FROM agent_configs WHERE project_id = ? AND agent_id = ?").get(projectId, agentId);
+    return this.db.prepare("SELECT * FROM agent_configs WHERE project_id = $1 AND agent_id = $2").get(projectId, agentId);
   }
 
   createCustomAgent(input: {
@@ -62,7 +62,7 @@ export class AgentRepository {
         id, project_id, agent_key, display_name, role_profile, responsibility_scope, excluded_scope,
         enabled, min_confidence, max_findings, max_llm_calls, max_tool_calls, output_schema_version
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 'finding_v1')
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, 'finding_v1')
       ON CONFLICT(project_id, agent_key) DO UPDATE SET
         display_name = excluded.display_name,
         role_profile = excluded.role_profile,
@@ -92,7 +92,7 @@ export class AgentRepository {
         id, project_id, agent_id, display_name, enabled, applies_to_json, tools_json,
         skills_json, rule_sets_json, requires_deepagents, min_confidence, max_findings_per_mr
       )
-      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+      VALUES ($1, $2, $3, $4, 1, $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT(project_id, agent_id) DO UPDATE SET
         display_name = excluded.display_name,
         enabled = 1,
@@ -123,15 +123,15 @@ export class AgentRepository {
   update(projectId: string, agentId: string, input: Record<string, unknown>) {
     this.db.prepare(`
       UPDATE agent_configs
-      SET enabled = COALESCE(?, enabled),
-          applies_to_json = COALESCE(?, applies_to_json),
-          tools_json = COALESCE(?, tools_json),
-          skills_json = COALESCE(?, skills_json),
-          rule_sets_json = COALESCE(?, rule_sets_json),
-          min_confidence = COALESCE(?, min_confidence),
-          max_findings_per_mr = COALESCE(?, max_findings_per_mr),
+      SET enabled = COALESCE($1, enabled),
+          applies_to_json = COALESCE($2, applies_to_json),
+          tools_json = COALESCE($3, tools_json),
+          skills_json = COALESCE($4, skills_json),
+          rule_sets_json = COALESCE($5, rule_sets_json),
+          min_confidence = COALESCE($6, min_confidence),
+          max_findings_per_mr = COALESCE($7, max_findings_per_mr),
           updated_at = CURRENT_TIMESTAMP
-      WHERE project_id = ? AND agent_id = ?
+      WHERE project_id = $8 AND agent_id = $9
     `).run(
       typeof input.enabled === "boolean" ? (input.enabled ? 1 : 0) : null,
       input.applies_to ? JSON.stringify(input.applies_to) : null,
@@ -149,16 +149,16 @@ export class AgentRepository {
   updateExpertProfile(projectId: string, agentKey: string, input: Record<string, unknown>) {
     this.db.prepare(`
       UPDATE expert_profiles
-      SET display_name = COALESCE(?, display_name),
-          role_profile = COALESCE(?, role_profile),
-          responsibility_scope = COALESCE(?, responsibility_scope),
-          excluded_scope = COALESCE(?, excluded_scope),
-          enabled = COALESCE(?, enabled),
-          min_confidence = COALESCE(?, min_confidence),
-          max_findings = COALESCE(?, max_findings),
-          max_llm_calls = COALESCE(?, max_llm_calls),
-          max_tool_calls = COALESCE(?, max_tool_calls)
-      WHERE project_id = ? AND agent_key = ?
+      SET display_name = COALESCE($1, display_name),
+          role_profile = COALESCE($2, role_profile),
+          responsibility_scope = COALESCE($3, responsibility_scope),
+          excluded_scope = COALESCE($4, excluded_scope),
+          enabled = COALESCE($5, enabled),
+          min_confidence = COALESCE($6, min_confidence),
+          max_findings = COALESCE($7, max_findings),
+          max_llm_calls = COALESCE($8, max_llm_calls),
+          max_tool_calls = COALESCE($9, max_tool_calls)
+      WHERE project_id = $10 AND agent_key = $11
     `).run(
       typeof input.display_name === "string" ? input.display_name : null,
       typeof input.role_profile === "string" ? input.role_profile : null,

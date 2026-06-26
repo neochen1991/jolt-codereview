@@ -50,7 +50,7 @@ def _table_columns(conn: Any, table: str) -> set[str]:
                 """
                 SELECT column_name AS name
                 FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = ?
+                WHERE table_schema = 'public' AND table_name = %s
                 """,
                 (table,),
             ).fetchall()
@@ -67,7 +67,7 @@ def _project_id_for_job(conn: Any, job: Any) -> str:
             FROM review_jobs rj
             JOIN merge_requests mr ON mr.id = rj.merge_request_id
             JOIN repositories r ON r.id = mr.repository_id
-            WHERE rj.id = ?
+            WHERE rj.id = %s
             """,
             (job["id"],),
         ).fetchone()
@@ -119,8 +119,8 @@ def _load_feedback_examples(conn: Any, project_id: str, agent_id: str) -> list[d
             JOIN review_jobs rj ON rj.id = rr.review_job_id
             JOIN merge_requests mr ON mr.id = rj.merge_request_id
             JOIN repositories r ON r.id = mr.repository_id
-            WHERE r.project_id = ?
-              AND rf.agent_id = ?
+            WHERE r.project_id = %s
+              AND rf.agent_id = %s
               AND (
                 uf.feedback_type = 'false_positive'
                 OR rf.lifecycle_state IN ('false_positive', 'rejected_false_positive', 'judge_rejected')
@@ -165,9 +165,9 @@ def make_run_experts_node(
         effort = state["effort"]
         selected_agents = state["selected_agents"]
         project_id = _project_id_for_job(conn, job)
-        conn.execute("UPDATE review_jobs SET status = 'reviewing', heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?", (job["id"],))
+        conn.execute("UPDATE review_jobs SET status = 'reviewing', heartbeat_at = CURRENT_TIMESTAMP WHERE id = %s", (job["id"],))
         conn.execute(
-            "UPDATE merge_requests SET review_status = 'reviewing' WHERE id = ? AND review_status NOT IN ('merged', 'closed')",
+            "UPDATE merge_requests SET review_status = 'reviewing' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
             (job["merge_request_id"],),
         )
         conn.commit()

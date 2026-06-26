@@ -74,7 +74,7 @@ def upsert_candidate_finding(
           title, problem_description, evidence, rejected_reasons_json, source_observations_json,
           raw_json, final_finding_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT(review_run_id, dedupe_hash, stage) DO UPDATE SET
           status = excluded.status,
           source_type = excluded.source_type,

@@ -85,14 +85,14 @@ export function createRepositoryRoutes(ctx: BackendRouteContext): Route[] {
             updated_at = CURRENT_TIMESTAMP
         WHERE status = 'queued'
           AND merge_request_id IN (
-            SELECT id FROM merge_requests WHERE repository_id = ?
+            SELECT id FROM merge_requests WHERE repository_id = $1
           )
       `).run(params.repositoryId);
       db.prepare(`
         UPDATE merge_requests
         SET review_status = 'cancelled',
             updated_at = CURRENT_TIMESTAMP
-        WHERE repository_id = ? AND review_status = 'queued'
+        WHERE repository_id = $1 AND review_status = 'queued'
       `).run(params.repositoryId);
       auditLog({
         userId: actorId,

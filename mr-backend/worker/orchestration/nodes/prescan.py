@@ -70,14 +70,14 @@ def make_prescan_node(
             {**code_context, "related_context": {key: value for key, value in repo_related_context.items() if key != "source_file_contents"}},
             {"strategy": repo_related_context.get("index_kind") or code_context.get("index_kind", "diff_symbol_index"), "head_sha": job["head_sha"]},
         )
-        mr_row = conn.execute("SELECT repository_id FROM merge_requests WHERE id = ?", (job["merge_request_id"],)).fetchone()
+        mr_row = conn.execute("SELECT repository_id FROM merge_requests WHERE id = %s", (job["merge_request_id"],)).fetchone()
         if mr_row:
             conn.execute(
                 """
                 INSERT INTO code_index_snapshots (
                   id, review_run_id, repository_id, commit_sha, index_kind, storage_uri
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     new_id("idx"),
@@ -165,7 +165,7 @@ def make_prescan_node(
             {"diff_slices_artifact": str(diff_slices_artifact), "code_context_artifact": str(code_context_artifact)},
         )
         conn.execute(
-            "UPDATE review_runs SET toolchain_manifest = ? WHERE id = ?",
+            "UPDATE review_runs SET toolchain_manifest = %s WHERE id = %s",
             (
                 json.dumps(
                     {

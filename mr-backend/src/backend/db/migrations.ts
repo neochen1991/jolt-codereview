@@ -637,8 +637,8 @@ function addColumnIfMissing(db: Db, table: string, column: string, definition: s
     SELECT column_name AS name
     FROM information_schema.columns
     WHERE table_schema = 'public'
-      AND table_name = ?
-      AND column_name = ?
+      AND table_name = $1
+      AND column_name = $2
   `).all(table, column) as Array<{ name: string }>;
   if (!rows.length) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);

@@ -173,8 +173,8 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
         SELECT project_id, name, version, content
         FROM rule_documents
         WHERE status = 'active'
-          AND project_id IN (?, 'project_default')
-        ORDER BY CASE WHEN project_id = ? THEN 0 ELSE 1 END, created_at DESC
+          AND project_id IN ($1, 'project_default')
+        ORDER BY CASE WHEN project_id = $2 THEN 0 ELSE 1 END, created_at DESC
         `,
         [params.projectId, params.projectId]
       );

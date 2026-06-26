@@ -3274,13 +3274,13 @@ def _mark_observations_adopted(
         conn.execute(
             """
             UPDATE tool_observations
-            SET adopted_by_agent = ?, adoption_state = 'adopted_final'
-            WHERE review_run_id = ?
-              AND tool_name = ?
-              AND COALESCE(rule_id, '') = COALESCE(?, '')
-              AND file_path = ?
-              AND COALESCE(line_start, -1) = COALESCE(?, -1)
-              AND message = ?
+            SET adopted_by_agent = %s, adoption_state = 'adopted_final'
+            WHERE review_run_id = %s
+              AND tool_name = %s
+              AND COALESCE(rule_id, '') = COALESCE(%s, '')
+              AND file_path = %s
+              AND COALESCE(line_start, -1) = COALESCE(%s, -1)
+              AND message = %s
             """,
             (
                 agent_id,
@@ -3305,14 +3305,14 @@ def _mark_observation_state(
     conn.execute(
         """
         UPDATE tool_observations
-        SET adopted_by_agent = COALESCE(?, adopted_by_agent),
-            adoption_state = ?
-        WHERE review_run_id = ?
-          AND tool_name = ?
-          AND COALESCE(rule_id, '') = COALESCE(?, '')
-          AND file_path = ?
-          AND COALESCE(line_start, -1) = COALESCE(?, -1)
-          AND message = ?
+        SET adopted_by_agent = COALESCE(%s, adopted_by_agent),
+            adoption_state = %s
+        WHERE review_run_id = %s
+          AND tool_name = %s
+          AND COALESCE(rule_id, '') = COALESCE(%s, '')
+          AND file_path = %s
+          AND COALESCE(line_start, -1) = COALESCE(%s, -1)
+          AND message = %s
         """,
         (
             agent_id,
@@ -3446,7 +3446,7 @@ def make_judge_findings_node(
                     """
                     SELECT project_id, rule_id, file_glob, snippet_hash, snippet_excerpt, count, last_marked_at
                     FROM rule_suppression_hints
-                    WHERE project_id = ?
+                    WHERE project_id = %s
                     """,
                     (project_id,),
                 ).fetchall()
@@ -3752,7 +3752,7 @@ def make_judge_findings_node(
                   evidence_score_json,
                   publish_state, lifecycle_state, selected
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', 'pending', %s)
                 """,
                 (
                     finding_id,

@@ -20,7 +20,7 @@ function redactStorageConfig(value: Record<string, unknown>) {
 
 function storageSetting(ctx: BackendRouteContext) {
   const row = ctx.get<{ settings_json: string; updated_at: string }>(
-    "SELECT settings_json, updated_at FROM system_settings WHERE settings_key = ?",
+    "SELECT settings_json, updated_at FROM system_settings WHERE settings_key = $1",
     [STORAGE_SETTING_KEY]
   );
   const saved = row ? JSON.parse(row.settings_json || "{}") as Record<string, unknown> : {};
@@ -65,7 +65,7 @@ function persistStorageRuntimeConfig(ctx: BackendRouteContext, value: Record<str
 
 function existingStorageValue(ctx: Pick<BackendRouteContext, "get">) {
   const row = ctx.get<{ settings_json: string }>(
-    "SELECT settings_json FROM system_settings WHERE settings_key = ?",
+    "SELECT settings_json FROM system_settings WHERE settings_key = $1",
     [STORAGE_SETTING_KEY]
   );
   return row ? JSON.parse(row.settings_json || "{}") as Record<string, unknown> : {};
@@ -220,7 +220,7 @@ export function createSystemRoutes(ctx: BackendRouteContext): Route[] {
       const persistedConfigPath = persistStorageRuntimeConfig(ctx, value);
       ctx.db.prepare(`
         INSERT INTO system_settings (id, settings_key, settings_json, updated_at)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
         ON CONFLICT(settings_key) DO UPDATE SET
           settings_json = excluded.settings_json,
           updated_at = CURRENT_TIMESTAMP

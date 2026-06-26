@@ -182,7 +182,7 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       if (!["approved", "rejected"].includes(status)) return badRequest("status must be approved or rejected");
       if (status === "approved") {
         const request = get<{ requested_role?: string }>(
-          "SELECT requested_role FROM project_join_requests WHERE id = ? AND project_id = ?",
+          "SELECT requested_role FROM project_join_requests WHERE id = $1 AND project_id = $2",
           [params.requestId, params.projectId]
         );
         if (request?.requested_role === "project_admin") {

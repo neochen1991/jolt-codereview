@@ -18,7 +18,7 @@ export class ObservabilityService {
       FROM review_jobs rj
       JOIN merge_requests mr ON mr.id = rj.merge_request_id
       JOIN repositories r ON r.id = mr.repository_id
-      WHERE r.project_id = ?
+      WHERE r.project_id = $1
       GROUP BY rj.status
       ORDER BY rj.status
     `).all(projectId);
@@ -27,7 +27,7 @@ export class ObservabilityService {
       FROM review_jobs rj
       JOIN merge_requests mr ON mr.id = rj.merge_request_id
       JOIN repositories r ON r.id = mr.repository_id
-      WHERE r.project_id = ? AND rj.status IN ('fetching', 'pre_scanning', 'reviewing', 'judging')
+      WHERE r.project_id = $1 AND rj.status IN ('fetching', 'pre_scanning', 'reviewing', 'judging')
       ORDER BY rj.locked_at DESC
       LIMIT 20
     `).all(projectId);
@@ -37,7 +37,7 @@ export class ObservabilityService {
       JOIN review_jobs rj ON rj.id = dl.review_job_id
       JOIN merge_requests mr ON mr.id = rj.merge_request_id
       JOIN repositories r ON r.id = mr.repository_id
-      WHERE r.project_id = ?
+      WHERE r.project_id = $1
     `).get(projectId) as { count: number } | undefined;
     const duration = this.db.prepare(`
       SELECT
@@ -47,7 +47,7 @@ export class ObservabilityService {
       JOIN review_jobs rj ON rj.id = rr.review_job_id
       JOIN merge_requests mr ON mr.id = rj.merge_request_id
       JOIN repositories r ON r.id = mr.repository_id
-      WHERE r.project_id = ? AND rr.completed_at IS NOT NULL
+      WHERE r.project_id = $1 AND rr.completed_at IS NOT NULL
     `).get(projectId);
     return {
       project_id: projectId,
@@ -67,7 +67,7 @@ export class ObservabilityService {
       JOIN review_jobs rj ON rj.id = rr.review_job_id
       JOIN merge_requests mr ON mr.id = rj.merge_request_id
       JOIN repositories r ON r.id = mr.repository_id
-      WHERE r.project_id = ?
+      WHERE r.project_id = $1
       GROUP BY t.tool_name, t.status
       ORDER BY t.tool_name, t.status
     `).all(projectId);
@@ -77,7 +77,7 @@ export class ObservabilityService {
       JOIN review_jobs rj ON rj.id = rr.review_job_id
       JOIN merge_requests mr ON mr.id = rj.merge_request_id
       JOIN repositories r ON r.id = mr.repository_id
-      WHERE r.project_id = ?
+      WHERE r.project_id = $1
       ORDER BY rr.started_at DESC
       LIMIT 1
     `).get(projectId) as { id: string; toolchain_manifest: string } | undefined;
@@ -104,7 +104,7 @@ export class ObservabilityService {
       JOIN merge_requests mr ON mr.id = rj.merge_request_id
       JOIN repositories r ON r.id = mr.repository_id
       LEFT JOIN user_feedback uf ON uf.finding_id = rf.id
-      WHERE r.project_id = ?
+      WHERE r.project_id = $1
       GROUP BY rf.agent_id
       ORDER BY finding_count DESC, rf.agent_id
     `).all(projectId);
@@ -113,7 +113,7 @@ export class ObservabilityService {
 
   getReviewQualityMetrics(projectId: string, since?: string | null) {
     const params: unknown[] = [projectId];
-    const sinceFilter = since ? "AND rf.created_at >= ?" : "";
+    const sinceFilter = since ? "AND rf.created_at >= $2" : "";
     if (since) params.push(since);
     const rows = this.db.prepare(`
       SELECT
@@ -136,7 +136,7 @@ export class ObservabilityService {
         FROM user_feedback
         GROUP BY finding_id
       ) fb ON fb.finding_id = rf.id
-      WHERE r.project_id = ? ${sinceFilter}
+      WHERE r.project_id = $1 ${sinceFilter}
       ORDER BY rf.created_at
     `).all(...params) as Array<{
       id: string;

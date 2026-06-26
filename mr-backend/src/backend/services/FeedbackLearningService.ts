@@ -34,7 +34,7 @@ export class FeedbackLearningService {
           id, project_id, agent_id, rule_id, accepted_count, rejected_count,
           recent_accepted_count, recent_rejected_count, auto_suppress
         )
-        VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0)
+        VALUES ($1, $2, $3, $4, $5, $6, 0, 0, 0)
         ON CONFLICT(project_id, agent_id, rule_id) DO UPDATE SET
           accepted_count = rule_precision_history.accepted_count + excluded.accepted_count,
           rejected_count = rule_precision_history.rejected_count + excluded.rejected_count,
@@ -71,7 +71,7 @@ export class FeedbackLearningService {
         INSERT INTO rule_suppression_hints (
           project_id, rule_id, file_glob, snippet_hash, snippet_excerpt, count, last_marked_at
         )
-        VALUES (?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+        VALUES ($1, $2, $3, $4, $5, 1, CURRENT_TIMESTAMP)
         ON CONFLICT(project_id, rule_id, file_glob, snippet_hash) DO UPDATE SET
           count = rule_suppression_hints.count + 1,
           snippet_excerpt = excluded.snippet_excerpt,
@@ -95,7 +95,7 @@ export class FeedbackLearningService {
       JOIN review_jobs rj ON rj.id = rr.review_job_id
       JOIN merge_requests mr ON mr.id = rj.merge_request_id
       JOIN repositories r ON r.id = mr.repository_id
-      ${input.projectId ? "WHERE r.project_id = ?" : ""}
+      ${input.projectId ? "WHERE r.project_id = $1" : ""}
     `).all(...params) as Array<{
       project_id: string;
       agent_id: string;
@@ -127,7 +127,7 @@ export class FeedbackLearningService {
             recent_rejected_count = 0,
             auto_suppress = 0,
             last_updated = CURRENT_TIMESTAMP
-        WHERE project_id = ?
+        WHERE project_id = $1
       `).run(input.projectId);
     } else {
       this.db.prepare(`
@@ -148,7 +148,7 @@ export class FeedbackLearningService {
           id, project_id, agent_id, rule_id, accepted_count, rejected_count,
           recent_accepted_count, recent_rejected_count, auto_suppress
         )
-        VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)
+        VALUES ($1, $2, $3, $4, 0, 0, $5, $6, $7)
         ON CONFLICT(project_id, agent_id, rule_id) DO UPDATE SET
           recent_accepted_count = excluded.recent_accepted_count,
           recent_rejected_count = excluded.recent_rejected_count,
@@ -176,7 +176,7 @@ export class FeedbackLearningService {
     const feedbackId = id("feedback");
     this.db.prepare(`
       INSERT INTO user_feedback (id, user_id, finding_id, dedupe_hash, feedback_type, scope, reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
     `).run(
       feedbackId,
       input.userId,
@@ -188,12 +188,12 @@ export class FeedbackLearningService {
     );
     this.updateRulePrecision(input.finding.project_id, input.finding, input.feedbackType);
     this.recordSuppressionHints(input.finding.project_id, input.finding, input.feedbackType);
-    return this.db.prepare("SELECT * FROM user_feedback WHERE id = ?").get(feedbackId);
+    return this.db.prepare("SELECT * FROM user_feedback WHERE id = $1").get(feedbackId);
   }
 
   markFindingFeedback(findingId: string, lifecycleState: string) {
     const selected = lifecycleState === "accepted" ? 1 : 0;
-    this.db.prepare("UPDATE review_findings SET lifecycle_state = ?, selected = ? WHERE id = ?").run(lifecycleState, selected, findingId);
-    return this.db.prepare("SELECT * FROM review_findings WHERE id = ?").get(findingId);
+    this.db.prepare("UPDATE review_findings SET lifecycle_state = $1, selected = $2 WHERE id = $3").run(lifecycleState, selected, findingId);
+    return this.db.prepare("SELECT * FROM review_findings WHERE id = $1").get(findingId);
   }
 }

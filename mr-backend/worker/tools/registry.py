@@ -41,7 +41,7 @@ def save_tool_observations(conn: Any, review_run_id: str, observations: list[Too
               id, review_run_id, tool_name, rule_id, severity, confidence, file_path,
               line_start, line_end, message, raw_artifact_id, adopted_by_agent, adoption_state
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 new_id("tool_obs"),
@@ -68,7 +68,7 @@ def load_tool_observations(conn: Any, review_run_id: str, limit: int = 500) -> l
         """
         SELECT *
         FROM tool_observations
-        WHERE review_run_id = ?
+        WHERE review_run_id = %s
         ORDER BY
           CASE tool_name
             WHEN 'tree_sitter_code_graph' THEN 0
@@ -91,7 +91,7 @@ def load_tool_observations(conn: Any, review_run_id: str, limit: int = 500) -> l
           END,
           confidence DESC,
           created_at
-        LIMIT ?
+        LIMIT %s
         """,
         (review_run_id, limit),
     ).fetchall()

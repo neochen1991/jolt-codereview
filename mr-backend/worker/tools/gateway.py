@@ -46,7 +46,7 @@ class ToolGateway:
             """
             SELECT *
             FROM expert_tool_bindings
-            WHERE project_id = ? AND agent_key = ? AND tool_name = ?
+            WHERE project_id = %s AND agent_key = %s AND tool_name = %s
             """,
             (self.project_id, agent_key, tool_name),
         ).fetchone()

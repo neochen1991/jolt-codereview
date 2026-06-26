@@ -20,7 +20,7 @@ export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
         JOIN review_jobs rj ON rj.id = rr.review_job_id
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories r ON r.id = mr.repository_id
-        WHERE r.project_id = ?
+        WHERE r.project_id = $1
       `, [params.projectId])[0];
       const feedback = all<{ feedback_type: string; count: number }>(`
         SELECT uf.feedback_type, COUNT(*) AS count
@@ -30,7 +30,7 @@ export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
         JOIN review_jobs rj ON rj.id = rr.review_job_id
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories r ON r.id = mr.repository_id
-        WHERE r.project_id = ?
+        WHERE r.project_id = $1
         GROUP BY uf.feedback_type
       `, [params.projectId]);
       const accepted = Number(feedback.find((item) => item.feedback_type === "accepted")?.count ?? 0);
@@ -46,7 +46,7 @@ export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
           JOIN review_jobs rj ON rj.id = rr.review_job_id
           JOIN merge_requests mr ON mr.id = rj.merge_request_id
           JOIN repositories r ON r.id = mr.repository_id
-          WHERE r.project_id = ?
+          WHERE r.project_id = $1
           GROUP BY rf.lifecycle_state
         `, [params.projectId]),
         feedback,
@@ -70,7 +70,7 @@ export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
         JOIN review_jobs rj ON rj.id = rr.review_job_id
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories r ON r.id = mr.repository_id
-        WHERE r.project_id = ? AND rf.lifecycle_state = 'accepted'
+        WHERE r.project_id = $1 AND rf.lifecycle_state = 'accepted'
       `, [params.projectId])?.count ?? 0);
       const falsePositive = Number(get<{ count: number }>(`
         SELECT COUNT(*) AS count
@@ -80,14 +80,14 @@ export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
         JOIN review_jobs rj ON rj.id = rr.review_job_id
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories r ON r.id = mr.repository_id
-        WHERE r.project_id = ? AND uf.feedback_type = 'false_positive'
+        WHERE r.project_id = $1 AND uf.feedback_type = 'false_positive'
       `, [params.projectId])?.count ?? 0);
       const goldSetCount = Number(get<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM evaluation_gold_set WHERE project_id = ?",
+        "SELECT COUNT(*) AS count FROM evaluation_gold_set WHERE project_id = $1",
         [params.projectId]
       )?.count ?? 0);
       const storedReports = all<EvaluationReportRow>(
-        "SELECT * FROM evaluation_reports WHERE project_id = ? ORDER BY created_at DESC",
+        "SELECT * FROM evaluation_reports WHERE project_id = $1 ORDER BY created_at DESC",
         [params.projectId]
       ).map((row) => ({
         ...row,
@@ -125,7 +125,7 @@ export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories r ON r.id = mr.repository_id
         LEFT JOIN user_feedback uf ON uf.finding_id = rf.id
-        WHERE r.project_id = ?
+        WHERE r.project_id = $1
         GROUP BY rf.agent_id, rf.title
         ORDER BY false_positive_rate DESC, finding_count DESC
         LIMIT 30

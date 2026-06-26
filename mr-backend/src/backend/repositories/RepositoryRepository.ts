@@ -15,27 +15,27 @@ export class RepositoryRepository {
   constructor(private readonly db: Db) {}
 
   listByProject(projectId: string) {
-    return this.db.prepare("SELECT * FROM repositories WHERE project_id = ? AND status = 'active' ORDER BY created_at DESC").all(projectId) as unknown as RepositoryRow[];
+    return this.db.prepare("SELECT * FROM repositories WHERE project_id = $1 AND status = 'active' ORDER BY created_at DESC").all(projectId) as unknown as RepositoryRow[];
   }
 
   listActiveByProject(projectId: string) {
-    return this.db.prepare("SELECT * FROM repositories WHERE project_id = ? AND status = 'active'").all(projectId) as unknown as RepositoryRow[];
+    return this.db.prepare("SELECT * FROM repositories WHERE project_id = $1 AND status = 'active'").all(projectId) as unknown as RepositoryRow[];
   }
 
   listActiveByProjectAndProvider(projectId: string, provider: string) {
-    return this.db.prepare("SELECT * FROM repositories WHERE project_id = ? AND provider = ? AND status = 'active'").all(projectId, provider) as unknown as RepositoryRow[];
+    return this.db.prepare("SELECT * FROM repositories WHERE project_id = $1 AND provider = $2 AND status = 'active'").all(projectId, provider) as unknown as RepositoryRow[];
   }
 
   findById(repositoryId: string) {
-    return this.db.prepare("SELECT * FROM repositories WHERE id = ?").get(repositoryId) as RepositoryRow | undefined;
+    return this.db.prepare("SELECT * FROM repositories WHERE id = $1").get(repositoryId) as RepositoryRow | undefined;
   }
 
   findProjectByRepositoryId(repositoryId: string) {
-    return this.db.prepare("SELECT project_id FROM repositories WHERE id = ?").get(repositoryId) as { project_id: string } | undefined;
+    return this.db.prepare("SELECT project_id FROM repositories WHERE id = $1").get(repositoryId) as { project_id: string } | undefined;
   }
 
   findByProjectProviderExternal(projectId: string, provider: string, externalRepoId: string) {
-    return this.db.prepare("SELECT * FROM repositories WHERE project_id = ? AND provider = ? AND external_repo_id = ?").get(projectId, provider, externalRepoId) as RepositoryRow | undefined;
+    return this.db.prepare("SELECT * FROM repositories WHERE project_id = $1 AND provider = $2 AND external_repo_id = $3").get(projectId, provider, externalRepoId) as RepositoryRow | undefined;
   }
 
   softDelete(projectId: string, repositoryId: string) {
@@ -43,7 +43,7 @@ export class RepositoryRepository {
       UPDATE repositories
       SET status = 'deleted',
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND project_id = ? AND status = 'active'
+      WHERE id = $1 AND project_id = $2 AND status = 'active'
     `).run(repositoryId, projectId);
   }
 
@@ -58,7 +58,7 @@ export class RepositoryRepository {
   }) {
     this.db.prepare(`
       INSERT INTO repositories (id, project_id, provider, external_repo_id, name, default_branch, status, provider_config_json)
-      VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
+      VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
       ON CONFLICT(project_id, provider, external_repo_id) DO UPDATE SET
         name = excluded.name,
         default_branch = excluded.default_branch,

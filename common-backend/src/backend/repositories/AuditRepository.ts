@@ -15,7 +15,7 @@ export class AuditRepository {
   }) {
     this.db.prepare(`
       INSERT INTO audit_logs (id, user_id, project_id, action, resource_type, resource_id, summary, metadata_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     `).run(
       input.id,
       input.userId ?? null,
@@ -33,9 +33,9 @@ export class AuditRepository {
       SELECT al.*, u.username, u.display_name
       FROM audit_logs al
       LEFT JOIN users u ON u.id = al.user_id
-      WHERE al.project_id = ? OR al.project_id IS NULL
+      WHERE al.project_id = $1 OR al.project_id IS NULL
       ORDER BY al.created_at DESC
-      LIMIT ?
+      LIMIT $2
     `).all(projectId, limit);
   }
 }

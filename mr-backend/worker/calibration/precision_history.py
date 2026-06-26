@@ -25,7 +25,7 @@ def load_rule_precision_history(conn: Any, project_id: str) -> dict[tuple[str, s
         SELECT agent_id, rule_id, accepted_count, rejected_count,
                {recent_select} auto_suppress
         FROM rule_precision_history
-        WHERE project_id = ?
+        WHERE project_id = %s
         """,
         (project_id,),
     ).fetchall()

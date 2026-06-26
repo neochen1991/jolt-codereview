@@ -78,7 +78,7 @@ def _fetch_run_context(conn: Any, run_id: str) -> Any | None:
         JOIN review_jobs rj ON rj.id = rr.review_job_id
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories repo ON repo.id = mr.repository_id
-        WHERE rr.id = ?
+        WHERE rr.id = %s
         """,
         (run_id,),
     ).fetchone()
@@ -93,7 +93,7 @@ def _usage_summary(conn: Any, run_id: str) -> tuple[dict[str, int], list[dict[st
           COALESCE(SUM(l.output_tokens), 0) AS output_tokens
         FROM llm_call_records l
         JOIN agent_trace_spans s ON s.id = l.span_id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = %s
         """,
         (run_id,),
     ).fetchone()
@@ -108,7 +108,7 @@ def _usage_summary(conn: Any, run_id: str) -> tuple[dict[str, int], list[dict[st
           COALESCE(SUM(l.duration_ms), 0) AS duration_ms
         FROM llm_call_records l
         JOIN agent_trace_spans s ON s.id = l.span_id
-        WHERE s.review_run_id = ?
+        WHERE s.review_run_id = %s
         GROUP BY l.provider, l.model
         ORDER BY l.provider, l.model
         """,
@@ -203,7 +203,7 @@ def _save_report(
           employee_no, reported_at, input_tokens, output_tokens, total_tokens, llm_calls,
           status, endpoint, response_status, response_body, error_message, payload_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT(review_run_id) DO UPDATE SET
           employee_no = excluded.employee_no,
           reported_at = excluded.reported_at,

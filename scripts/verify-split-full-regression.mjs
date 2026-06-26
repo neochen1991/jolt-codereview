@@ -173,6 +173,7 @@ function writeConfig(file, pythonBin = "") {
       default_provider: "dashscope-openai-compatible",
       default_base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
       default_model: "MiniMax-M2.7",
+      default_api_key: "test-api-key",
       default_api_key_env: "MINIMAX_API_KEY",
       request_timeout_seconds: 30,
       max_output_tokens: 4096,

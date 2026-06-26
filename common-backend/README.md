@@ -220,7 +220,7 @@ curl -sS "$COMMON_API_BASE/api/projects/$PROJECT_ID/settings/llm_policy" \
     "default_provider": "dashscope-openai-compatible",
     "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
     "default_model": "MiniMax-M2.7",
-    "default_api_key_env": "MINIMAX_API_KEY"
+    "default_api_key": "sk-..."
   }'
 ```
 
@@ -303,7 +303,7 @@ curl -sS "$COMMON_API_BASE/internal/models/effective-config?project_id=$PROJECT_
   -H "x-internal-service-token: $JOLT_INTERNAL_SERVICE_TOKEN"
 ```
 
-该接口会隐藏 `llm.default_api_key`，并返回 `source.project_settings`，业务服务可按自己的领域解释 `review_policy`、`vcs_policy`、`queue_policy` 等配置。
+普通用户接口会隐藏 `llm.default_api_key`；内部服务接口会把项目配置通过 `source.project_settings` 返回给业务服务用于实际调用。业务服务可按自己的领域解释 `review_policy`、`vcs_policy`、`queue_policy` 等配置。
 
 ## API 清单
 

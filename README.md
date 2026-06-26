@@ -54,7 +54,6 @@ scripts/export-three-repos.mjs  同步根目录三模块；传 --out 可生成�
 - 可选：Java 17+ 或 21+，用于 Checkstyle、PMD、SpotBugs、Dependency-Check 等 Java 静态工具
 - 可选：`GITHUB_TOKEN`，用于 GitHub PR 同步和读取 changed files
 - 可选：`CODEHUB_TOKEN`，用于接入公司内网 CodeHub
-- 可选：LLM Key，例如 `MINIMAX_API_KEY`
 
 ## 配置文件
 

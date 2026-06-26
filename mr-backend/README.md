@@ -118,7 +118,7 @@ npm run start
 | `JOLT_INTERNAL_SERVICE_TOKEN` | 内部 API token；需要与 Common Backend 保持一致 |
 | `GITHUB_TOKEN` | GitHub API token，可通过项目配置覆盖 |
 | `CODEHUB_TOKEN` | CodeHub API token，可通过项目配置覆盖 |
-| `MINIMAX_API_KEY` 等 LLM key | 由模型配置中的 `default_api_key_env` 指定 |
+| 页面模型 API Key | 在项目设置页填写；保存到 Common 项目配置，普通接口不回显明文 |
 
 ## API 接入
 

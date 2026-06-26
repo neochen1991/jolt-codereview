@@ -26,6 +26,7 @@ def candidate_providers(llm_config: dict[str, Any], *, required_context: int, vi
                 "provider": llm_config.get("default_provider") or "dashscope-openai-compatible",
                 "base_url": llm_config.get("default_base_url") or "",
                 "model": llm_config.get("default_model") or "MiniMax-M2.7",
+                "api_key": llm_config.get("default_api_key"),
                 "api_key_env": llm_config.get("default_api_key_env"),
                 "tier": llm_config.get("default_tier"),
                 "context": llm_config.get("default_context"),
@@ -44,8 +45,10 @@ def candidate_providers(llm_config: dict[str, Any], *, required_context: int, vi
             continue
         if vision and not bool(raw.get("vision", caps.get("vision"))):
             continue
+        api_key = raw.get("api_key") or raw.get("default_api_key")
         api_key_env = raw.get("api_key_env")
-        api_key = os.environ.get(str(api_key_env)) if api_key_env else None
+        if not api_key and api_key_env:
+            api_key = os.environ.get(str(api_key_env))
         result.append(
             {
                 "provider": name,

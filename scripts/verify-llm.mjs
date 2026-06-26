@@ -5,7 +5,7 @@ const llm = config.llm || {};
 const apiKey = resolveLlmApiKey(config);
 
 if (!apiKey) {
-  throw new Error("No LLM API key configured. Set llm.default_api_key_env and export that environment variable.");
+  throw new Error("No LLM API key configured. Set llm.default_api_key or configure llm.default_api_key_env.");
 }
 
 const started = Date.now();

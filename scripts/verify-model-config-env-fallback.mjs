@@ -60,7 +60,7 @@ service.upsertSetting("project_default", "llm_policy", {
   default_base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
   default_model: "MiniMax-M2.7",
   default_api_key_env: null,
-  default_api_key: "plaintext-should-not-be-runtime"
+  default_api_key: "plaintext-runtime-key"
 });
 
 const effective = service.effectiveConfig("project_default", config).effective_config;
@@ -68,8 +68,8 @@ const effective = service.effectiveConfig("project_default", config).effective_c
 if (effective.llm?.default_api_key_env !== "MINIMAX_API_KEY") {
   throw new Error(`default_api_key_env fallback failed: ${JSON.stringify(effective.llm)}`);
 }
-if ("default_api_key" in (effective.llm ?? {})) {
-  throw new Error(`plaintext default_api_key leaked into effective runtime config: ${JSON.stringify(effective.llm)}`);
+if (effective.llm?.default_api_key !== "plaintext-runtime-key") {
+  throw new Error(`default_api_key runtime config failed: ${JSON.stringify(effective.llm)}`);
 }
 
 console.log(JSON.stringify({ ok: true, llm: effective.llm }, null, 2));

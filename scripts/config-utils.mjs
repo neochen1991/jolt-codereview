@@ -24,6 +24,7 @@ function deepMerge(base, override) {
 }
 
 export function resolveLlmApiKey(config) {
+  if (config.llm?.default_api_key) return config.llm.default_api_key;
   const envName = config.llm?.default_api_key_env;
   if (envName && process.env[envName]) return process.env[envName];
   return null;

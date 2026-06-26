@@ -289,7 +289,9 @@ type LlmSettingsForm = {
   default_provider: string;
   default_base_url: string;
   default_model: string;
-  default_api_key_env: string;
+  default_api_key: string;
+  default_api_key_has_value: boolean;
+  default_api_key_masked: string;
   request_timeout_seconds: string;
   max_output_tokens: string;
   enable_stream: boolean;
@@ -2831,7 +2833,9 @@ function ConfigWorkspace({
     default_provider: "dashscope-openai-compatible",
     default_base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
     default_model: "MiniMax-M2.7",
-    default_api_key_env: "",
+    default_api_key: "",
+    default_api_key_has_value: false,
+    default_api_key_masked: "",
     request_timeout_seconds: "120",
     max_output_tokens: "8192",
     enable_stream: true
@@ -3022,7 +3026,9 @@ function ConfigWorkspace({
         default_provider: String(llm.default_provider ?? "dashscope-openai-compatible"),
         default_base_url: String(llm.default_base_url ?? "https://ark.cn-beijing.volces.com/api/coding/v3"),
         default_model: String(llm.default_model ?? "MiniMax-M2.7"),
-        default_api_key_env: String(llm.default_api_key_env ?? ""),
+        default_api_key: "",
+        default_api_key_has_value: Boolean(llm.default_api_key_has_value),
+        default_api_key_masked: String(llm.default_api_key_masked ?? ""),
         request_timeout_seconds: String(llm.request_timeout_seconds ?? "120"),
         max_output_tokens: String(llm.max_output_tokens ?? "8192"),
         enable_stream: llm.enable_stream !== false
@@ -3389,15 +3395,16 @@ function ConfigWorkspace({
   }
 
   async function saveLlmSettings() {
-    await saveStructuredSetting("llm_policy", "模型服务配置", {
+    const value: Record<string, unknown> = {
       default_provider: llmForm.default_provider.trim(),
       default_base_url: llmForm.default_base_url.trim(),
       default_model: llmForm.default_model.trim(),
-      default_api_key_env: llmForm.default_api_key_env.trim() || null,
       request_timeout_seconds: clampLlmTimeout(llmForm.request_timeout_seconds),
       max_output_tokens: clampLlmOutputTokens(llmForm.max_output_tokens),
       enable_stream: llmForm.enable_stream
-    });
+    };
+    if (llmForm.default_api_key.trim()) value.default_api_key = llmForm.default_api_key.trim();
+    await saveStructuredSetting("llm_policy", "模型服务配置", value);
   }
 
   async function saveProjectVcsSettings() {
@@ -3420,7 +3427,7 @@ function ConfigWorkspace({
           default_provider: llmForm.default_provider.trim(),
           default_base_url: llmForm.default_base_url.trim(),
           default_model: llmForm.default_model.trim(),
-          default_api_key_env: llmForm.default_api_key_env.trim() || null,
+          default_api_key: llmForm.default_api_key.trim(),
           request_timeout_seconds: clampLlmTimeout(llmForm.request_timeout_seconds),
           max_output_tokens: clampLlmOutputTokens(llmForm.max_output_tokens),
           enable_stream: llmForm.enable_stream
@@ -4073,11 +4080,11 @@ function ConfigWorkspace({
                     <span>启用 SSE 流式响应</span>
                   </label>
                 </SettingField>
-                <SettingField label="API Key 环境变量">
-                  <input value={llmForm.default_api_key_env} onChange={(event) => setLlmForm({ ...llmForm, default_api_key_env: event.target.value })} placeholder="例如 MINIMAX_API_KEY" disabled={!canEdit} />
+                <SettingField label="API Key">
+                  <input type="password" value={llmForm.default_api_key} onChange={(event) => setLlmForm({ ...llmForm, default_api_key: event.target.value })} placeholder={llmForm.default_api_key_has_value ? "留空则保留已保存的 API Key" : "输入模型 API Key"} disabled={!canEdit} autoComplete="off" />
                 </SettingField>
                 <SettingField label="密钥来源">
-                  <div className="setting-static-text">模型密钥只从服务端环境变量读取，页面不保存明文 API Key。</div>
+                  <div className="setting-static-text">{llmForm.default_api_key_has_value ? `已保存 ${llmForm.default_api_key_masked || "API Key"}；重新输入后会覆盖。` : "API Key 会保存到 Common 服务的项目配置中，接口不会回显明文。"}</div>
                 </SettingField>
               </div>
               <div className="setting-actions">

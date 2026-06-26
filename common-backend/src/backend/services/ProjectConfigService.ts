@@ -19,7 +19,6 @@ export type ProjectSettingsKey = typeof SETTINGS_KEYS[number];
 function runtimeLlmPolicy(value: Record<string, unknown>) {
   const next: Record<string, unknown> = {};
   for (const [key, rawValue] of Object.entries(value)) {
-    if (key === "default_api_key") continue;
     if (rawValue === null || rawValue === undefined) continue;
     if (typeof rawValue === "string" && rawValue.trim() === "") continue;
     next[key] = rawValue;

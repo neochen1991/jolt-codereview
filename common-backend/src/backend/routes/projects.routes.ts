@@ -5,6 +5,72 @@ import { compactLlmTestInput, testOpenAiCompatibleLlm } from "../services/LlmCon
 
 const PROJECT_MEMBER_ROLES = new Set(["observer", "developer", "reviewer", "project_admin"]);
 
+function redactSecret(value: unknown) {
+  const text = String(value ?? "");
+  if (!text) return "";
+  return `****${text.slice(-4)}`;
+}
+
+function redactSettingValue(value: Record<string, unknown>) {
+  const next = { ...value };
+  if (typeof next.default_api_key === "string" && next.default_api_key) {
+    next.default_api_key_masked = redactSecret(next.default_api_key);
+    next.default_api_key_has_value = true;
+    delete next.default_api_key;
+  }
+  return next;
+}
+
+function redactSettingsResponse(payload: ReturnType<BackendRouteContext["projectConfigService"]["listSettings"]>) {
+  const settings = Object.fromEntries(
+    Object.entries(payload.settings).map(([key, value]) => [
+      key,
+      redactSettingValue(value as Record<string, unknown>)
+    ])
+  );
+  return {
+    ...payload,
+    settings,
+    items: payload.items.map((item) => ({
+      ...item,
+      value: redactSettingValue(item.value as Record<string, unknown>)
+    }))
+  };
+}
+
+function sanitizeEffectiveConfig(value: Record<string, unknown>) {
+  const next = JSON.parse(JSON.stringify(value ?? {})) as Record<string, unknown>;
+  if (next.llm && typeof next.llm === "object") {
+    next.llm = redactSettingValue(next.llm as Record<string, unknown>);
+  }
+  return next;
+}
+
+function sanitizeEffectiveSource(value: Record<string, unknown>) {
+  const next = JSON.parse(JSON.stringify(value ?? {})) as Record<string, unknown>;
+  const settings = next.project_settings;
+  if (settings && typeof settings === "object") {
+    next.project_settings = Object.fromEntries(
+      Object.entries(settings as Record<string, unknown>).map(([key, rawValue]) => [
+        key,
+        redactSettingValue((rawValue ?? {}) as Record<string, unknown>)
+      ])
+    );
+  }
+  return next;
+}
+
+function preserveStoredSecret(current: Record<string, unknown>, next: Record<string, unknown>, key: string) {
+  const value = next[key];
+  if (typeof value === "string" && value.trim()) return next;
+  if (current[key]) {
+    const { [key]: _empty, ...rest } = next;
+    return { ...rest, [key]: current[key] };
+  }
+  const { [key]: _empty, ...rest } = next;
+  return rest;
+}
+
 export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
   const { config, get, currentUserId, ensureRoot, ensureProjectRole, projectRepository, auditRepository, projectConfigService, auditLog } = ctx;
   return [
@@ -125,13 +191,18 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       const actorId = currentUserId(req);
       const denied = ensureProjectRole(params.projectId, actorId, "observer");
       if (denied) return denied;
-      return projectConfigService.listSettings(params.projectId);
+      return redactSettingsResponse(projectConfigService.listSettings(params.projectId));
     }),
     route("GET", "/api/projects/:projectId/effective-config", ({ params, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectRole(params.projectId, actorId, "observer");
       if (denied) return denied;
-      return projectConfigService.effectiveConfig(params.projectId, config);
+      const result = projectConfigService.effectiveConfig(params.projectId, config);
+      return {
+        ...result,
+        source: sanitizeEffectiveSource(result.source as Record<string, unknown>),
+        effective_config: sanitizeEffectiveConfig(result.effective_config as Record<string, unknown>)
+      };
     }),
     route("PATCH", "/api/projects/:projectId/settings/:key", ({ params, body, req }) => {
       const actorId = currentUserId(req);
@@ -141,7 +212,11 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
         return badRequest(`settings key must be one of: ${projectConfigService.allowedKeys().join(", ")}`);
       }
       const input = (body as Record<string, unknown> | undefined) ?? {};
-      const value = (typeof input.value === "object" && input.value ? input.value : input) as Record<string, unknown>;
+      let value = (typeof input.value === "object" && input.value ? input.value : input) as Record<string, unknown>;
+      if (params.key === "llm_policy") {
+        const existing = (projectConfigService.listSettings(params.projectId).settings.llm_policy ?? {}) as Record<string, unknown>;
+        value = preserveStoredSecret(existing, value, "default_api_key");
+      }
       const row = projectConfigService.upsertSetting(params.projectId, params.key, value);
       auditLog({
         userId: actorId,
@@ -151,13 +226,16 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
         resourceId: params.key,
         summary: `updated ${params.key}`
       });
-      return row ? { key: row.key, value: JSON.parse(row.settings_json || "{}"), updated_at: row.updated_at } : notFound();
+      return row ? { key: row.key, value: redactSettingValue(JSON.parse(row.settings_json || "{}")), updated_at: row.updated_at } : notFound();
     }),
     route("POST", "/api/projects/:projectId/settings/llm/test", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
       if (denied) return denied;
-      const input = compactLlmTestInput((body as Record<string, unknown> | undefined) ?? {});
+      const settings = projectConfigService.listSettings(params.projectId).settings as Record<string, Record<string, unknown>>;
+      const stored = settings.llm_policy ?? {};
+      const input = compactLlmTestInput({ ...stored, ...((body as Record<string, unknown> | undefined) ?? {}) });
+      if (!input.default_api_key && stored.default_api_key) input.default_api_key = String(stored.default_api_key);
       return testOpenAiCompatibleLlm(input);
     }),
     route("GET", "/api/projects/:projectId/join-requests", ({ params, req }) => {

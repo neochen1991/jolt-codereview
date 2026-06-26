@@ -20,8 +20,18 @@ function ensureInternal(req: { headers: Record<string, any> }) {
   return null;
 }
 
+function redactSecret(value: unknown) {
+  const text = String(value ?? "");
+  if (!text) return "";
+  return `****${text.slice(-4)}`;
+}
+
 function sanitizeLlmConfig(value: Record<string, unknown>) {
   const { default_api_key: _ignored, ...rest } = value;
+  if (typeof value.default_api_key === "string" && value.default_api_key) {
+    rest.default_api_key_has_value = true;
+    rest.default_api_key_masked = redactSecret(value.default_api_key);
+  }
   return rest;
 }
 
@@ -31,6 +41,16 @@ function sanitizeEffectiveConfig(value: Record<string, unknown>) {
     next.llm = sanitizeLlmConfig(next.llm as Record<string, unknown>);
   }
   return next;
+}
+
+function compactLlmConfig(value: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, rawValue]) => {
+      if (rawValue === null || rawValue === undefined) return false;
+      if (typeof rawValue === "string" && rawValue.trim() === "") return false;
+      return true;
+    })
+  );
 }
 
 export function createModelRoutes(ctx: BackendRouteContext): Route[] {
@@ -53,11 +73,12 @@ export function createModelRoutes(ctx: BackendRouteContext): Route[] {
       const denied = ensureRoot(actorId);
       if (denied) return denied;
       const input = (typeof body === "object" && body ? body : {}) as Record<string, unknown>;
-      const value = sanitizeLlmConfig({
+      const value = compactLlmConfig({
         default_provider: input.default_provider,
         default_base_url: input.default_base_url,
         default_model: input.default_model,
         default_api_key_env: input.default_api_key_env,
+        default_api_key: input.default_api_key,
         request_timeout_seconds: input.request_timeout_seconds,
         max_output_tokens: input.max_output_tokens,
         enable_stream: input.enable_stream

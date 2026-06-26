@@ -155,10 +155,12 @@ def run_bounded_deepagent(
     provider = str(llm_config.get("default_provider") or "dashscope-openai-compatible")
     model_name = str(llm_config.get("default_model") or "MiniMax-M2.7")
     base_url = str(llm_config.get("default_base_url") or "").rstrip("/")
+    api_key = str(llm_config.get("default_api_key") or "").strip()
     key_env = llm_config.get("default_api_key_env")
-    api_key = os.environ.get(str(key_env)) if key_env else None
+    if not api_key and key_env:
+        api_key = os.environ.get(str(key_env)) or ""
     if not base_url or not api_key:
-        raise RuntimeError("DeepAgents requires a real OpenAI-compatible base_url and api_key_env")
+        raise RuntimeError("DeepAgents requires a real OpenAI-compatible base_url and api_key")
     request_timeout_seconds = llm_request_timeout_seconds(llm_config, "deepagents")
     enable_stream = llm_stream_enabled(llm_config)
 

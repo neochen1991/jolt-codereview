@@ -308,7 +308,7 @@ Content-Type: application/json
   "default_provider": "dashscope-openai-compatible",
   "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
   "default_model": "MiniMax-M2.7",
-  "default_api_key_env": "MINIMAX_API_KEY",
+  "default_api_key": "sk-...",
   "request_timeout_seconds": 120,
   "max_output_tokens": 8192,
   "enable_stream": true
@@ -326,7 +326,8 @@ curl -sS "$COMMON_API_BASE/api/projects/$PROJECT_ID/settings/llm_policy" \
     "default_provider": "dashscope-openai-compatible",
     "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
     "default_model": "MiniMax-M2.7",
-    "default_api_key_env": "MINIMAX_API_KEY",
+    "default_api_key_masked": "****abcd",
+    "default_api_key_has_value": true,
     "request_timeout_seconds": 120,
     "max_output_tokens": 8192,
     "enable_stream": true
@@ -342,7 +343,7 @@ curl -sS "$COMMON_API_BASE/api/projects/$PROJECT_ID/settings/llm_policy" \
     "default_provider": "dashscope-openai-compatible",
     "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
     "default_model": "MiniMax-M2.7",
-    "default_api_key_env": "MINIMAX_API_KEY",
+    "default_api_key": "sk-...",
     "request_timeout_seconds": 120,
     "max_output_tokens": 8192,
     "enable_stream": true
@@ -387,7 +388,7 @@ curl -sS "$COMMON_API_BASE/api/projects/$PROJECT_ID/effective-config" \
       "default_provider": "dashscope-openai-compatible",
       "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
       "default_model": "MiniMax-M2.7",
-      "default_api_key_env": "MINIMAX_API_KEY",
+      "default_api_key": "sk-...",
       "request_timeout_seconds": 120,
       "max_output_tokens": 8192,
       "enable_stream": true
@@ -421,7 +422,7 @@ curl -sS "$COMMON_API_BASE/internal/models/effective-config?project_id=$PROJECT_
     "default_provider": "dashscope-openai-compatible",
     "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
     "default_model": "MiniMax-M2.7",
-    "default_api_key_env": "MINIMAX_API_KEY",
+    "default_api_key": "sk-...",
     "request_timeout_seconds": 120,
     "max_output_tokens": 8192,
     "enable_stream": true
@@ -431,7 +432,7 @@ curl -sS "$COMMON_API_BASE/internal/models/effective-config?project_id=$PROJECT_
       "default_provider": "dashscope-openai-compatible",
       "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
       "default_model": "MiniMax-M2.7",
-      "default_api_key_env": "MINIMAX_API_KEY"
+      "default_api_key": "sk-..."
     },
     "data_policy": {},
     "queue_policy": {}
@@ -448,8 +449,8 @@ curl -sS "$COMMON_API_BASE/internal/models/effective-config?project_id=$PROJECT_
 
 安全说明：
 
-- `llm.default_api_key` 不会从 Common API 返回。
-- 推荐使用 `default_api_key_env`，由实际调用模型的业务服务在自己的运行环境中读取 API key。
+- 用户态 Common API 不会回显 `llm.default_api_key` 明文，只返回脱敏状态。
+- 支持直接使用 `default_api_key`，由 Common 保存项目级 API Key，并通过内部模型配置接口提供给业务服务。
 - `source.project_settings` 会返回项目 settings，业务服务可按自己的领域解释其中的 `review_policy`、`vcs_policy`、`queue_policy` 等字段。
 
 ## 推荐接入模式
@@ -536,7 +537,7 @@ async function requireProjectRole(req, projectId, minRole) {
 - 不要在日志中打印用户 token、internal token、API key、VCS token。
 - 不要把 Common 返回的用户 settings 原样返回给前端；用户态 `/api/me/settings` 已做脱敏，内部 API 没有脱敏。
 - 不要直接读取 Common 的 `users`、`auth_sessions`、`projects`、`project_members`、`project_settings`、`user_settings` 表。
-- API key 推荐使用环境变量引用，例如 `default_api_key_env`，由业务服务本地解析。
+- API key 可由项目设置页直接填写为 `default_api_key`；普通用户接口只返回脱敏状态，内部服务接口用于运行时读取。
 
 ## 最小接入检查清单
 

@@ -132,10 +132,8 @@ Full LLM e2e remains conditional on a valid model key being available through an
 
 ## Complex MR Verification
 
-After exporting the three repositories, the MR backend repository can run the existing Java complex 10-file MR fixture:
+After exporting the three repositories, run the current split-service regression from the repository root:
 
-- `node scripts/seed-java-complex-10file-mr.mjs`
-- `PYTHON_BIN=/path/to/python node scripts/run-python.mjs worker/review_worker.py --once`
-- `node scripts/evaluate-java-complex-mr.mjs`
+- `npm run verify:split-full-regression`
 
 The verification covers repository/MR/job seeding, worker orchestration, static tool observations, findings persistence, and quality reporting in the split MR backend.

@@ -165,17 +165,17 @@ process.on("SIGTERM", () => shutdown(0));
 
 console.log("Jolt CodeReview local dev");
 console.log(`Common:  http://${apiHost}:${commonPort}`);
-console.log(`MR API:  http://${apiHost}:${mrPort}`);
+console.log(`MR Backend: http://${apiHost}:${mrPort}`);
 console.log(`Frontend: http://${frontendHost}:${frontendPort}`);
+console.log("MR worker: managed by MR Backend");
 console.log("MR poller: built into API auto-sync scheduler");
 
 await releasePort("Common API", commonPort);
-await releasePort("MR API", mrPort);
+await releasePort("MR Backend", mrPort);
 await releasePort("Frontend", frontendPort);
 
 start("Common API", ["run", "dev:common"]);
-start("MR API", ["run", "dev:mr"]);
-start("Worker", ["run", "worker"]);
+start("MR Backend", ["run", "dev:mr"]);
 if (process.env.JOLT_START_EXTERNAL_POLLER === "1") {
   start("Poller", ["run", "poll"]);
 }

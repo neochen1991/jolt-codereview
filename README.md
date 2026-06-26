@@ -105,22 +105,13 @@ JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
 npm --prefix common-backend run dev
 ```
 
-启动 MR Backend：
+启动 MR Backend。该命令会一起启动 MR API 和常驻 Worker：
 
 ```bash
 CONFIG_PATH=$PWD/config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
 PYTHON_BIN=$PWD/mr-backend/.venv/bin/python \
 npm --prefix mr-backend run dev
-```
-
-启动 Worker：
-
-```bash
-CONFIG_PATH=$PWD/config.json \
-JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
-PYTHON_BIN=$PWD/mr-backend/.venv/bin/python \
-npm --prefix mr-backend run worker
 ```
 
 启动 Frontend：

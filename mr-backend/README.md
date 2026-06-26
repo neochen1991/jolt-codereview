@@ -52,22 +52,13 @@ cp config.example.json config.json
 }
 ```
 
-启动 MR Backend：
+启动 MR Backend。该命令会一起启动 MR API 和常驻 Worker：
 
 ```bash
 CONFIG_PATH=$PWD/config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
 PYTHON_BIN=$PWD/mr-backend/.venv/bin/python \
 npm run dev:mr
-```
-
-启动 Worker：
-
-```bash
-CONFIG_PATH=$PWD/config.json \
-JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
-PYTHON_BIN=$PWD/mr-backend/.venv/bin/python \
-npm run worker
 ```
 
 只消费一条队列任务：
@@ -96,22 +87,13 @@ python3 -m venv .venv
 cp config.example.json config.json
 ```
 
-启动 API：
+启动 MR Backend。该命令会一起启动 MR API 和常驻 Worker：
 
 ```bash
 CONFIG_PATH=./config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
 PYTHON_BIN=.venv/bin/python \
 npm run dev
-```
-
-启动 Worker：
-
-```bash
-CONFIG_PATH=./config.json \
-JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
-PYTHON_BIN=.venv/bin/python \
-npm run worker
 ```
 
 生产启动：
@@ -288,9 +270,9 @@ Frontend 通过 `VITE_MR_API_BASE` 调用 MR Backend。
 
 ## Worker 运行方式
 
-Worker 从 `review_jobs` 队列表认领任务，写入 `review_runs`、`review_findings`、tool calls、LLM calls、trace 和 session logs。
+Worker 从 `review_jobs` 队列表认领任务，写入 `review_runs`、`review_findings`、tool calls、LLM calls、trace 和 session logs。默认情况下，`npm run dev` 和 `npm run start` 会随 MR Backend 一起启动常驻 Worker。
 
-常驻模式：
+手动排障时也可以只启动常驻 Worker：
 
 ```bash
 npm run worker

@@ -7,8 +7,8 @@
   "scripts": {
     "clean": "node -e \"import('node:fs').then(({ rmSync }) => rmSync('build', { recursive: true, force: true }))\"",
     "build": "npm run clean && tsc -p tsconfig.backend.json",
-    "dev": "npm run build && node build/backend/mr-server.js",
-    "start": "node build/backend/mr-server.js",
+    "dev": "npm run build && node scripts/start-service.mjs",
+    "start": "node scripts/start-service.mjs",
     "verify": "npm run build",
     "worker": "node scripts/run-python.mjs worker/review_worker.py --loop",
     "worker:once": "node scripts/run-python.mjs worker/review_worker.py --once"

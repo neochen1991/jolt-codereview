@@ -1,11 +1,15 @@
-import { chatCompletionsUrl, loadConfig, redact, resolveLlmApiKey } from "./config-utils.mjs";
+import path from "node:path";
+import { chatCompletionsUrl, loadConfig, redact, resolveLlmApiKey, root } from "./config-utils.mjs";
 
-const config = loadConfig();
+const commonConfigPath = process.env.CONFIG_PATH
+  || process.env.COMMON_CONFIG_PATH
+  || path.join(root, "common-backend", "config.json");
+const config = loadConfig(commonConfigPath, path.join(root, "common-backend", "config.example.json"));
 const llm = config.llm || {};
 const apiKey = resolveLlmApiKey(config);
 
 if (!apiKey) {
-  throw new Error("No LLM API key configured. Set llm.default_api_key or configure llm.default_api_key_env.");
+  throw new Error("No LLM API key configured. Set llm.default_api_key in common-backend/config.json or save a project model API key from the settings page.");
 }
 
 const started = Date.now();

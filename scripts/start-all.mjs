@@ -5,10 +5,26 @@ import { loadConfig } from "./config-utils.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-const config = loadConfig();
-const apiHost = config.server?.host || "127.0.0.1";
-const commonPort = Number(config.server?.common_port || 9022);
-const mrPort = Number(config.server?.mr_port || config.server?.port || 9021);
+const commonConfigPath = path.resolve(process.env.COMMON_CONFIG_PATH || path.join(root, "common-backend", "config.json"));
+const mrConfigPath = path.resolve(process.env.MR_CONFIG_PATH || path.join(root, "mr-backend", "config.json"));
+const commonExamplePath = path.join(root, "common-backend", "config.example.json");
+const mrExamplePath = path.join(root, "mr-backend", "config.example.json");
+
+function requireConfig(label, configPath, examplePath) {
+  if (existsSync(configPath)) return;
+  console.error(`${label} config not found: ${configPath}`);
+  console.error(`Create it from the module template first: cp ${path.relative(root, examplePath)} ${path.relative(root, configPath)}`);
+  process.exit(1);
+}
+
+requireConfig("Common Backend", commonConfigPath, commonExamplePath);
+requireConfig("MR Backend", mrConfigPath, mrExamplePath);
+
+const commonConfig = loadConfig(commonConfigPath, commonExamplePath);
+const mrConfig = loadConfig(mrConfigPath, mrExamplePath);
+const apiHost = commonConfig.server?.host || mrConfig.server?.host || "127.0.0.1";
+const commonPort = Number(commonConfig.server?.common_port || commonConfig.server?.port || 9022);
+const mrPort = Number(mrConfig.server?.mr_port || mrConfig.server?.port || 9021);
 const frontendHost = process.env.JOLT_FRONTEND_HOST || "127.0.0.1";
 const frontendPort = Number(process.env.JOLT_FRONTEND_PORT || 9020);
 
@@ -34,9 +50,8 @@ try {
   process.exit(error.status || 1);
 }
 
-const env = {
+const baseEnv = {
   ...process.env,
-  CONFIG_PATH: process.env.CONFIG_PATH || path.join(root, "config.json"),
   JOLT_INTERNAL_SERVICE_TOKEN: process.env.JOLT_INTERNAL_SERVICE_TOKEN || "jolt-local-internal-service-token",
   COMMON_API_BASE: process.env.COMMON_API_BASE || `http://${apiHost}:${commonPort}`,
   MR_API_BASE: process.env.MR_API_BASE || `http://${apiHost}:${mrPort}`,
@@ -44,6 +59,9 @@ const env = {
   VITE_MR_API_BASE: process.env.VITE_MR_API_BASE || `http://${apiHost}:${mrPort}`,
   VITE_API_BASE: process.env.VITE_API_BASE || `http://${apiHost}:${mrPort}`
 };
+const commonEnv = { ...baseEnv, CONFIG_PATH: commonConfigPath };
+const mrEnv = { ...baseEnv, CONFIG_PATH: mrConfigPath };
+const frontendEnv = { ...baseEnv };
 
 const children = [];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -136,7 +154,7 @@ async function releasePort(label, port) {
   }
 }
 
-function start(label, args) {
+function start(label, args, env = baseEnv) {
   console.log(`Starting ${label}: npm ${args.join(" ")}`);
   const child = spawn(npmCommand, args, {
     cwd: root,
@@ -174,9 +192,9 @@ await releasePort("Common API", commonPort);
 await releasePort("MR Backend", mrPort);
 await releasePort("Frontend", frontendPort);
 
-start("Common API", ["run", "dev:common"]);
-start("MR Backend", ["run", "dev:mr"]);
+start("Common API", ["run", "dev:common"], commonEnv);
+start("MR Backend", ["run", "dev:mr"], mrEnv);
 if (process.env.JOLT_START_EXTERNAL_POLLER === "1") {
-  start("Poller", ["run", "poll"]);
+  start("Poller", ["run", "poll"], mrEnv);
 }
-start("Frontend", ["run", "dev:web", "--", "--host", frontendHost, "--port", String(frontendPort), "--strictPort"]);
+start("Frontend", ["run", "dev:web", "--", "--host", frontendHost, "--port", String(frontendPort), "--strictPort"], frontendEnv);

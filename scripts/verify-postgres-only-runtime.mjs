@@ -9,7 +9,8 @@ const scanTargets = [
   "frontend",
   "package.json",
   "package-lock.json",
-  "config.json"
+  "common-backend/config.example.json",
+  "mr-backend/config.example.json"
 ];
 
 const ignoredPathParts = [

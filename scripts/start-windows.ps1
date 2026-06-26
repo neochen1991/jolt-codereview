@@ -6,7 +6,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RootDir = Resolve-Path (Join-Path $PSScriptRoot "..")
-$ConfigPath = Join-Path $RootDir "config.json"
+$CommonConfigPath = Join-Path $RootDir "common-backend\config.json"
+$MrConfigPath = Join-Path $RootDir "mr-backend\config.json"
 $VenvPython = Join-Path $RootDir ".venv\Scripts\python.exe"
 
 function Write-Step {
@@ -55,11 +56,20 @@ function Ensure-ProjectReady {
     $depArgs = @("scripts/check-runtime-deps.mjs")
     if ($InstallIfMissing) { $depArgs += "--install" }
     node @depArgs
-    if (-not (Test-Path $ConfigPath)) {
-      if (Test-Path "config.example.json") {
-        Copy-Item "config.example.json" "config.json"
+    if (-not (Test-Path $CommonConfigPath)) {
+      $commonExample = Join-Path $RootDir "common-backend\config.example.json"
+      if (Test-Path $commonExample) {
+        Copy-Item $commonExample $CommonConfigPath
       } else {
-        throw "config.json is missing and config.example.json was not found."
+        throw "common-backend\config.json is missing and common-backend\config.example.json was not found."
+      }
+    }
+    if (-not (Test-Path $MrConfigPath)) {
+      $mrExample = Join-Path $RootDir "mr-backend\config.example.json"
+      if (Test-Path $mrExample) {
+        Copy-Item $mrExample $MrConfigPath
+      } else {
+        throw "mr-backend\config.json is missing and mr-backend\config.example.json was not found."
       }
     }
     if ($InstallIfMissing -and (-not $SkipStaticTools)) {
@@ -73,7 +83,8 @@ function Ensure-ProjectReady {
 
 Ensure-ProjectReady
 
-$env:CONFIG_PATH = $ConfigPath
+$env:COMMON_CONFIG_PATH = $CommonConfigPath
+$env:MR_CONFIG_PATH = $MrConfigPath
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 if (-not $env:PYTHON_BIN -and (Test-Path $VenvPython)) {

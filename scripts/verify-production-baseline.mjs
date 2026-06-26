@@ -4,7 +4,8 @@ import path from "node:path";
 const API = process.env.API_BASE || "http://127.0.0.1:9021";
 const PROJECT_ID = process.env.PROJECT_ID || "project_default";
 const root = process.cwd();
-const config = JSON.parse(readFileSync(path.resolve(root, process.env.CONFIG_PATH || "config.json"), "utf8"));
+const configPath = process.env.CONFIG_PATH || process.env.MR_CONFIG_PATH || "mr-backend/config.json";
+const config = JSON.parse(readFileSync(path.resolve(root, configPath), "utf8"));
 
 async function request(path, init) {
   const response = await fetch(`${API}${path}`, {

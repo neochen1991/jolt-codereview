@@ -57,13 +57,15 @@ scripts/export-three-repos.mjs  同步根目录三模块；传 --out 可生成�
 
 ## 配置文件
 
-复制配置模板：
+每个服务使用自己的本地配置文件。复制配置模板：
 
 ```bash
-cp config.example.json config.json
+cp common-backend/config.example.json common-backend/config.json
+cp mr-backend/config.example.json mr-backend/config.json
+cp frontend/.env.example frontend/.env
 ```
 
-至少需要配置 PostgreSQL：
+至少需要在 `common-backend/config.json` 和 `mr-backend/config.json` 中配置 PostgreSQL。Common 负责账号、权限、项目配置和模型配置；MR Backend 负责仓库、MR、队列和 Worker：
 
 ```json
 {
@@ -78,10 +80,11 @@ cp config.example.json config.json
 }
 ```
 
-如果配置文件不在项目根目录，所有服务都可以使用 `CONFIG_PATH`：
+如果配置文件不在默认位置，可以分别指定服务配置路径：
 
 ```bash
-export CONFIG_PATH=/absolute/path/to/config.json
+export COMMON_CONFIG_PATH=/absolute/path/to/common-config.json
+export MR_CONFIG_PATH=/absolute/path/to/mr-config.json
 ```
 
 ## 本仓三模块联调启动
@@ -99,7 +102,7 @@ mr-backend/.venv/bin/pip install -r mr-backend/requirements.txt
 启动 Common Backend：
 
 ```bash
-CONFIG_PATH=$PWD/config.json \
+CONFIG_PATH=$PWD/common-backend/config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
 npm --prefix common-backend run dev
 ```
@@ -107,7 +110,7 @@ npm --prefix common-backend run dev
 启动 MR Backend。该命令会一起启动 MR API 和常驻 Worker pool：
 
 ```bash
-CONFIG_PATH=$PWD/config.json \
+CONFIG_PATH=$PWD/mr-backend/config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
 PYTHON_BIN=$PWD/mr-backend/.venv/bin/python \
 npm --prefix mr-backend run dev

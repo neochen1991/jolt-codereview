@@ -33,10 +33,10 @@ MR Backend 是 Jolt CodeReview 的核心业务后端，负责项目、仓库、M
 npm install
 python3 -m venv mr-backend/.venv
 mr-backend/.venv/bin/pip install -r mr-backend/requirements.txt
-cp config.example.json config.json
+cp mr-backend/config.example.json mr-backend/config.json
 ```
 
-编辑 `config.json`：
+编辑 `mr-backend/config.json`：
 
 ```json
 {
@@ -55,7 +55,7 @@ cp config.example.json config.json
 启动 MR Backend。该命令会一起启动 MR API 和常驻 Worker pool：
 
 ```bash
-CONFIG_PATH=$PWD/config.json \
+CONFIG_PATH=$PWD/mr-backend/config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
 PYTHON_BIN=$PWD/mr-backend/.venv/bin/python \
 npm run dev:mr
@@ -64,7 +64,7 @@ npm run dev:mr
 只消费一条队列任务：
 
 ```bash
-CONFIG_PATH=$PWD/config.json \
+CONFIG_PATH=$PWD/mr-backend/config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
 PYTHON_BIN=$PWD/mr-backend/.venv/bin/python \
 npm run worker:once

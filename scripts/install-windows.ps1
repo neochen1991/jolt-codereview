@@ -154,8 +154,11 @@ function Install-ProjectDependencies {
     }
     & ".\.venv\Scripts\python.exe" -m pip install --upgrade pip
     & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt
-    if ((-not (Test-Path "config.json")) -and (Test-Path "config.example.json")) {
-      Copy-Item "config.example.json" "config.json"
+    if ((-not (Test-Path "common-backend\config.json")) -and (Test-Path "common-backend\config.example.json")) {
+      Copy-Item "common-backend\config.example.json" "common-backend\config.json"
+    }
+    if ((-not (Test-Path "mr-backend\config.json")) -and (Test-Path "mr-backend\config.example.json")) {
+      Copy-Item "mr-backend\config.example.json" "mr-backend\config.json"
     }
   } finally {
     Pop-Location

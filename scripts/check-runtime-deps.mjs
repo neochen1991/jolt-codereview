@@ -10,7 +10,9 @@ const installMissing = args.has("--install") || process.env.JOLT_INSTALL_MISSING
 const skipNode = args.has("--python-only");
 const skipPython = args.has("--node-only");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-const configPath = process.env.CONFIG_PATH || path.join(root, "config.json");
+const configPath = process.env.CONFIG_PATH
+  || process.env.MR_CONFIG_PATH
+  || path.join(root, "mr-backend", "config.json");
 
 const nodePackages = ["pg", "@types/pg"];
 const pythonModules = [{ module: "psycopg", package: "psycopg[binary]>=3.2.0" }];

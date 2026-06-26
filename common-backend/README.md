@@ -44,7 +44,7 @@ Common 当前提供以下公共能力：
 
 ```bash
 npm install
-cp config.example.json config.json
+cp common-backend/config.example.json common-backend/config.json
 ```
 
 最小配置示例：
@@ -63,7 +63,7 @@ cp config.example.json config.json
 启动：
 
 ```bash
-CONFIG_PATH=$PWD/config.json \
+CONFIG_PATH=$PWD/common-backend/config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
 npm run dev:common
 ```

@@ -182,8 +182,11 @@ install_project_dependencies() {
   fi
   .venv/bin/python -m pip install --upgrade pip
   .venv/bin/python -m pip install -r requirements.txt
-  if [ ! -f "config.json" ] && [ -f "config.example.json" ]; then
-    cp config.example.json config.json
+  if [ ! -f "common-backend/config.json" ] && [ -f "common-backend/config.example.json" ]; then
+    cp common-backend/config.example.json common-backend/config.json
+  fi
+  if [ ! -f "mr-backend/config.json" ] && [ -f "mr-backend/config.example.json" ]; then
+    cp mr-backend/config.example.json mr-backend/config.json
   fi
 }
 

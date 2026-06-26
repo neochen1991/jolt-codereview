@@ -4,7 +4,9 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
 const scriptArgs = process.argv.slice(2);
-const configPath = process.env.CONFIG_PATH || path.join(root, "config.json");
+const configPath = process.env.CONFIG_PATH
+  || process.env.MR_CONFIG_PATH
+  || path.join(root, "mr-backend", "config.json");
 
 function configuredPythonBin() {
   if (!existsSync(configPath)) return null;
@@ -25,8 +27,8 @@ function candidateCommands() {
     return [{ command: configured, prefixArgs: [] }];
   }
   const localVenvPython = process.platform === "win32"
-    ? path.join(root, ".venv", "Scripts", "python.exe")
-    : path.join(root, ".venv", "bin", "python");
+    ? path.join(root, "mr-backend", ".venv", "Scripts", "python.exe")
+    : path.join(root, "mr-backend", ".venv", "bin", "python");
   if (existsSync(localVenvPython)) {
     return [{ command: localVenvPython, prefixArgs: [] }];
   }

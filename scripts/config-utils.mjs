@@ -3,9 +3,8 @@ import path from "node:path";
 
 export const root = path.resolve(import.meta.dirname, "..");
 
-export function loadConfig() {
-  const configPath = process.env.CONFIG_PATH || path.join(root, "config.json");
-  const defaultConfig = JSON.parse(readFileSync(path.join(root, "config.example.json"), "utf8"));
+export function loadConfig(configPath = process.env.CONFIG_PATH || process.env.MR_CONFIG_PATH || path.join(root, "mr-backend", "config.json"), defaultPath = path.join(root, "mr-backend", "config.example.json")) {
+  const defaultConfig = JSON.parse(readFileSync(defaultPath, "utf8"));
   if (!existsSync(configPath)) return defaultConfig;
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   return deepMerge(defaultConfig, config);

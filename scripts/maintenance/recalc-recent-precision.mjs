@@ -1,6 +1,12 @@
-import { loadConfig } from "../../build/backend/config.js";
-import { openDatabase } from "../../build/backend/db.js";
-import { FeedbackLearningService } from "../../build/backend/services/FeedbackLearningService.js";
+import path from "node:path";
+
+if (!process.env.CONFIG_PATH) {
+  process.env.CONFIG_PATH = process.env.MR_CONFIG_PATH || path.resolve(process.cwd(), "mr-backend", "config.json");
+}
+
+const { loadConfig } = await import("../../build/backend/config.js");
+const { openDatabase } = await import("../../build/backend/db.js");
+const { FeedbackLearningService } = await import("../../build/backend/services/FeedbackLearningService.js");
 
 function argValue(name) {
   const prefix = `${name}=`;

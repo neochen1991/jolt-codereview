@@ -1,4 +1,7 @@
 # Local/private config
+/config.json
+/common-backend/config.json
+/mr-backend/config.json
 *.local.json
 .env
 .env.*

@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
+    "dev": "vite --host 127.0.0.1 --port 9020",
     "build": "tsc --noEmit && vite build",
-    "start": "vite --host 127.0.0.1",
+    "start": "vite --host 127.0.0.1 --port 9020",
     "verify": "npm run build"
   },
   "dependencies": {

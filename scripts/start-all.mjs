@@ -7,10 +7,10 @@ const root = path.resolve(import.meta.dirname, "..");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const config = loadConfig();
 const apiHost = config.server?.host || "127.0.0.1";
-const commonPort = Number(config.server?.common_port || 8010);
-const mrPort = Number(config.server?.mr_port || config.server?.port || 8011);
+const commonPort = Number(config.server?.common_port || 9022);
+const mrPort = Number(config.server?.mr_port || config.server?.port || 9021);
 const frontendHost = process.env.JOLT_FRONTEND_HOST || "127.0.0.1";
-const frontendPort = Number(process.env.JOLT_FRONTEND_PORT || 5173);
+const frontendPort = Number(process.env.JOLT_FRONTEND_PORT || 9020);
 
 if (!existsSync(path.join(root, "node_modules"))) {
   console.error("node_modules not found. Run npm install first.");

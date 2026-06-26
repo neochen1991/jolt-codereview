@@ -24,14 +24,14 @@
 平台侧需要提供以下信息：
 
 ```bash
-COMMON_API_BASE=http://127.0.0.1:8010
+COMMON_API_BASE=http://127.0.0.1:9022
 JOLT_INTERNAL_SERVICE_TOKEN=replace-with-service-token
 ```
 
 前端应用还需要配置：
 
 ```bash
-VITE_COMMON_API_BASE=http://127.0.0.1:8010
+VITE_COMMON_API_BASE=http://127.0.0.1:9022
 ```
 
 后端服务必须把 `JOLT_INTERNAL_SERVICE_TOKEN` 放在服务端环境变量或密钥系统中，不要下发到浏览器、移动端或任何不可信客户端。

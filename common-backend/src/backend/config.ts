@@ -14,9 +14,9 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   server: {
     host: "127.0.0.1",
-    port: 8011,
-    common_port: 8010,
-    mr_port: 8011,
+    port: 9021,
+    common_port: 9022,
+    mr_port: 9021,
     database_driver: "postgres",
     postgres_url: "",
     postgres_user: "",

@@ -110,9 +110,9 @@ If the split variables are not set, the frontend falls back to the legacy `VITE_
 
 ## Local Ports
 
-- Common backend: `127.0.0.1:8010`
-- MR backend: `127.0.0.1:8011`
-- Frontend: `127.0.0.1:5173`
+- Common backend: `127.0.0.1:9022`
+- MR backend: `127.0.0.1:9021`
+- Frontend: `127.0.0.1:9020`
 
 ## Verification Gates
 

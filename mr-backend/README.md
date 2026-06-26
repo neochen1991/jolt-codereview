@@ -42,7 +42,7 @@ cp config.example.json config.json
 {
   "server": {
     "host": "127.0.0.1",
-    "mr_port": 8011,
+    "mr_port": 9021,
     "database_driver": "postgres",
     "postgres_url": "postgresql://USER:PASSWORD@127.0.0.1:5432/jolt_codereview"
   },
@@ -82,7 +82,7 @@ npm run worker:once
 健康检查：
 
 ```bash
-curl -sS http://127.0.0.1:8011/api/health
+curl -sS http://127.0.0.1:9021/api/health
 ```
 
 ## 模块启动
@@ -130,7 +130,7 @@ npm run start
 | --- | --- |
 | `CONFIG_PATH` | 配置文件路径，默认当前工作目录 `config.json` |
 | `server.host` | 监听地址，默认 `127.0.0.1` |
-| `server.mr_port` | MR Backend 端口，默认 `8011` |
+| `server.mr_port` | MR Backend 端口，默认 `9021` |
 | `server.postgres_url` | PostgreSQL 连接串，必填 |
 | `runtime.python_bin` / `PYTHON_BIN` | Worker 使用的 Python |
 | `JOLT_INTERNAL_SERVICE_TOKEN` | 内部 API token；需要与 Common Backend 保持一致 |
@@ -143,11 +143,11 @@ npm run start
 MR Backend 面向用户的接口使用 Common Backend 登录得到的 Bearer Token：
 
 ```bash
-TOKEN=$(curl -sS http://127.0.0.1:8010/api/auth/login \
+TOKEN=$(curl -sS http://127.0.0.1:9022/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"local-admin","password":"admin123"}' | jq -r '.token')
 
-curl -sS http://127.0.0.1:8011/api/projects \
+curl -sS http://127.0.0.1:9021/api/projects \
   -H "Authorization: Bearer $TOKEN"
 ```
 

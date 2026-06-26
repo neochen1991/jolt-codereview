@@ -64,7 +64,7 @@ export class CommonBackendClient {
     const envBase = String(process.env.COMMON_API_BASE || process.env.VITE_COMMON_API_BASE || "").trim();
     if (envBase) return envBase.replace(/\/+$/, "");
     const host = this.config.server?.host ?? "127.0.0.1";
-    const port = this.config.server?.common_port ?? 8010;
+    const port = this.config.server?.common_port ?? 9022;
     return `http://${host}:${port}`;
   }
 

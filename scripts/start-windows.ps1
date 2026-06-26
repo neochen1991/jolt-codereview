@@ -88,8 +88,8 @@ try {
 }
 
 Write-Step "Starting Jolt CodeReview"
-Write-Host "API:      http://127.0.0.1:8011"
-Write-Host "Frontend: http://127.0.0.1:5173"
+Write-Host "API:      http://127.0.0.1:9021"
+Write-Host "Frontend: http://127.0.0.1:9020"
 Write-Host "Press Ctrl+C to stop all local services."
 
 Push-Location $RootDir

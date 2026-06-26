@@ -49,8 +49,8 @@
 **Steps:**
 
 1. Add config support for common and MR ports while preserving `server.port`.
-2. Add common server startup on `server.common_port || 8010`.
-3. Add MR server startup on `server.mr_port || server.port || 8011`.
+2. Add common server startup on `server.common_port || 9022`.
+3. Add MR server startup on `server.mr_port || server.port || 9021`.
 4. Keep legacy `server.ts` pointing to MR server behavior for existing scripts.
 5. Run `npm run build` and `npm run verify:three-project-boundary`.
 
@@ -106,7 +106,7 @@
 **Steps:**
 
 1. Start common backend, MR backend, worker, and frontend.
-2. Release ports `8010`, `8011`, and `5173`.
+2. Release ports `9022`, `9021`, and `9020`.
 3. Pass `COMMON_API_BASE`, `MR_API_BASE`, `VITE_COMMON_API_BASE`, and `VITE_MR_API_BASE` to child processes.
 4. Run smoke and boundary verification.
 

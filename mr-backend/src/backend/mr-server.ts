@@ -65,7 +65,7 @@ const autoSyncScheduler = new MrAutoSyncScheduler(
 );
 
 const host = config.server?.host ?? "127.0.0.1";
-const port = config.server?.mr_port ?? config.server?.port ?? 8011;
+const port = config.server?.mr_port ?? config.server?.port ?? 9021;
 server.listen(port, host, () => {
   console.log(`Jolt MR Backend listening on http://${host}:${port}`);
   logger.log("mr_api_started", { host, port });

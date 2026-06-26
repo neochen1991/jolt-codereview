@@ -560,7 +560,7 @@ def backend_api_base_url(config: dict[str, Any]) -> str:
     if explicit:
         return str(explicit).rstrip("/")
     host = str(config.get("server", {}).get("host") or "127.0.0.1")
-    port = int(config.get("server", {}).get("port") or 8011)
+    port = int(config.get("server", {}).get("mr_port") or config.get("server", {}).get("port") or 9021)
     return f"http://{host}:{port}/api"
 
 

@@ -131,7 +131,7 @@ def common_base_url(config: dict[str, Any]) -> str:
         return configured.rstrip("/")
     server = config.get("server") or {}
     host = server.get("host") or "127.0.0.1"
-    port = server.get("common_port") or 8010
+    port = server.get("common_port") or 9022
     return f"http://{host}:{port}"
 
 

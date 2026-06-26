@@ -11,7 +11,7 @@ const db = openDatabase(config);
 const server = createApp(createCommonRoutes(config, db), logger);
 
 const host = config.server?.host ?? "127.0.0.1";
-const port = config.server?.common_port ?? 8010;
+const port = config.server?.common_port ?? 9022;
 server.listen(port, host, () => {
   console.log(`Jolt Common Backend listening on http://${host}:${port}`);
   logger.log("common_api_started", { host, port });

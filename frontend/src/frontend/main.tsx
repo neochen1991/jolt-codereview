@@ -38,7 +38,7 @@ import { resolveApiBase, type ApiBaseConfig } from "./apiRouting";
 import "./styles.css";
 
 const API_BASES: ApiBaseConfig = {
-  legacyBase: import.meta.env.VITE_API_BASE || "http://127.0.0.1:8011",
+  legacyBase: import.meta.env.VITE_API_BASE || "http://127.0.0.1:9021",
   commonBase: import.meta.env.VITE_COMMON_API_BASE,
   mrBase: import.meta.env.VITE_MR_API_BASE
 };

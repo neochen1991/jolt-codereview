@@ -53,7 +53,7 @@ cp config.example.json config.json
 {
   "server": {
     "host": "127.0.0.1",
-    "common_port": 8010,
+    "common_port": 9022,
     "database_driver": "postgres",
     "postgres_url": "postgresql://USER:PASSWORD@127.0.0.1:5432/jolt_codereview"
   }
@@ -71,7 +71,7 @@ npm run dev:common
 健康检查：
 
 ```bash
-curl -sS http://127.0.0.1:8010/api/health
+curl -sS http://127.0.0.1:9022/api/health
 ```
 
 期望返回：
@@ -115,7 +115,7 @@ npm run start
 | --- | --- |
 | `CONFIG_PATH` | 配置文件路径，默认读取当前工作目录 `config.json` |
 | `server.host` | 监听地址，默认 `127.0.0.1` |
-| `server.common_port` | Common Backend 端口，默认 `8010` |
+| `server.common_port` | Common Backend 端口，默认 `9022` |
 | `server.database_driver` | 固定为 `postgres` |
 | `server.postgres_url` | PostgreSQL 连接串，必填 |
 | `server.postgres_user` / `server.postgres_password` | 可选；需要覆盖连接串账号密码时使用 |
@@ -133,14 +133,14 @@ npm run start
 平台侧需要提供：
 
 ```bash
-COMMON_API_BASE=http://127.0.0.1:8010
+COMMON_API_BASE=http://127.0.0.1:9022
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token
 ```
 
 前端类应用还需要：
 
 ```bash
-VITE_COMMON_API_BASE=http://127.0.0.1:8010
+VITE_COMMON_API_BASE=http://127.0.0.1:9022
 ```
 
 ### 2. 登录获取用户 token

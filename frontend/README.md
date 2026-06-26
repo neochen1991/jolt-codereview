@@ -24,16 +24,16 @@ Jolt Frontend 是 React + Vite 前端，负责登录、项目空间、MR 队列�
 
 ```bash
 npm install
-VITE_COMMON_API_BASE=http://127.0.0.1:8010 \
-VITE_MR_API_BASE=http://127.0.0.1:8011 \
-VITE_API_BASE=http://127.0.0.1:8011 \
+VITE_COMMON_API_BASE=http://127.0.0.1:9022 \
+VITE_MR_API_BASE=http://127.0.0.1:9021 \
+VITE_API_BASE=http://127.0.0.1:9021 \
 npm run dev:web
 ```
 
 访问：
 
 ```text
-http://127.0.0.1:5173
+http://127.0.0.1:9020
 ```
 
 ## 模块启动
@@ -49,9 +49,9 @@ npm run dev
 `.env` 示例：
 
 ```bash
-VITE_COMMON_API_BASE=http://127.0.0.1:8010
-VITE_MR_API_BASE=http://127.0.0.1:8011
-VITE_API_BASE=http://127.0.0.1:8011
+VITE_COMMON_API_BASE=http://127.0.0.1:9022
+VITE_MR_API_BASE=http://127.0.0.1:9021
+VITE_API_BASE=http://127.0.0.1:9021
 ```
 
 生产构建：

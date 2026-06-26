@@ -1,4 +1,4 @@
-export const API = process.env.API_BASE || "http://127.0.0.1:8011";
+export const API = process.env.API_BASE || "http://127.0.0.1:9021";
 export const COMMON_API = process.env.COMMON_API_BASE || API;
 export const MR_API = process.env.MR_API_BASE || API;
 

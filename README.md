@@ -15,7 +15,7 @@ Browser
   |
   | VITE_COMMON_API_BASE: /api/auth /api/me /api/permissions /api/models /api/system
   v
-Common Backend (default 127.0.0.1:8010)
+Common Backend (default 127.0.0.1:9022)
   |
   | same PostgreSQL database
   v
@@ -23,7 +23,7 @@ PostgreSQL
   ^
   | same PostgreSQL database
   |
-MR Backend (default 127.0.0.1:8011) <---- Python Review Worker
+MR Backend (default 127.0.0.1:9021) <---- Python Review Worker
   ^
   |
   | VITE_MR_API_BASE: /api/projects /api/mr-review /api/full-review /api/vcs /api/webhooks ...
@@ -70,8 +70,8 @@ cp config.example.json config.json
 {
   "server": {
     "host": "127.0.0.1",
-    "common_port": 8010,
-    "mr_port": 8011,
+    "common_port": 9022,
+    "mr_port": 9021,
     "database_driver": "postgres",
     "postgres_url": "postgresql://USER:PASSWORD@127.0.0.1:5432/jolt_codereview",
     "postgres_query_timeout_seconds": 120
@@ -126,17 +126,17 @@ npm --prefix mr-backend run worker
 启动 Frontend：
 
 ```bash
-VITE_COMMON_API_BASE=http://127.0.0.1:8010 \
-VITE_MR_API_BASE=http://127.0.0.1:8011 \
-VITE_API_BASE=http://127.0.0.1:8011 \
+VITE_COMMON_API_BASE=http://127.0.0.1:9022 \
+VITE_MR_API_BASE=http://127.0.0.1:9021 \
+VITE_API_BASE=http://127.0.0.1:9021 \
 npm --prefix frontend run dev
 ```
 
 访问：
 
-- Frontend: `http://127.0.0.1:5173`
-- Common health: `http://127.0.0.1:8010/api/health`
-- MR health: `http://127.0.0.1:8011/api/health`
+- Frontend: `http://127.0.0.1:9020`
+- Common health: `http://127.0.0.1:9022/api/health`
+- MR health: `http://127.0.0.1:9021/api/health`
 
 默认本机 root 账号：
 
@@ -198,7 +198,7 @@ npm run verify:split-full-regression
 所有面向用户的 API 使用 Bearer Token。先登录：
 
 ```bash
-curl -sS http://127.0.0.1:8010/api/auth/login \
+curl -sS http://127.0.0.1:9022/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"local-admin","password":"admin123"}'
 ```
@@ -206,20 +206,20 @@ curl -sS http://127.0.0.1:8010/api/auth/login \
 响应中会返回 `token`。后续请求：
 
 ```bash
-curl -sS http://127.0.0.1:8011/api/projects \
+curl -sS http://127.0.0.1:9021/api/projects \
   -H "Authorization: Bearer $JOLT_TOKEN"
 ```
 
 内部 API 使用 `x-internal-service-token`，只给服务间调用或 Worker 使用：
 
 ```bash
-curl -sS 'http://127.0.0.1:8010/internal/models/effective-config?project_id=project_default' \
+curl -sS 'http://127.0.0.1:9022/internal/models/effective-config?project_id=project_default' \
   -H "x-internal-service-token: $JOLT_INTERNAL_SERVICE_TOKEN"
 ```
 
 ## Common Backend API 功能
 
-Common Backend 默认端口 `8010`，只承载公共平台能力。
+Common Backend 默认端口 `9022`，只承载公共平台能力。
 
 | 功能 | 主要 API |
 | --- | --- |
@@ -236,7 +236,7 @@ Common Backend 默认端口 `8010`，只承载公共平台能力。
 
 ## MR Backend API 功能
 
-MR Backend 默认端口 `8011`，承载项目和检视业务能力。
+MR Backend 默认端口 `9021`，承载项目和检视业务能力。
 
 | 功能 | 主要 API |
 | --- | --- |
@@ -259,12 +259,12 @@ MR Backend 默认端口 `8011`，承载项目和检视业务能力。
 
 ## Frontend 接入方式
 
-Frontend 默认端口 `5173`。需要配置两个 API base：
+Frontend 默认端口 `9020`。需要配置两个 API base：
 
 ```bash
-VITE_COMMON_API_BASE=http://127.0.0.1:8010
-VITE_MR_API_BASE=http://127.0.0.1:8011
-VITE_API_BASE=http://127.0.0.1:8011
+VITE_COMMON_API_BASE=http://127.0.0.1:9022
+VITE_MR_API_BASE=http://127.0.0.1:9021
+VITE_API_BASE=http://127.0.0.1:9021
 ```
 
 `VITE_API_BASE` 是旧单后端兼容项。新部署应显式配置 `VITE_COMMON_API_BASE` 和 `VITE_MR_API_BASE`。

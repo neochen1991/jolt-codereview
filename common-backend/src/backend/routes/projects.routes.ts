@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
 import type { BackendRouteContext } from "./context.js";
+import { compactLlmTestInput, testOpenAiCompatibleLlm } from "../services/LlmConnectivityService.js";
 
 const PROJECT_MEMBER_ROLES = new Set(["observer", "developer", "reviewer", "project_admin"]);
 
@@ -151,6 +152,13 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
         summary: `updated ${params.key}`
       });
       return row ? { key: row.key, value: JSON.parse(row.settings_json || "{}"), updated_at: row.updated_at } : notFound();
+    }),
+    route("POST", "/api/projects/:projectId/settings/llm/test", ({ params, body, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      const input = compactLlmTestInput((body as Record<string, unknown> | undefined) ?? {});
+      return testOpenAiCompatibleLlm(input);
     }),
     route("GET", "/api/projects/:projectId/join-requests", ({ params, req }) => {
       const actorId = currentUserId(req);

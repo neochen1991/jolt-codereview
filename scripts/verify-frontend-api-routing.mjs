@@ -34,6 +34,7 @@ const cases = [
   ["/api/projects/project_default", bases.commonBase],
   ["/api/projects/project_default/members", bases.commonBase],
   ["/api/projects/project_default/settings", bases.commonBase],
+  ["/api/projects/project_default/settings/llm/test", bases.commonBase],
   ["/api/projects/project_default/effective-config", bases.commonBase],
   ["/api/projects/project_default/invitations", bases.commonBase],
   ["/api/mr-review/projects/project_default/merge-requests", bases.mrBase],

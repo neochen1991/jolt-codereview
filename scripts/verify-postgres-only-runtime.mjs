@@ -50,6 +50,7 @@ const checks = [
   { name: "sqlite-scalar-min", pattern: /\bMIN\s*\([^()\n]+,\s*[^()\n]+\)/ },
   { name: "legacy-sql-translator", pattern: /translate(?:Legacy|Sqlite|_sqlite).*Postgres/i },
   { name: "placeholder-translator", pattern: /replace(?:Qmark|_qmark|Placeholders)|escape_psycopg_percent_literals/i },
+  { name: "compat-wrapper", pattern: /\bCompat(?:Row|Cursor|Connection)\b/ },
   { name: "database-path", pattern: /\bdatabase_path\b/i }
 ];
 

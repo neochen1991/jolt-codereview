@@ -299,7 +299,7 @@ def _read_cached_llm_response(config: dict[str, Any], cache_key: str) -> dict[st
         row = conn.execute("SELECT response_json FROM llm_response_cache WHERE cache_key = %s", (cache_key,)).fetchone()
         if not row:
             return None
-        raw = row["response_json"] if hasattr(row, "keys") else row[0]
+        raw = row["response_json"]
         parsed = json.loads(str(raw or "{}"))
         return parsed if isinstance(parsed, dict) else None
     except Exception:
@@ -502,11 +502,6 @@ def _file_summary(item: Any) -> dict[str, Any]:
 def _row_value(row: Any, key: str, default: Any = "") -> Any:
     if isinstance(row, dict):
         return row.get(key, default)
-    try:
-        if hasattr(row, "keys") and key in row.keys():
-            return row[key]
-    except (KeyError, TypeError):
-        pass
     return getattr(row, key, default)
 
 

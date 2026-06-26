@@ -1,37 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
-from datetime import date, datetime
+from collections.abc import Iterable
 from typing import Any
-
-
-class CompatRow(dict[str, Any]):
-    def __init__(self, values: dict[str, Any], columns: list[str] | None = None):
-        super().__init__(values)
-        self._columns = columns or list(values.keys())
-
-    def __getitem__(self, key: str | int) -> Any:
-        if isinstance(key, int):
-            return super().__getitem__(self._columns[key])
-        return super().__getitem__(key)
-
-    def keys(self):  # type: ignore[override]
-        return super().keys()
-
-
-class CompatCursor:
-    def __init__(self, rows: list[CompatRow] | None = None, rowcount: int = -1):
-        self._rows = rows or []
-        self.rowcount = rowcount
-
-    def fetchone(self) -> CompatRow | None:
-        return self._rows[0] if self._rows else None
-
-    def fetchall(self) -> list[CompatRow]:
-        return list(self._rows)
-
-    def __iter__(self) -> Iterator[CompatRow]:
-        return iter(self._rows)
 
 
 def open_app_database(config: dict[str, Any]):
@@ -69,21 +39,18 @@ class PostgresConnection:
         self._conn = psycopg.connect(connection_string, **kwargs)
         self._conn.autocommit = False
 
-    def execute(self, sql: str, params: Iterable[Any] | None = None) -> CompatCursor:
+    def execute(self, sql: str, params: Iterable[Any] | None = None):
         sql = sql.strip()
         params_list = list(params or [])
-        if not sql:
-            return CompatCursor()
-        cursor = self._conn.execute(prepare_postgres_sql(sql), params_list)
-        rows = _wrap_rows(cursor.fetchall() if cursor.description else [])
-        return CompatCursor(rows, cursor.rowcount)
+        cursor = self._conn.cursor()
+        if sql:
+            cursor.execute(prepare_postgres_sql(sql), params_list)
+        return cursor
 
-    def executemany(self, sql: str, seq_of_params: Iterable[Iterable[Any]]) -> CompatCursor:
-        total = 0
-        for params in seq_of_params:
-            cursor = self.execute(sql, params)
-            total += max(0, int(cursor.rowcount or 0))
-        return CompatCursor(rowcount=total)
+    def executemany(self, sql: str, seq_of_params: Iterable[Iterable[Any]]):
+        cursor = self._conn.cursor()
+        cursor.executemany(prepare_postgres_sql(sql), list(seq_of_params))
+        return cursor
 
     def executescript(self, sql: str) -> None:
         for statement in split_sql_statements(sql):
@@ -97,30 +64,6 @@ class PostgresConnection:
 
     def close(self) -> None:
         self._conn.close()
-
-    @property
-    def row_factory(self) -> None:
-        return None
-
-    @row_factory.setter
-    def row_factory(self, _value: Any) -> None:
-        return None
-
-def _wrap_rows(rows: list[dict[str, Any]]) -> list[CompatRow]:
-    wrapped: list[CompatRow] = []
-    for row in rows:
-        values = {key: _normalize_db_value(value) for key, value in dict(row).items()}
-        wrapped.append(CompatRow(values, list(row.keys())))
-    return wrapped
-
-
-def _normalize_db_value(value: Any) -> Any:
-    if isinstance(value, datetime):
-        return value.isoformat(sep=" ")
-    if isinstance(value, date):
-        return value.isoformat()
-    return value
-
 
 def split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []

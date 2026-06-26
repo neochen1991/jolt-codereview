@@ -69,7 +69,10 @@ const DEFAULT_CONFIG: AppConfig = {
     poll_interval_seconds: 300,
     max_concurrency: 1,
     max_attempts: 3,
-    heartbeat_timeout_seconds: 600
+    heartbeat_timeout_seconds: 600,
+    worker_pool_size: 1,
+    max_worker_pool_size: 20,
+    worker_reconcile_seconds: 30
   },
   token_usage: {
     enabled: false,

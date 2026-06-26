@@ -47,9 +47,6 @@ if (!existsSync(path.join(root, "build", "backend", "mr-server.js"))) {
 }
 
 console.log("Jolt MR Backend service");
-console.log("MR API and review worker will run in the same service boundary.");
+console.log("MR API owns the review worker pool in the same service boundary.");
 
 start("MR API", ["build/backend/mr-server.js"]);
-start("Worker", ["scripts/run-python.mjs", "worker/review_worker.py", "--loop"], {
-  JOLT_SKIP_LOG_CLEANUP: process.env.JOLT_SKIP_LOG_CLEANUP || "1"
-});

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 
 export interface WorkerProcessLogger {
   log(event: string, fields?: Record<string, unknown>, level?: "info" | "warn" | "error"): void;
@@ -52,4 +53,35 @@ export function spawnWorkerOnce(logger?: WorkerProcessLogger) {
   if (detached) {
     child.unref();
   }
+}
+
+export function spawnWorkerLoop(logger?: WorkerProcessLogger): ChildProcess {
+  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+  const command = "npm run worker";
+  const child = spawn(npmCommand, ["run", "worker"], {
+    cwd: process.cwd(),
+    env: { ...process.env, JOLT_SKIP_LOG_CLEANUP: "1" },
+    stdio: "ignore",
+    windowsHide: true
+  });
+
+  logger?.log("worker_loop_spawned", {
+    pid: child.pid ?? null,
+    command,
+    platform: process.platform
+  });
+
+  child.on("error", (error) => {
+    if (logger?.error) {
+      logger.error("worker_loop_spawn_failed", error, { command, platform: process.platform });
+      return;
+    }
+    logger?.log("worker_loop_spawn_failed", {
+      command,
+      platform: process.platform,
+      error_message: error.message
+    }, "error");
+  });
+
+  return child;
 }

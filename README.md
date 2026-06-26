@@ -105,7 +105,7 @@ JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
 npm --prefix common-backend run dev
 ```
 
-启动 MR Backend。该命令会一起启动 MR API 和常驻 Worker：
+启动 MR Backend。该命令会一起启动 MR API 和常驻 Worker pool：
 
 ```bash
 CONFIG_PATH=$PWD/config.json \
@@ -113,6 +113,8 @@ JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
 PYTHON_BIN=$PWD/mr-backend/.venv/bin/python \
 npm --prefix mr-backend run dev
 ```
+
+MR Backend 会按活跃项目的 `queue_policy.max_concurrency` 自动补足 worker pool。新项目创建后，绑定仓库并产生 MR 队列任务时会进入同一套项目级并发控制；不同项目的 MR 可以同时检视。
 
 启动 Frontend：
 

@@ -11,6 +11,7 @@ import { MrSyncService } from "./services/MrSyncService.js";
 import { ReviewQueueService } from "./services/ReviewQueueService.js";
 import { queuedReviewWorkerCapacity } from "./services/WorkerLaunchPolicy.js";
 import { spawnWorkerOnce } from "./services/WorkerProcessLauncher.js";
+import { WorkerPoolManager } from "./services/WorkerPoolManager.js";
 import { CommonBackendClient } from "./services/CommonBackendClient.js";
 
 const config = loadConfig();
@@ -24,6 +25,7 @@ const mergeRequestRepository = new MergeRequestRepository(db);
 const reviewJobRepository = new ReviewJobRepository(db);
 const commonClient = new CommonBackendClient(config);
 const reviewQueueService = new ReviewQueueService(reviewJobRepository);
+const workerPool = new WorkerPoolManager({ config, db, logger, effectiveConfig });
 
 async function effectiveConfig(projectId: string) {
   return commonClient.projectEffectiveConfig(projectId);
@@ -77,12 +79,14 @@ server.listen(port, host, () => {
     console.log("MR auto-sync scheduler disabled");
     logger.log("auto_sync_scheduler_disabled");
   }
+  workerPool.start();
   runQueuedWorkersIfNeeded();
 });
 
 function shutdown() {
   logger.log("mr_api_shutdown");
   autoSyncScheduler.stop();
+  workerPool.stop();
   server.close(() => process.exit(0));
 }
 

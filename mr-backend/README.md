@@ -52,7 +52,7 @@ cp config.example.json config.json
 }
 ```
 
-启动 MR Backend。该命令会一起启动 MR API 和常驻 Worker：
+启动 MR Backend。该命令会一起启动 MR API 和常驻 Worker pool：
 
 ```bash
 CONFIG_PATH=$PWD/config.json \
@@ -87,7 +87,7 @@ python3 -m venv .venv
 cp config.example.json config.json
 ```
 
-启动 MR Backend。该命令会一起启动 MR API 和常驻 Worker：
+启动 MR Backend。该命令会一起启动 MR API 和常驻 Worker pool：
 
 ```bash
 CONFIG_PATH=./config.json \
@@ -270,7 +270,9 @@ Frontend 通过 `VITE_MR_API_BASE` 调用 MR Backend。
 
 ## Worker 运行方式
 
-Worker 从 `review_jobs` 队列表认领任务，写入 `review_runs`、`review_findings`、tool calls、LLM calls、trace 和 session logs。默认情况下，`npm run dev` 和 `npm run start` 会随 MR Backend 一起启动常驻 Worker。
+Worker 从 `review_jobs` 队列表认领任务，写入 `review_runs`、`review_findings`、tool calls、LLM calls、trace 和 session logs。默认情况下，`npm run dev` 和 `npm run start` 会随 MR Backend 一起启动常驻 Worker pool。
+
+MR Backend 会按活跃项目的 `queue_policy.max_concurrency` 汇总需要的 worker 数，并每隔 `queue_policy.worker_reconcile_seconds` 自动补齐。新项目创建后，一旦绑定仓库并进入 MR 队列，就会按项目级并发策略纳入 worker pool；不同项目的 MR 可以同时检视，同一项目内受 `queue_policy.max_concurrency` 限制。
 
 手动排障时也可以只启动常驻 Worker：
 
@@ -287,6 +289,9 @@ npm run worker:once
 常用项目配置：
 
 - `queue_policy.max_concurrency`: 项目内并发数。
+- `queue_policy.worker_pool_size`: MR Backend 基础常驻 worker 数，可用 `MR_WORKER_COUNT` 覆盖。
+- `queue_policy.max_worker_pool_size`: 常驻 worker pool 上限，可用 `MR_WORKER_MAX` 覆盖。
+- `queue_policy.worker_reconcile_seconds`: 自动补齐 worker pool 的周期。
 - `queue_policy.heartbeat_timeout_seconds`: job heartbeat 超时。
 - `tool_policy.static_runners`: 静态工具开关和自定义规则路径。
 - `review_policy.max_added_lines_per_mr`: MR 规模阈值。

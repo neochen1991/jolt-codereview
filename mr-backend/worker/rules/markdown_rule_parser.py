@@ -109,12 +109,12 @@ def _to_rule(raw: dict[str, str | list[str]]) -> ParsedRule:
         category=str(raw.get("category", "general")),
         severity=str(raw.get("severity", "medium")),
         applies_to=str(raw.get("applies_to", "**/*")),
-        check=_compact(check, 900),
-        required_evidence=_compact(required_evidence, 400),
-        positive_examples=_compact(positive_examples, 700),
-        negative_examples=_compact(negative_examples, 700),
-        false_positive_patterns=_compact(false_positive_patterns, 700),
-        fix_guidance=_compact(fix_guidance, 700),
+        check=_compact(check),
+        required_evidence=_compact(required_evidence),
+        positive_examples=_compact(positive_examples),
+        negative_examples=_compact(negative_examples),
+        false_positive_patterns=_compact(false_positive_patterns),
+        fix_guidance=_compact(fix_guidance),
     )
 
 
@@ -142,6 +142,5 @@ def _join_sections(sections: dict[str, list[str]], names: list[str]) -> str:
     return "\n".join(chunks)
 
 
-def _compact(text: str, limit: int) -> str:
-    compacted = re.sub(r"\s+", " ", text).strip()
-    return compacted[:limit]
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()

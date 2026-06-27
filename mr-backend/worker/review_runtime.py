@@ -3812,9 +3812,9 @@ def custom_skill_asset_manifest(conn: Any | None, project_id: str | None, skill_
     if reference_chunks:
         lines.append("")
         lines.append("## 预加载参考资料")
-        for asset in reference_chunks[:5]:
+        for asset in reference_chunks:
             lines.append(f"\n### {asset['asset_path']}\n")
-            lines.append(str(asset["content"])[:3000])
+            lines.append(str(asset["content"]))
     if any(str(asset["asset_type"]) == "script" for asset in assets):
         lines.append("")
         lines.append("## Scripts 调用策略")
@@ -3831,7 +3831,7 @@ def load_skill_summary(
     custom_text = load_custom_skill_summary(conn, project_id, skill_name)
     skill_path = ROOT / "agent-skills" / skill_name / "SKILL.md"
     if not skill_path.exists():
-        return custom_text[:12000] if custom_text else f"skill {skill_name} is not available"
+        return custom_text if custom_text else f"skill {skill_name} is not available"
     text = skill_path.read_text("utf-8")
     if custom_text:
         text = f"{text}\n\n# 项目自定义 Skill 覆写/补充\n\n{custom_text}"
@@ -3853,7 +3853,7 @@ def load_skill_summary(
     if standard_match and (not files or "java" in languages):
         standard_path = skill_path.parent / standard_match.group(1)
         append_standard(standard_path, "绑定兼容结构化规范文档")
-    return text[:12000]
+    return text
 
 
 def choose_effort(requested: str, files: list[ChangedFile], risk_score: int, fetch_degraded: bool = False) -> str:

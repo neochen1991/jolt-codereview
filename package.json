@@ -14,10 +14,11 @@
     "sync:modules": "node scripts/export-three-repos.mjs --force",
     "export:repos": "node scripts/export-three-repos.mjs --force --out=/private/tmp/jolt-three-service-export",
     "build": "npm --prefix common-backend run build && npm --prefix mr-backend run build && npm --prefix frontend run build",
-    "verify": "npm run build && npm run verify:frontend-api-routing && npm run verify:skill-upload-paths && npm run verify:postgres-only-runtime",
+    "verify": "npm run build && npm run verify:frontend-api-routing && npm run verify:skill-upload-paths && npm run verify:bound-rule-skill-full-read && npm run verify:postgres-only-runtime",
     "verify:split-full-regression": "node scripts/verify-split-full-regression.mjs",
     "verify:frontend-api-routing": "node scripts/verify-frontend-api-routing.mjs",
     "verify:skill-upload-paths": "node scripts/verify-skill-upload-paths.mjs",
+    "verify:bound-rule-skill-full-read": "node scripts/verify-bound-rule-skill-full-read.mjs",
     "verify:postgres-only-runtime": "node scripts/verify-postgres-only-runtime.mjs"
   },
   "dependencies": {

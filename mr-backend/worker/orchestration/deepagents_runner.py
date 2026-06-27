@@ -166,7 +166,7 @@ def run_bounded_deepagent(
 
     def inspect_agent_rules() -> str:
         """Read the actual markdown/code-rule summary bound to this expert agent."""
-        return (skill_summary or "no bound markdown rules")[:4000]
+        return skill_summary or "no bound markdown rules"
 
     def inspect_static_observations() -> str:
         """Read actual static-analysis observations produced earlier in this review run."""
@@ -260,7 +260,7 @@ def run_bounded_deepagent(
             return "asset_path rejected"
         for item in skill_assets:
             if item["asset_path"] == normalized:
-                return item["content"][:8000]
+                return item["content"]
         return f"skill asset not found: {normalized}"
 
     def run_skill_script(script_path: str, input_json: str = "{}") -> str:

@@ -41,20 +41,24 @@ def redact_untrusted(text: str) -> tuple[str, dict[str, Any]]:
     return result, {"redactions": sorted(set(redactions)), "injection_patterns": sorted(set(injection_patterns))}
 
 
-def _compact_text(value: Any, limit: int) -> str:
+def _compact_text(value: Any, limit: int | None) -> str:
     text = str(value or "")
+    if limit is None:
+        return text
     return text if len(text) <= limit else f"{text[:limit]}\n...[truncated]"
 
 
-def _compact_json_value(value: Any, *, text_limit: int = 1000, list_limit: int = 20) -> Any:
+def _compact_json_value(value: Any, *, text_limit: int | None = 1000, list_limit: int | None = 20) -> Any:
     if isinstance(value, str):
         return _compact_text(value, text_limit)
     if isinstance(value, list):
-        return [_compact_json_value(item, text_limit=text_limit, list_limit=list_limit) for item in value[:list_limit]]
+        items = value if list_limit is None else value[:list_limit]
+        return [_compact_json_value(item, text_limit=text_limit, list_limit=list_limit) for item in items]
     if isinstance(value, dict):
+        items = value.items() if list_limit is None else list(value.items())[:list_limit]
         return {
             str(key): _compact_json_value(item, text_limit=text_limit, list_limit=list_limit)
-            for key, item in list(value.items())[:list_limit]
+            for key, item in items
         }
     return value
 
@@ -141,8 +145,8 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
         "items": compact,
     }
     review_rules = {
-        "dedicated_markdown_standard": _compact_text(skill_summary, 5000),
-        "bound_markdown_rules": _compact_json_value(agent.get("bound_rules") or [], text_limit=500, list_limit=18),
+        "dedicated_markdown_standard": _compact_text(skill_summary, None),
+        "bound_markdown_rules": _compact_json_value(agent.get("bound_rules") or [], text_limit=None, list_limit=None),
         "bound_rule_review_contract": {
             "priority": "绑定 Markdown 规范是本专家的项目级检视准则，优先级高于自由发挥和通用静态工具建议。",
             "checklist": (

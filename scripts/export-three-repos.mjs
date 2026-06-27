@@ -24,6 +24,9 @@ function cleanDir(dir) {
 function shouldCopy(item) {
   const basename = path.basename(item);
   if (basename === ".DS_Store") return false;
+  if (basename === "config.json") return false;
+  if (basename.endsWith(".local.json")) return false;
+  if (basename.startsWith(".env") && basename !== ".env.example") return false;
   const relative = path.relative(root, item);
   return ![
     "node_modules",

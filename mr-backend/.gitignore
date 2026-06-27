@@ -4,6 +4,8 @@ data/
 logs/
 output/
 .venv/
+config.json
+*.local.json
 .env
 .env.*
 !.env.example

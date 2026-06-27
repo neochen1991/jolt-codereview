@@ -412,12 +412,14 @@ type AgentBindingDetail = {
   subtitle: string;
   content: string;
   metadata: Array<[string, string]>;
+  assets?: Array<{ path: string; type: string; executable: boolean }>;
 };
 
 type AgentBindingEditorOptions = {
   ruleDocs: Record<string, unknown>[];
   ruleBindings: Record<string, unknown>[];
   customSkills: Record<string, unknown>[];
+  skillAssets: Record<string, unknown>[];
   skillBindings: Record<string, unknown>[];
   toolBindings: Record<string, unknown>[];
   staticToolAvailability: StaticToolAvailability | null;
@@ -632,6 +634,44 @@ function compactMetadata(items: Array<[string, unknown]>): Array<[string, string
     if (value !== undefined && value !== null && value !== "") result.push([label, String(value)]);
     return result;
   }, []);
+}
+
+function skillAssetKind(asset: Record<string, unknown>) {
+  const type = String(asset.asset_type || "");
+  const path = String(asset.asset_path || "");
+  if (type) return type;
+  if (path === "SKILL.md") return "skill";
+  if (path.startsWith("references/")) return "reference";
+  if (path.startsWith("scripts/")) return "script";
+  if (path.startsWith("assets/")) return "asset";
+  return "asset";
+}
+
+function skillAssetSummary(assets: Record<string, unknown>[]) {
+  const counts = assets.reduce<Record<string, number>>((result, asset) => {
+    const kind = skillAssetKind(asset);
+    result[kind] = (result[kind] || 0) + 1;
+    return result;
+  }, {});
+  const parts = [
+    ["skill", "入口"],
+    ["reference", "参考"],
+    ["script", "脚本"],
+    ["asset", "资源"]
+  ].flatMap(([key, label]) => counts[key] ? [`${label} ${counts[key]}`] : []);
+  return parts.length ? `${assets.length} 个文件 · ${parts.join(" / ")}` : "0 个文件";
+}
+
+function skillAssetManifest(assets: Record<string, unknown>[]) {
+  if (!assets.length) return "暂无 bundle 文件";
+  return assets
+    .map((asset) => {
+      const path = String(asset.asset_path || "未命名资源");
+      const kind = skillAssetKind(asset);
+      const executable = asset.executable ? " · 可执行" : "";
+      return `- ${path} (${kind}${executable})`;
+    })
+    .join("\n");
 }
 
 function boolValue(value: unknown, fallback = false) {
@@ -3268,9 +3308,12 @@ function ConfigWorkspace({
     if (rootName && (!skillName.trim() || skillName === "团队自定义检视 Skill")) setSkillName(rootName);
     if (rootName && (!skillKey.trim() || skillKey === "team-custom-review")) setSkillKey(rootName);
     const totalSize = files.reduce((sum, file) => sum + file.size, 0);
-    const hasSkillMd = files.some((file) => normalizeSkillBundleAssetPath(file) === "SKILL.md");
+    const assetPaths = files
+      .map(normalizeSkillBundleAssetPath)
+      .filter((path) => path && !path.includes("..") && isStandardSkillAssetPath(path));
+    const hasSkillMd = assetPaths.some((path) => path === "SKILL.md");
     setSkillBundleFiles(files);
-    setSkillBundleInfo(`${rootName || "已选择文件"} · ${files.length} 个文件 · ${readableFileSize(totalSize)}${hasSkillMd ? "" : " · 缺少 SKILL.md"}`);
+    setSkillBundleInfo(`${rootName || "已选择文件"} · 有效资源 ${assetPaths.length}/${files.length} 个 · ${readableFileSize(totalSize)}${hasSkillMd ? "" : " · 缺少 SKILL.md"}`);
     setMessage(hasSkillMd ? "Skill 文件夹已选择，可上传并绑定" : "Skill 文件夹缺少 SKILL.md，请重新选择");
   }
 
@@ -3648,14 +3691,29 @@ function ConfigWorkspace({
       .filter((skill) => boundSkillKeys.has(String(skill.skill_key)))
       .map((skill) => {
         const binding = bindingBySkillKey.get(String(skill.skill_key));
+        const assets = skillAssets
+          .filter((asset) => String(asset.skill_key) === String(skill.skill_key))
+          .sort((left, right) => String(left.asset_path || "").localeCompare(String(right.asset_path || "")));
+        const manifest = skillAssetManifest(assets);
         return {
           kind: "skill",
           title: String(skill.name || skill.skill_key || "未命名 Skill"),
-          subtitle: String(skill.skill_key || "custom skill"),
-          content: String(skill.content || "暂无 Skill 内容"),
+          subtitle: `${String(skill.skill_key || "custom skill")} · ${skillAssetSummary(assets)}`,
+          content: [
+            String(skill.content || "暂无 Skill 内容"),
+            "",
+            "Bundle 文件清单",
+            manifest
+          ].join("\n"),
+          assets: assets.map((asset) => ({
+            path: String(asset.asset_path || "未命名资源"),
+            type: skillAssetKind(asset),
+            executable: Boolean(asset.executable)
+          })),
           metadata: compactMetadata([
             ["Skill Key", skill.skill_key],
             ["描述", skill.description],
+            ["Bundle 文件", skillAssetSummary(assets)],
             ["版本", skill.version],
             ["状态", skill.status],
             ["优先级", binding?.priority],
@@ -3876,6 +3934,7 @@ function ConfigWorkspace({
                       ruleDocs,
                       ruleBindings,
                       customSkills,
+                      skillAssets,
                       skillBindings,
                       toolBindings,
                       staticToolAvailability
@@ -4897,7 +4956,8 @@ function AgentProfileCard({
                   onClick={() => setBindingDetail(detail)}
                   title="查看 Skill 内容"
                 >
-                  {detail.title}
+                  <b>{detail.title}</b>
+                  <small>{detail.subtitle}</small>
                 </button>
               ))
               : <span>未绑定自定义 Skill</span>}
@@ -4996,6 +5056,12 @@ function AgentBindingEditorModal({
   const [newSkillBundleInfo, setNewSkillBundleInfo] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  function assetsForSkill(skillKey: string) {
+    return options.skillAssets
+      .filter((asset) => String(asset.skill_key) === skillKey)
+      .sort((left, right) => String(left.asset_path || "").localeCompare(String(right.asset_path || "")));
+  }
 
   function toggleSet(setter: React.Dispatch<React.SetStateAction<Set<string>>>, value: string, checked: boolean) {
     setter((current) => {
@@ -5125,9 +5191,12 @@ function AgentBindingEditorModal({
     if (rootName && !newSkillName.trim()) setNewSkillName(rootName);
     if (rootName && !newSkillKey.trim()) setNewSkillKey(rootName);
     const totalSize = files.reduce((sum, file) => sum + file.size, 0);
-    const hasSkillMd = files.some((file) => normalizeSkillBundleAssetPath(file) === "SKILL.md");
+    const assetPaths = files
+      .map(normalizeSkillBundleAssetPath)
+      .filter((path) => path && !path.includes("..") && isStandardSkillAssetPath(path));
+    const hasSkillMd = assetPaths.some((path) => path === "SKILL.md");
     setNewSkillBundleFiles(files);
-    setNewSkillBundleInfo(`${rootName || "已选择文件"} · ${files.length} 个文件 · ${readableFileSize(totalSize)}${hasSkillMd ? "" : " · 缺少 SKILL.md"}`);
+    setNewSkillBundleInfo(`${rootName || "已选择文件"} · 有效资源 ${assetPaths.length}/${files.length} 个 · ${readableFileSize(totalSize)}${hasSkillMd ? "" : " · 缺少 SKILL.md"}`);
     setError(hasSkillMd ? "" : "Skill 文件夹缺少 SKILL.md");
   }
 
@@ -5277,11 +5346,16 @@ function AgentBindingEditorModal({
           <AgentBindingChecklist
             title="自定义 Skill"
             emptyText="暂无可绑定 Skill"
-            items={options.customSkills.map((skill) => ({
-              id: String(skill.skill_key || ""),
-              title: String(skill.name || skill.skill_key || "未命名 Skill"),
-              description: String(skill.description || skill.version || "custom skill")
-            }))}
+            items={options.customSkills.map((skill) => {
+              const currentSkillKey = String(skill.skill_key || "");
+              const assets = assetsForSkill(currentSkillKey);
+              return {
+                id: currentSkillKey,
+                title: String(skill.name || skill.skill_key || "未命名 Skill"),
+                description: `${String(skill.description || skill.version || "custom skill")} · ${skillAssetSummary(assets)}`,
+                detail: assets.length ? skillAssetManifest(assets) : ""
+              };
+            })}
             selected={selectedSkillKeys}
             onToggle={(id, checked) => toggleSet(setSelectedSkillKeys, id, checked)}
           />
@@ -5304,7 +5378,7 @@ function AgentBindingChecklist({
 }: {
   title: string;
   emptyText: string;
-  items: Array<{ id: string; title: string; description: string }>;
+  items: Array<{ id: string; title: string; description: string; detail?: string }>;
   selected: Set<string>;
   onToggle: (id: string, checked: boolean) => void;
 }) {
@@ -5319,6 +5393,7 @@ function AgentBindingChecklist({
             <span>
               <b>{item.title}</b>
               <em>{item.description}</em>
+              {item.detail && <p>{item.detail}</p>}
             </span>
           </label>
         ))}
@@ -5351,6 +5426,19 @@ function AgentBindingDetailModal({ detail, onClose }: { detail: AgentBindingDeta
             </p>
           ))}
         </div>
+        {detail.assets?.length ? (
+          <div className="agent-binding-asset-manifest">
+            <strong>Bundle 文件</strong>
+            <div>
+              {detail.assets.map((asset) => (
+                <span key={`${asset.path}-${asset.type}`}>
+                  <b>{asset.path}</b>
+                  <em>{asset.type}{asset.executable ? " · 可执行" : ""}</em>
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <pre className="agent-binding-content">{detail.content || "暂无内容"}</pre>
       </section>
     </div>

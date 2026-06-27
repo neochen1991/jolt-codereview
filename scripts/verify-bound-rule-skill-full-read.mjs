@@ -38,15 +38,51 @@ const checks = [
   {
     file: "mr-backend/worker/review_runtime.py",
     forbidden: [
+      "reference_chunks =",
+      "for asset in reference_chunks:",
       "reference_chunks[:5]",
       "str(asset[\"content\"])[:3000]",
       "custom_text[:12000]",
       "return text[:12000]"
     ],
     required: [
-      "for asset in reference_chunks:",
+      "readable_assets = [asset for asset in assets if str(asset.get(\"asset_path\") or \"\")]",
+      "## Skill Bundle 完整文件内容",
+      "for asset in readable_assets:",
       "return custom_text if custom_text else",
       "return text"
+    ]
+  },
+  {
+    file: "mr-backend/worker/orchestration/nodes/route_agents.py",
+    forbidden: [],
+    required: [
+      "def _augment_agents_from_bound_rules_and_skills(",
+      "agent.get(\"bound_rules\") or agent.get(\"custom_skills\") or agent.get(\"skill_assets\")",
+      "router_bound_config_experts_appended",
+      "bound_config_augmented_agents"
+    ]
+  },
+  {
+    file: "mr-backend/worker/orchestration/nodes/run_experts.py",
+    forbidden: [],
+    required: [
+      "def _bound_rule_batches(agent_context: dict[str, Any])",
+      "\"bound_rules\": [rule]",
+      "\"purpose\": \"free_review_after_all_bound_rules\"",
+      "def _has_required_bound_review(agent_context: dict[str, Any])",
+      "if effort == \"trivial\" and not _has_required_bound_review(agent_context):",
+      "\"checked\": True",
+      "bound_rule_batch_started",
+      "bound_rule_checked",
+      "expert_free_review_started"
+    ]
+  },
+  {
+    file: "mr-backend/worker/prompts/builder.py",
+    forbidden: [],
+    required: [
+      "\"bound_rule_batch\": _compact_json_value(agent.get(\"bound_rule_batch\") or {}, text_limit=None, list_limit=None)"
     ]
   },
   {

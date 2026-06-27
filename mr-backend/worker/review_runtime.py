@@ -3804,15 +3804,11 @@ def custom_skill_asset_manifest(conn: Any | None, project_id: str | None, skill_
         lines.append(
             f"- {asset['asset_path']} ({asset['asset_type']}, executable={str(asset['executable']).lower()})"
         )
-    reference_chunks = [
-        asset
-        for asset in assets
-        if str(asset["asset_type"]) in {"skill", "reference"} and str(asset["asset_path"]).endswith((".md", ".txt"))
-    ]
-    if reference_chunks:
+    readable_assets = [asset for asset in assets if str(asset.get("asset_path") or "")]
+    if readable_assets:
         lines.append("")
-        lines.append("## 预加载参考资料")
-        for asset in reference_chunks:
+        lines.append("## Skill Bundle 完整文件内容")
+        for asset in readable_assets:
             lines.append(f"\n### {asset['asset_path']}\n")
             lines.append(str(asset["content"]))
     if any(str(asset["asset_type"]) == "script" for asset in assets):

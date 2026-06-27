@@ -76,6 +76,74 @@ def _project_id_for_job(conn: Any, job: Any) -> str:
         return ""
 
 
+def _bound_rule_batches(agent_context: dict[str, Any]) -> list[dict[str, Any]]:
+    rules = [rule for rule in (agent_context.get("bound_rules") or []) if isinstance(rule, dict)]
+    if not rules:
+        return [{"label": "default", "agent": agent_context, "rule_id": ""}]
+    batches: list[dict[str, Any]] = []
+    for index, rule in enumerate(rules, start=1):
+        rule_id = str(rule.get("rule_id") or f"rule_{index}")
+        batches.append(
+            {
+                "label": f"bound_rule:{rule_id}",
+                "rule_id": rule_id,
+                "agent": {
+                    **agent_context,
+                    "bound_rules": [rule],
+                    "bound_rule_batch": {
+                        "index": index,
+                        "total": len(rules),
+                        "rule_id": rule_id,
+                    },
+                },
+            }
+        )
+    batches.append(
+        {
+            "label": "expert_free_review",
+            "rule_id": "",
+            "agent": {
+                **agent_context,
+                "bound_rules": [],
+                "bound_rule_batch": {
+                    "index": len(rules) + 1,
+                    "total": len(rules) + 1,
+                    "rule_id": "",
+                    "purpose": "free_review_after_all_bound_rules",
+                },
+            },
+        }
+    )
+    return batches
+
+
+def _has_required_bound_review(agent_context: dict[str, Any]) -> bool:
+    return bool(agent_context.get("bound_rules") or agent_context.get("custom_skills") or agent_context.get("skill_assets"))
+
+
+def _rule_checked_status(items: list[dict[str, Any]], rule_id: str) -> dict[str, Any]:
+    if not rule_id:
+        return {"rule_id": "", "checked": True, "hit": False, "skipped": False, "finding_count": len(items)}
+    hit_count = 0
+    skipped_count = 0
+    for item in items:
+        covered = {str(rule) for rule in (item.get("covered_rules") or [])}
+        skipped = {str(rule) for rule in (item.get("skipped_rules") or [])}
+        if rule_id in covered:
+            hit_count += 1
+        if rule_id in skipped:
+            skipped_count += 1
+    return {
+        "rule_id": rule_id,
+        "checked": True,
+        "hit": hit_count > 0,
+        "skipped": skipped_count > 0,
+        "finding_count": len(items),
+        "hit_count": hit_count,
+        "skipped_count": skipped_count,
+    }
+
+
 def _first_rule_id(row: Any) -> str:
     if "covered_rules_json" not in row.keys():
         return ""
@@ -358,13 +426,34 @@ def make_run_experts_node(
                     skill_summary = f"{skill_summary}\n\nDeepAgents 上下文摘要：\n{deep_result.get('content') or ''}".strip()
                 except Exception as exc:
                     recorder.event(span, "deepagents_fallback", f"DeepAgents 子图失败，回退普通 LLM 检视：{exc}")
-            if effort == "trivial":
+            if effort == "trivial" and not _has_required_bound_review(agent_context):
                 llm_items = []
             elif budget_tracker and budget_tracker.should_stop():
                 recorder.event(span, "llm_skipped_by_budget", f"预算已触发熔断：{budget_tracker.truncated_reason}", budget_tracker.snapshot())
                 llm_items = []
             else:
-                llm_items = call_llm(project_config, recorder, span, agent_context, llm_files, skill_summary)
+                llm_items = []
+                rule_batches = _bound_rule_batches(agent_context)
+                for batch in rule_batches:
+                    if budget_tracker and budget_tracker.should_stop():
+                        recorder.event(span, "llm_skipped_by_budget", f"预算已触发熔断：{budget_tracker.truncated_reason}", budget_tracker.snapshot())
+                        break
+                    batch_agent = batch["agent"]
+                    recorder.event(
+                        span,
+                        "bound_rule_batch_started" if batch["rule_id"] else "expert_free_review_started",
+                        f"{agent_id} 开始检视 {batch['label']}",
+                        batch_agent.get("bound_rule_batch") or {},
+                    )
+                    batch_items = call_llm(project_config, recorder, span, batch_agent, llm_files, skill_summary)
+                    if batch["rule_id"]:
+                        recorder.event(
+                            span,
+                            "bound_rule_checked",
+                            f"{agent_id} 完成绑定规则 {batch['rule_id']} 检视",
+                            _rule_checked_status(batch_items, str(batch["rule_id"])),
+                        )
+                    llm_items.extend(batch_items)
             for item in llm_items:
                 item["head_sha"] = job["head_sha"]
             merged = dedupe(static_items + llm_items)

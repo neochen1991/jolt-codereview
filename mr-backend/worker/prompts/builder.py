@@ -147,6 +147,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
     review_rules = {
         "dedicated_markdown_standard": _compact_text(skill_summary, None),
         "bound_markdown_rules": _compact_json_value(agent.get("bound_rules") or [], text_limit=None, list_limit=None),
+        "bound_rule_batch": _compact_json_value(agent.get("bound_rule_batch") or {}, text_limit=None, list_limit=None),
         "bound_rule_review_contract": {
             "priority": "绑定 Markdown 规范是本专家的项目级检视准则，优先级高于自由发挥和通用静态工具建议。",
             "checklist": (

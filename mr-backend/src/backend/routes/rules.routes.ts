@@ -230,13 +230,18 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       const ruleDocumentId = String(input.rule_document_id ?? "");
       if (!agentKey) return badRequest("agent_key is required");
       if (!ruleDocumentId) return badRequest("rule_document_id is required");
-      const bindings = ruleDocumentRepository.bindRuleDocument({
-        id: id("rule_binding"),
-        projectId: params.projectId,
-        agentKey,
-        ruleDocumentId,
-        priority: Number(input.priority ?? 100)
-      });
+      let bindings;
+      try {
+        bindings = ruleDocumentRepository.bindRuleDocument({
+          id: id("rule_binding"),
+          projectId: params.projectId,
+          agentKey,
+          ruleDocumentId,
+          priority: Number(input.priority ?? 100)
+        });
+      } catch (error) {
+        return badRequest((error as Error).message);
+      }
       auditLog({ userId: actorId, projectId: params.projectId, action: "expert_rule_bindings.upsert", resourceType: "expert_rule_binding", resourceId: `${agentKey}:${ruleDocumentId}`, summary: `bind ${ruleDocumentId} to ${agentKey}` });
       return { items: bindings };
     }),

@@ -47,7 +47,7 @@ export class RuleDocumentRepository {
     return this.db.prepare(`
       SELECT erb.*, rd.name AS rule_document_name, rd.version, rd.status
       FROM expert_rule_bindings erb
-      JOIN rule_documents rd ON rd.id = erb.rule_document_id
+      JOIN rule_documents rd ON rd.id = erb.rule_document_id AND rd.project_id = erb.project_id
       WHERE erb.project_id = $1
       ORDER BY erb.agent_key, erb.priority, rd.name
     `).all(projectId);
@@ -60,6 +60,11 @@ export class RuleDocumentRepository {
     ruleDocumentId: string;
     priority: number;
   }) {
+    const document = this.db.prepare("SELECT id FROM rule_documents WHERE id = $1 AND project_id = $2")
+      .get(input.ruleDocumentId, input.projectId);
+    if (!document) {
+      throw new Error("rule_document_id must belong to project");
+    }
     this.db.prepare(`
       INSERT INTO expert_rule_bindings (id, project_id, agent_key, rule_document_id, priority)
       VALUES ($1, $2, $3, $4, $5)

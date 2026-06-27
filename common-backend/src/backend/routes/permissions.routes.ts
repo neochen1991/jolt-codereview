@@ -5,8 +5,7 @@ const PROJECT_ROLES = [
   { key: "observer", rank: 1, label: "Observer" },
   { key: "developer", rank: 2, label: "Developer" },
   { key: "reviewer", rank: 3, label: "Reviewer" },
-  { key: "project_admin", rank: 4, label: "Project Admin" },
-  { key: "system_admin", rank: 5, label: "System Admin" }
+  { key: "project_admin", rank: 4, label: "Project Admin" }
 ];
 
 const GLOBAL_ROLES = [
@@ -79,7 +78,11 @@ export function createPermissionRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       const input = (typeof body === "object" && body ? body : {}) as Record<string, unknown>;
       const roleValue = String(input.role || "").trim();
-      if (!validProjectRole(roleValue)) return badRequest("role must be one of observer, developer, reviewer, project_admin, system_admin");
+      if (!validProjectRole(roleValue)) return badRequest("role must be one of observer, developer, reviewer, project_admin");
+      if (roleValue === "project_admin") {
+        const rootDenied = ensureRoot(actorId);
+        if (rootDenied) return rootDenied;
+      }
       projectRepository.updateMemberRole(params.projectId, params.memberId, roleValue);
       const member = projectRepository.findMember(params.projectId, params.memberId);
       if (!member) return { statusCode: 404, error: "not_found" };

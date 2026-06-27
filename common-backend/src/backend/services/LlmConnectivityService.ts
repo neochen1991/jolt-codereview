@@ -15,6 +15,42 @@ function openAiCompatibleChatUrl(baseUrl: string) {
   return `${normalized}/chat/completions`;
 }
 
+function isPrivateIpv4(hostname: string) {
+  const parts = hostname.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b] = parts;
+  return a === 10 ||
+    a === 127 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) ||
+    a === 0;
+}
+
+export function validateLlmBaseUrl(baseUrl: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    return "LLM base url is invalid";
+  }
+  const allowPrivate = process.env.JOLT_ALLOW_PRIVATE_LLM_BASE_URLS === "1" || process.env.JOLT_ALLOW_PRIVATE_LLM_BASE_URLS === "true";
+  if (parsed.protocol !== "https:" && !(allowPrivate && parsed.protocol === "http:")) {
+    return "LLM base url must use https";
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  const privateHost = hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "::1" ||
+    hostname === "[::1]" ||
+    hostname.startsWith("fe80:") ||
+    isPrivateIpv4(hostname);
+  if (privateHost && !allowPrivate) {
+    return "LLM base url cannot target localhost or private network hosts";
+  }
+  return "";
+}
+
 function resolveLlmApiKey(input: LlmTestInput) {
   const direct = typeof input.default_api_key === "string" ? input.default_api_key.trim() : "";
   if (direct) return direct;
@@ -81,6 +117,8 @@ export async function testOpenAiCompatibleLlm(input: LlmTestInput) {
   if (!baseUrl) return badRequest("LLM base url is required");
   if (!model) return badRequest("LLM model is required");
   if (!apiKey) return badRequest("LLM api key is required");
+  const baseUrlError = validateLlmBaseUrl(baseUrl);
+  if (baseUrlError) return badRequest(baseUrlError);
 
   const started = Date.now();
   const controller = new AbortController();

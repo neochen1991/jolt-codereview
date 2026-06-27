@@ -3,24 +3,15 @@
     "default_provider": "dashscope-openai-compatible",
     "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
     "default_model": "MiniMax-M2.7",
-    "default_api_key_env": "MINIMAX_API_KEY",
+    "default_api_key_env": null,
+    "default_api_key": "",
     "request_timeout_seconds": 120,
     "max_output_tokens": 8192
   },
-  "github": {
-    "default_token_env": "GITHUB_TOKEN",
-    "default_endpoint": "https://api.github.com"
-  },
-  "codehub": {
-    "default_token_env": "CODEHUB_TOKEN",
-    "default_endpoint": "https://codehub.example.com",
-    "list_mrs_path_note": "Set repository.provider_config.list_mrs_path when your internal CodeHub API path differs from /api/v1/repos/{repo_id}/merge-requests?state=open&per_page=50"
-  },
   "server": {
     "host": "127.0.0.1",
-    "port": 9021,
+    "port": 9022,
     "common_port": 9022,
-    "mr_port": 9021,
     "database_driver": "postgres",
     "postgres_url": "postgresql://localhost:5432/jolt_codereview",
     "postgres_user": "",
@@ -30,43 +21,6 @@
   "logging": {
     "enabled": true,
     "dir": "logs",
-    "api_file": "jolt-api.log",
-    "worker_file": "jolt-worker.log",
-    "review_run_dir": "review-runs"
-  },
-  "review_policy": {
-    "max_added_lines_per_mr": 2000
-  },
-  "agent_policy": {
-    "deepagents": {
-      "enabled": false,
-      "enable_for_deep_effort": true,
-      "enable_for_required_agents": true,
-      "enable_for_skill_bundle": true
-    }
-  },
-  "queue_policy": {
-    "poll_interval_seconds": 300,
-    "max_concurrency": 1,
-    "max_attempts": 3,
-    "heartbeat_timeout_seconds": 600,
-    "worker_pool_size": 1,
-    "max_worker_pool_size": 20,
-    "worker_reconcile_seconds": 30
-  },
-  "token_usage": {
-    "enabled": false,
-    "endpoint": "",
-    "method": "POST",
-    "timeout_seconds": 10,
-    "auth_header": "Authorization",
-    "auth_token_env": "JOLT_TOKEN_USAGE_API_TOKEN",
-    "auth_token": null,
-    "employee_no_env": "JOLT_REPORTER_EMPLOYEE_NO",
-    "default_employee_no": "system",
-    "service_name": "jolt-codereview"
-  },
-  "runtime": {
-    "python_bin": null
+    "api_file": "jolt-common-api.log"
   }
 }

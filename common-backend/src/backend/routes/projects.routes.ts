@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
 import type { BackendRouteContext } from "./context.js";
-import { compactLlmTestInput, testOpenAiCompatibleLlm } from "../services/LlmConnectivityService.js";
+import { compactLlmTestInput, testOpenAiCompatibleLlm, validateLlmBaseUrl } from "../services/LlmConnectivityService.js";
 
 const PROJECT_MEMBER_ROLES = new Set(["observer", "developer", "reviewer", "project_admin"]);
 
@@ -69,6 +69,30 @@ function preserveStoredSecret(current: Record<string, unknown>, next: Record<str
   }
   const { [key]: _empty, ...rest } = next;
   return rest;
+}
+
+function isPrivateIpv4(hostname: string) {
+  const parts = hostname.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b] = parts;
+  return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || a === 0;
+}
+
+function validateOutboundEndpoint(value: unknown) {
+  const endpoint = typeof value === "string" ? value.trim() : "";
+  if (!endpoint) return "";
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    return "endpoint url is invalid";
+  }
+  const allowPrivate = process.env.JOLT_ALLOW_PRIVATE_PROJECT_ENDPOINTS === "1" || process.env.JOLT_ALLOW_PRIVATE_PROJECT_ENDPOINTS === "true";
+  if (parsed.protocol !== "https:" && !(allowPrivate && parsed.protocol === "http:")) return "endpoint must use https";
+  const hostname = parsed.hostname.toLowerCase();
+  const privateHost = hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "::1" || hostname === "[::1]" || hostname.startsWith("fe80:") || isPrivateIpv4(hostname);
+  if (privateHost && !allowPrivate) return "endpoint cannot target localhost or private network hosts";
+  return "";
 }
 
 export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
@@ -216,6 +240,14 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
       if (params.key === "llm_policy") {
         const existing = (projectConfigService.listSettings(params.projectId).settings.llm_policy ?? {}) as Record<string, unknown>;
         value = preserveStoredSecret(existing, value, "default_api_key");
+        if (typeof value.default_base_url === "string" && value.default_base_url.trim()) {
+          const baseUrlError = validateLlmBaseUrl(value.default_base_url);
+          if (baseUrlError) return badRequest(baseUrlError);
+        }
+      }
+      if (params.key === "token_usage") {
+        const endpointError = validateOutboundEndpoint(value.endpoint);
+        if (endpointError) return badRequest(endpointError);
       }
       const row = projectConfigService.upsertSetting(params.projectId, params.key, value);
       auditLog({

@@ -149,11 +149,11 @@ function Install-ProjectDependencies {
   Push-Location $RootDir
   try {
     npm install
-    if (-not (Test-Path ".venv")) {
-      Invoke-Python -m venv .venv
+    if (-not (Test-Path "mr-backend\.venv")) {
+      Invoke-Python -m venv "mr-backend\.venv"
     }
-    & ".\.venv\Scripts\python.exe" -m pip install --upgrade pip
-    & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt
+    & ".\mr-backend\.venv\Scripts\python.exe" -m pip install --upgrade pip
+    & ".\mr-backend\.venv\Scripts\python.exe" -m pip install -r "mr-backend\requirements.txt"
     if ((-not (Test-Path "common-backend\config.json")) -and (Test-Path "common-backend\config.example.json")) {
       Copy-Item "common-backend\config.example.json" "common-backend\config.json"
     }

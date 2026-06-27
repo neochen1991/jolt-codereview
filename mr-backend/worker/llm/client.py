@@ -257,9 +257,10 @@ def review_findings_response_format() -> dict[str, Any]:
     }
 
 
-def llm_cache_key(provider: str, model: str, prompt: str, *, seed: int, schema_name: str) -> str:
+def llm_cache_key(provider: str, model: str, prompt: str, *, seed: int, schema_name: str, project_id: str) -> str:
     return sha1(json.dumps(
         {
+            "project_id": project_id,
             "provider": provider,
             "model": model,
             "prompt": prompt,
@@ -276,6 +277,7 @@ def _ensure_llm_cache_schema(conn: Any) -> None:
         """
         CREATE TABLE IF NOT EXISTS llm_response_cache (
           cache_key TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL DEFAULT 'project_default',
           provider TEXT NOT NULL,
           model TEXT NOT NULL,
           schema_name TEXT NOT NULL,
@@ -287,16 +289,20 @@ def _ensure_llm_cache_schema(conn: Any) -> None:
         )
         """
     )
+    try:
+        conn.execute("ALTER TABLE llm_response_cache ADD COLUMN project_id TEXT NOT NULL DEFAULT 'project_default'")
+    except Exception:
+        pass
 
 
-def _read_cached_llm_response(config: dict[str, Any], cache_key: str) -> dict[str, Any] | None:
+def _read_cached_llm_response(config: dict[str, Any], cache_key: str, project_id: str) -> dict[str, Any] | None:
     if (config.get("llm") or {}).get("enable_response_cache") is False:
         return None
     conn = None
     try:
         conn = open_app_database(config)
         _ensure_llm_cache_schema(conn)
-        row = conn.execute("SELECT response_json FROM llm_response_cache WHERE cache_key = %s", (cache_key,)).fetchone()
+        row = conn.execute("SELECT response_json FROM llm_response_cache WHERE cache_key = %s AND project_id = %s", (cache_key, project_id)).fetchone()
         if not row:
             return None
         raw = row["response_json"]
@@ -316,6 +322,7 @@ def _write_cached_llm_response(
     config: dict[str, Any],
     *,
     cache_key: str,
+    project_id: str,
     provider: str,
     model: str,
     schema_name: str,
@@ -332,15 +339,17 @@ def _write_cached_llm_response(
         conn.execute(
             """
             INSERT INTO llm_response_cache (
-              cache_key, provider, model, schema_name, seed, prompt_hash, response_json, updated_at
+              cache_key, project_id, provider, model, schema_name, seed, prompt_hash, response_json, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
             ON CONFLICT(cache_key) DO UPDATE SET
+              project_id = excluded.project_id,
               response_json = excluded.response_json,
               updated_at = CURRENT_TIMESTAMP
             """,
             (
                 cache_key,
+                project_id,
                 provider,
                 model,
                 schema_name,
@@ -701,6 +710,7 @@ def call_llm(
 ) -> list[dict[str, Any]]:
     agent_id = str(agent.get("agent_id") or "unknown_agent")
     llm = config.get("llm", {})
+    project_id = str(config.get("_project_id") or "project_default")
     budget_tracker = agent.get("budget_tracker")
     prompt, safety = build_prompt(agent, files, skill_summary)
     prompt_tokens = estimate_tokens(prompt)
@@ -750,8 +760,8 @@ def call_llm(
             "response_format": review_findings_response_format(),
         }
         schema_name = LLM_REVIEW_SCHEMA_NAME
-        cache_key = llm_cache_key(provider, model, prompt, seed=LLM_REVIEW_SEED, schema_name=schema_name)
-        cached = _read_cached_llm_response(config, cache_key)
+        cache_key = llm_cache_key(provider, model, prompt, seed=LLM_REVIEW_SEED, schema_name=schema_name, project_id=project_id)
+        cached = _read_cached_llm_response(config, cache_key, project_id)
         if cached is not None:
             usage = cached.get("usage") if isinstance(cached.get("usage"), dict) else {}
             content = cached.get("choices", [{}])[0].get("message", {}).get("content", "[]")
@@ -790,8 +800,8 @@ def call_llm(
             except (urllib.error.HTTPError, json.JSONDecodeError) as schema_exc:
                 fallback_payload = {key: value for key, value in payload.items() if key != "response_format"}
                 fallback_schema_name = LLM_REVIEW_FALLBACK_SCHEMA_NAME
-                fallback_cache_key = llm_cache_key(provider, model, prompt, seed=LLM_REVIEW_SEED, schema_name=fallback_schema_name)
-                cached_fallback = _read_cached_llm_response(config, fallback_cache_key)
+                fallback_cache_key = llm_cache_key(provider, model, prompt, seed=LLM_REVIEW_SEED, schema_name=fallback_schema_name, project_id=project_id)
+                cached_fallback = _read_cached_llm_response(config, fallback_cache_key, project_id)
                 if cached_fallback is not None:
                     response = cached_fallback
                     schema_name = fallback_schema_name
@@ -829,6 +839,7 @@ def call_llm(
             _write_cached_llm_response(
                 config,
                 cache_key=cache_key,
+                project_id=project_id,
                 provider=provider,
                 model=model,
                 schema_name=schema_name,

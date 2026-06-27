@@ -201,9 +201,13 @@ export class MergeRequestRepository {
       runEach("DELETE FROM tool_observations WHERE review_run_id = $1", runIds);
       runEach("DELETE FROM review_artifacts WHERE review_run_id = $1", runIds);
       runEach("DELETE FROM code_index_snapshots WHERE review_run_id = $1", runIds);
+      runEach("DELETE FROM candidate_findings WHERE review_run_id = $1", runIds);
+      runEach("DELETE FROM token_usage_reports WHERE review_run_id = $1", runIds);
       runEach("DELETE FROM review_runs WHERE id = $1", runIds);
 
       runEach("DELETE FROM review_jobs_dead_letter WHERE review_job_id = $1", jobIds);
+      runEach("DELETE FROM token_usage_reports WHERE review_job_id = $1", jobIds);
+      run("DELETE FROM token_usage_reports WHERE merge_request_id = $1", id);
       runEach("DELETE FROM review_jobs WHERE id = $1", jobIds);
       run("DELETE FROM external_review_reports WHERE merge_request_id = $1", id);
       const deletedMr = Number(this.db.prepare("DELETE FROM merge_requests WHERE id = $1").run(id).changes);

@@ -19,6 +19,21 @@ export interface Route {
   handler: Handler;
 }
 
+export class PayloadTooLargeError extends Error {
+  statusCode = 413;
+  constructor(public readonly limitBytes: number) {
+    super(`request body exceeds ${limitBytes} bytes`);
+    this.name = "PayloadTooLargeError";
+  }
+}
+
+const DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
+
+function requestBodyLimitBytes() {
+  const configured = Number(process.env.JOLT_HTTP_BODY_LIMIT_BYTES || "");
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_BODY_LIMIT_BYTES;
+}
+
 export function route(method: string, template: string, handler: Handler): Route {
   const keys: string[] = [];
   const source = template
@@ -32,8 +47,17 @@ export function route(method: string, template: string, handler: Handler): Route
 
 export async function parseBody(req: IncomingMessage): Promise<unknown> {
   if (req.method === "GET" || req.method === "HEAD") return undefined;
+  const limitBytes = requestBodyLimitBytes();
+  const declaredLength = Number(req.headers["content-length"] || 0);
+  if (declaredLength > limitBytes) throw new PayloadTooLargeError(limitBytes);
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  let received = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.from(chunk);
+    received += buffer.length;
+    if (received > limitBytes) throw new PayloadTooLargeError(limitBytes);
+    chunks.push(buffer);
+  }
   const raw = Buffer.concat(chunks).toString("utf8");
   if (!raw) return undefined;
   try {

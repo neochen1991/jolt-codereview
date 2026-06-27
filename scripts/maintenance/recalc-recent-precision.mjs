@@ -4,9 +4,9 @@ if (!process.env.CONFIG_PATH) {
   process.env.CONFIG_PATH = process.env.MR_CONFIG_PATH || path.resolve(process.cwd(), "mr-backend", "config.json");
 }
 
-const { loadConfig } = await import("../../build/backend/config.js");
-const { openDatabase } = await import("../../build/backend/db.js");
-const { FeedbackLearningService } = await import("../../build/backend/services/FeedbackLearningService.js");
+const { loadConfig } = await import("../../mr-backend/build/backend/config.js");
+const { openDatabase } = await import("../../mr-backend/build/backend/db.js");
+const { FeedbackLearningService } = await import("../../mr-backend/build/backend/services/FeedbackLearningService.js");
 
 function argValue(name) {
   const prefix = `${name}=`;

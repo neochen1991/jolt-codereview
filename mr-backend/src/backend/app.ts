@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { URL } from "node:url";
-import { notFound, parseBody, sendJson, type Route } from "./http.js";
+import { PayloadTooLargeError, notFound, parseBody, sendJson, type Route } from "./http.js";
 import type { FileLogger } from "./logger.js";
 
 export function createApp(routes: Route[], logger?: FileLogger) {
@@ -36,6 +36,11 @@ export function createApp(routes: Route[], logger?: FileLogger) {
         logger?.log("http_request", { method: req.method, path: url.pathname, status: 200, duration_ms: Date.now() - startedAt });
       }
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(res, error.statusCode, { error: "payload_too_large", message: error.message, limit_bytes: error.limitBytes });
+        logger?.log("http_request", { method: req.method, path: url.pathname, status: error.statusCode, duration_ms: Date.now() - startedAt }, "warn");
+        return;
+      }
       sendJson(res, 500, { error: "internal_error", message: (error as Error).message });
       logger?.error("http_request_failed", error, { method: req.method, path: url.pathname, status: 500, duration_ms: Date.now() - startedAt });
     }

@@ -29,6 +29,9 @@ function storageSetting(ctx: BackendRouteContext) {
     current_driver: currentDriver,
     active_postgres_url: ctx.config.server?.postgres_url || "",
     pg_runtime_enabled: true,
+    service_scope: "common-backend",
+    managed_service: "common-backend",
+    scope_note: "This endpoint manages only the Common backend config.json. MR backend and Worker use their own service config.",
     switch_status: saved.switch_status || "not_enabled",
     updated_at: row?.updated_at || null,
     value: redactStorageConfig({
@@ -227,13 +230,17 @@ export function createSystemRoutes(ctx: BackendRouteContext): Route[] {
       `).run(id("sys_setting"), STORAGE_SETTING_KEY, JSON.stringify(value));
       auditLog({
         userId: actorId,
-        action: "system.storage.update",
+        action: "common.storage.update",
         resourceType: "system_settings",
         resourceId: STORAGE_SETTING_KEY,
-        summary: "storage target=postgres",
+        summary: "common storage target=postgres",
         metadata: { driver: "postgres", switch_status: value.switch_status, persisted_config_path: persistedConfigPath }
       });
-      return { ...storageSetting(ctx), persisted_config_path: persistedConfigPath, message: "数据库目标配置已保存到 config.json，重启服务后生效。" };
+      return {
+        ...storageSetting(ctx),
+        persisted_config_path: persistedConfigPath,
+        message: "Common 服务数据库目标配置已保存到 config.json，重启 Common 服务后生效。MR backend 和 Worker 使用各自服务的 config.json。"
+      };
     })
   ];
 }

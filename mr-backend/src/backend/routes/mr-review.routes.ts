@@ -363,7 +363,17 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     const requestedFindingIds = Array.from(new Set(findingIds.filter(Boolean)));
     if (requestedFindingIds.length === 0) return badRequest("finding_ids is required");
     const placeholders = requestedFindingIds.map((_, index) => `$${index + 1}`).join(",");
-    const findings = all<FindingRow>(`SELECT * FROM review_findings WHERE id IN (${placeholders})`, requestedFindingIds);
+    const findings = all<FindingRow>(`
+      SELECT rf.*
+      FROM review_findings rf
+      JOIN review_runs rr ON rr.id = rf.review_run_id
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      WHERE rj.merge_request_id = $1
+        AND rf.id IN (${requestedFindingIds.map((_, index) => `$${index + 2}`).join(",")})
+    `, [mrId, ...requestedFindingIds]);
+    if (findings.length !== requestedFindingIds.length) {
+      return badRequest("finding_ids must all belong to the target merge request");
+    }
     if (!findings.length) return badRequest("no publishable findings");
     const publishedRecords = dryRun
       ? []

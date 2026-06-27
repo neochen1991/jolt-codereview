@@ -2346,21 +2346,28 @@ function ProjectSelectionPage({
     setCreating(true);
     setCreateError("");
     try {
+      const repositoryInput = gitUrl
+        ? {
+            provider: createProvider,
+            git_url: gitUrl,
+            name: createRepoName.trim() || repoNameFromGitUrl(gitUrl),
+            default_branch: "main"
+          }
+        : null;
       const result = await api<{ project: Project }>("/api/projects", {
         method: "POST",
         body: JSON.stringify({
           name,
           description: createDescription.trim(),
-          repository: gitUrl
-            ? {
-                provider: createProvider,
-                git_url: gitUrl,
-                name: createRepoName.trim() || repoNameFromGitUrl(gitUrl),
-                default_branch: "main"
-              }
-            : null
+          repository: repositoryInput
         })
       });
+      if (repositoryInput) {
+        await api(`/api/projects/${result.project.id}/repositories`, {
+          method: "POST",
+          body: JSON.stringify(repositoryInput)
+        });
+      }
       await refreshProjects();
       await loadDiscoverProjects();
       setCreateOpen(false);
@@ -4501,9 +4508,9 @@ function SystemSettingsWorkspace({ setMessage, canEdit }: { setMessage: (value: 
         body: JSON.stringify(form)
       });
       setStorage(result);
-      const msg = "PostgreSQL 运行配置已保存到 config.json，重启 API 和 Worker 后会使用 PG。";
+      const msg = "Common 服务 PostgreSQL 运行配置已保存到 Common config.json，重启 Common 服务后生效。MR backend 和 Worker 使用各自服务的 config.json。";
       setMessage(msg);
-      setNotice({ title: "系统存储配置已保存", message: msg });
+      setNotice({ title: "Common 存储配置已保存", message: msg });
       await loadStorage();
     } finally {
       setSaving(false);
@@ -4529,14 +4536,14 @@ function SystemSettingsWorkspace({ setMessage, canEdit }: { setMessage: (value: 
 
   return (
     <section className="config-workspace">
-      <ConfigHeader title="系统设置" subtitle="仅 root 管理员可维护。这里放全局运行时和数据库目标配置。" />
+      <ConfigHeader title="系统设置" subtitle="仅 root 管理员可维护。这里维护 Common 服务运行时配置；MR backend 和 Worker 使用各自服务配置。" />
       {loading ? (
         <SettingsConfigLoadingPanel loading error="" onRetry={loadStorage} />
       ) : (
         <div className="settings-grid">
           <article className="setting-form-card">
             <div className="setting-form-head">
-              <strong>数据库存储</strong>
+              <strong>Common 数据库存储</strong>
               <span>当前实际运行：{String(storage?.current_driver || "postgres")} · {String(storage?.active_postgres_url || "--")}</span>
             </div>
             <div className="setting-form-grid">
@@ -4554,7 +4561,7 @@ function SystemSettingsWorkspace({ setMessage, canEdit }: { setMessage: (value: 
               </SettingField>
             </div>
             <div className="system-storage-note">
-              系统仅支持 PostgreSQL。表结构初始化会真实连接目标 PG 并创建当前系统表/索引。保存配置会同步写入 config.json；当前进程不会热切断连接，重启 API 和 Worker 后生效。
+              系统仅支持 PostgreSQL。这里仅管理 Common 服务数据库配置；表结构初始化会真实连接目标 PG 并创建 Common 服务表/索引。保存配置会同步写入 Common config.json；当前进程不会热切断连接，重启 Common 服务后生效。
             </div>
             <div className="setting-actions">
               <button type="button" onClick={testStorage} disabled={!canEdit || testing}>{testing ? "测试中..." : "测试配置"}</button>
@@ -4565,7 +4572,7 @@ function SystemSettingsWorkspace({ setMessage, canEdit }: { setMessage: (value: 
           <article className="setting-form-card">
             <div className="setting-form-head">
               <strong>权限边界</strong>
-              <span>系统级数据库配置只允许 root 修改；项目工具、规则和专家由项目管理员维护。</span>
+              <span>Common 数据库配置只允许 root 修改；MR backend 和 Worker 的数据库目标由各自服务 config.json 维护。</span>
             </div>
             <ConfigCard title="当前状态" rows={[
               `PG runtime ${storage?.pg_runtime_enabled ? "enabled" : "not enabled"}`,

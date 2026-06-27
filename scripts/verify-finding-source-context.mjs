@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
-const source = readFileSync(path.join(root, "src/frontend/main.tsx"), "utf8");
+const source = readFileSync(path.join(root, "frontend/src/frontend/main.tsx"), "utf8");
 
 assert.match(source, /const SOURCE_CONTEXT_RADIUS = 5;/, "finding detail should use five surrounding source lines");
 assert.match(source, /startLine - SOURCE_CONTEXT_RADIUS/, "source window should include context before the finding line");

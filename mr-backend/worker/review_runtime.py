@@ -132,6 +132,7 @@ def ensure_worker_schema(conn: Any) -> None:
         );
         CREATE TABLE IF NOT EXISTS llm_response_cache (
           cache_key TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL DEFAULT 'project_default',
           provider TEXT NOT NULL,
           model TEXT NOT NULL,
           schema_name TEXT NOT NULL,
@@ -247,6 +248,7 @@ def ensure_worker_schema(conn: Any) -> None:
         );
         """
     )
+    add_column_if_missing("llm_response_cache", "project_id", "TEXT NOT NULL DEFAULT 'project_default'")
     conn.commit()
 
 
@@ -562,6 +564,17 @@ def backend_api_base_url(config: dict[str, Any]) -> str:
     host = str(config.get("server", {}).get("host") or "127.0.0.1")
     port = int(config.get("server", {}).get("mr_port") or config.get("server", {}).get("port") or 9021)
     return f"http://{host}:{port}/api"
+
+
+def internal_vcs_proxy_headers() -> dict[str, str]:
+    token = os.environ.get("JOLT_INTERNAL_SERVICE_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("JOLT_INTERNAL_SERVICE_TOKEN is required for worker VCS proxy access")
+    return {
+        "Accept": "application/json",
+        "User-Agent": "jolt-codereview-worker",
+        "x-internal-service-token": token,
+    }
 
 
 def write_json_artifact(
@@ -942,7 +955,7 @@ def fetch_changed_file_contents(
         query = urllib.parse.urlencode({"path": filename, "sha": head_sha})
         url = f"{base_url}/vcs/{urllib.parse.quote(project_id, safe='')}/merge-requests/{mr_id}/file?{query}"
         try:
-            payload = http_json(url, {"Accept": "application/json", "User-Agent": "jolt-codereview-worker"})
+            payload = http_json(url, internal_vcs_proxy_headers())
             content = str(payload.get("content") or "") if isinstance(payload, dict) else ""
             if content:
                 contents[filename] = content
@@ -978,7 +991,7 @@ def fetch_changed_files_via_backend(config: dict[str, Any], repo: Any, mr: Any) 
     base_url = backend_api_base_url(config)
     url = f"{base_url}/vcs/{urllib.parse.quote(project_id, safe='')}/merge-requests/{mr_id}/files"
     try:
-        payload = http_json(url, {"Accept": "application/json", "User-Agent": "jolt-codereview-worker"})
+        payload = http_json(url, internal_vcs_proxy_headers())
     except Exception as exc:
         if git_errors:
             raise RuntimeError(f"{exc}; git fallback failed: {git_errors[:3]}") from exc

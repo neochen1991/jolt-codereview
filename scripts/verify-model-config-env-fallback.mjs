@@ -11,9 +11,9 @@ function run(command, args) {
   }
 }
 
-run("npm", ["run", "build:api"]);
+run("npm", ["--prefix", "common-backend", "run", "build"]);
 
-const { ProjectConfigService } = await import("../build/backend/services/ProjectConfigService.js");
+const { ProjectConfigService } = await import("../common-backend/build/backend/services/ProjectConfigService.js");
 
 const rows = new Map();
 const fakeDb = {
@@ -47,7 +47,7 @@ const config = {
     default_provider: "dashscope-openai-compatible",
     default_base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
     default_model: "MiniMax-M2.7",
-    default_api_key_env: "MINIMAX_API_KEY",
+    default_api_key_env: null,
     request_timeout_seconds: 120
   },
   server: {
@@ -65,8 +65,8 @@ service.upsertSetting("project_default", "llm_policy", {
 
 const effective = service.effectiveConfig("project_default", config).effective_config;
 
-if (effective.llm?.default_api_key_env !== "MINIMAX_API_KEY") {
-  throw new Error(`default_api_key_env fallback failed: ${JSON.stringify(effective.llm)}`);
+if (effective.llm?.default_api_key_env === "MINIMAX_API_KEY") {
+  throw new Error(`default_api_key_env should not be required for direct API key config: ${JSON.stringify(effective.llm)}`);
 }
 if (effective.llm?.default_api_key !== "plaintext-runtime-key") {
   throw new Error(`default_api_key runtime config failed: ${JSON.stringify(effective.llm)}`);

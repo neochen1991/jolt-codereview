@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 from uuid import uuid4
@@ -37,6 +38,34 @@ def _auth_token(config: dict[str, Any]) -> str:
     if token_env and os.environ.get(token_env):
         return str(os.environ[token_env])
     return str(config.get("auth_token") or "").strip()
+
+
+def _is_private_ipv4(hostname: str) -> bool:
+    parts = hostname.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        values = [int(part) for part in parts]
+    except ValueError:
+        return False
+    if any(part < 0 or part > 255 for part in values):
+        return False
+    a, b = values[0], values[1]
+    return a == 10 or a == 127 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168) or (a == 169 and b == 254) or a == 0
+
+
+def _endpoint_rejection_reason(endpoint: str) -> str:
+    parsed = urllib.parse.urlparse(endpoint)
+    allow_private = os.environ.get("JOLT_ALLOW_PRIVATE_PROJECT_ENDPOINTS", "").strip().lower() in {"1", "true", "yes", "on"}
+    if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+        return "invalid_endpoint"
+    if parsed.scheme != "https" and not allow_private:
+        return "endpoint_must_use_https"
+    hostname = (parsed.hostname or "").lower()
+    private_host = hostname == "localhost" or hostname.endswith(".localhost") or hostname in {"::1", "[::1]"} or hostname.startswith("fe80:") or _is_private_ipv4(hostname)
+    if private_host and not allow_private:
+        return "private_endpoint_blocked"
+    return ""
 
 
 def _employee_no(config: dict[str, Any], row: Any) -> str:
@@ -273,6 +302,14 @@ def report_token_usage(conn: Any, config: dict[str, Any], run_id: str) -> dict[s
         _save_report(conn, row=row, employee_no=employee_no, reported_at=reported_at, usage=usage, status=status, endpoint=endpoint, payload=payload)
         write_worker_log(config, "token_usage_report_skipped", {"review_run_id": run_id, "status": status, "total_tokens": usage["total_tokens"]})
         write_review_run_log(config, run_id, "token_usage_report_skipped", {"status": status, "total_tokens": usage["total_tokens"]})
+        return {"status": status, **usage}
+
+    endpoint_rejection = _endpoint_rejection_reason(endpoint)
+    if endpoint_rejection:
+        status = f"skipped_{endpoint_rejection}"
+        _save_report(conn, row=row, employee_no=employee_no, reported_at=reported_at, usage=usage, status=status, endpoint=endpoint, payload=payload)
+        write_worker_log(config, "token_usage_report_skipped", {"review_run_id": run_id, "status": status, "endpoint": endpoint})
+        write_review_run_log(config, run_id, "token_usage_report_skipped", {"status": status, "endpoint": endpoint})
         return {"status": status, **usage}
 
     headers = {"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "Jolt-CodeReview-Worker/0.1"}

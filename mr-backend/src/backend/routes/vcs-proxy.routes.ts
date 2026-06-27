@@ -6,7 +6,18 @@ import type { VcsProvider } from "../vcs/VcsProvider.js";
 import type { BackendRouteContext } from "./context.js";
 
 export function createVcsProxyRoutes(ctx: BackendRouteContext): Route[] {
-  const { config, get } = ctx;
+  const { config, get, currentUserId, ensureProjectRole } = ctx;
+
+  function hasInternalServiceToken(req: { headers: Record<string, any> }) {
+    const expected = String(process.env.JOLT_INTERNAL_SERVICE_TOKEN || "").trim();
+    const actual = String(req.headers["x-internal-service-token"] || "").trim();
+    return Boolean(expected && actual && actual === expected);
+  }
+
+  function ensureVcsAccess(projectId: string, req: { headers: Record<string, any> }, minRole: string) {
+    if (hasInternalServiceToken(req)) return null;
+    return ensureProjectRole(projectId, currentUserId(req), minRole);
+  }
 
   function providerFor(repository: { provider: string }): VcsProvider {
     if (repository.provider === "github") return new GithubProvider(config);
@@ -52,7 +63,9 @@ export function createVcsProxyRoutes(ctx: BackendRouteContext): Route[] {
   }
 
   return [
-    route("GET", "/api/vcs/:projectId/capabilities", ({ params }) => {
+    route("GET", "/api/vcs/:projectId/capabilities", ({ params, req }) => {
+      const denied = ensureVcsAccess(params.projectId, req, "observer");
+      if (denied) return denied;
       const rows = ctx.all<{ provider: string }>("SELECT DISTINCT provider FROM repositories WHERE project_id = $1", [params.projectId]);
       return {
         project_id: params.projectId,
@@ -63,19 +76,25 @@ export function createVcsProxyRoutes(ctx: BackendRouteContext): Route[] {
       };
     }),
 
-    route("GET", "/api/vcs/:projectId/merge-requests/:mrId/diff", async ({ params }) => {
+    route("GET", "/api/vcs/:projectId/merge-requests/:mrId/diff", async ({ params, req }) => {
+      const denied = ensureVcsAccess(params.projectId, req, "observer");
+      if (denied) return denied;
       const context = mrContext(params.projectId, params.mrId);
       if (!context) return notFound();
       return context.provider.fetchDiff(context.ref);
     }),
 
-    route("GET", "/api/vcs/:projectId/merge-requests/:mrId/files", async ({ params }) => {
+    route("GET", "/api/vcs/:projectId/merge-requests/:mrId/files", async ({ params, req }) => {
+      const denied = ensureVcsAccess(params.projectId, req, "observer");
+      if (denied) return denied;
       const context = mrContext(params.projectId, params.mrId);
       if (!context) return notFound();
       return { items: await context.provider.fetchFiles(context.ref) };
     }),
 
-    route("GET", "/api/vcs/:projectId/merge-requests/:mrId/file", async ({ params, url }) => {
+    route("GET", "/api/vcs/:projectId/merge-requests/:mrId/file", async ({ params, req, url }) => {
+      const denied = ensureVcsAccess(params.projectId, req, "observer");
+      if (denied) return denied;
       const context = mrContext(params.projectId, params.mrId);
       if (!context) return notFound();
       const path = url.searchParams.get("path");
@@ -85,7 +104,9 @@ export function createVcsProxyRoutes(ctx: BackendRouteContext): Route[] {
       return { path, sha, content, size: content.length };
     }),
 
-    route("POST", "/api/vcs/:projectId/merge-requests/:mrId/comment", async ({ params, body }) => {
+    route("POST", "/api/vcs/:projectId/merge-requests/:mrId/comment", async ({ params, body, req }) => {
+      const denied = ensureVcsAccess(params.projectId, req, "reviewer");
+      if (denied) return denied;
       const context = mrContext(params.projectId, params.mrId);
       if (!context) return notFound();
       const input = body as { body?: string; file_path?: string; line?: number };
@@ -97,7 +118,9 @@ export function createVcsProxyRoutes(ctx: BackendRouteContext): Route[] {
       });
     }),
 
-    route("POST", "/api/vcs/:projectId/merge-requests/:mrId/status", async ({ params, body }) => {
+    route("POST", "/api/vcs/:projectId/merge-requests/:mrId/status", async ({ params, body, req }) => {
+      const denied = ensureVcsAccess(params.projectId, req, "reviewer");
+      if (denied) return denied;
       const context = mrContext(params.projectId, params.mrId);
       if (!context) return notFound();
       const input = body as { state?: "pending" | "running" | "success" | "failed" | "warning"; description?: string; target_url?: string; context?: string };

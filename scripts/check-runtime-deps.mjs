@@ -10,6 +10,9 @@ const installMissing = args.has("--install") || process.env.JOLT_INSTALL_MISSING
 const skipNode = args.has("--python-only");
 const skipPython = args.has("--node-only");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const mrBackendDir = path.join(root, "mr-backend");
+const workerVenvDir = path.join(mrBackendDir, ".venv");
+const workerRequirementsPath = path.join(mrBackendDir, "requirements.txt");
 const configPath = process.env.CONFIG_PATH
   || process.env.MR_CONFIG_PATH
   || path.join(root, "mr-backend", "config.json");
@@ -63,8 +66,8 @@ function configuredPythonBin() {
 
 function localVenvPython() {
   return process.platform === "win32"
-    ? path.join(root, ".venv", "Scripts", "python.exe")
-    : path.join(root, ".venv", "bin", "python");
+    ? path.join(workerVenvDir, "Scripts", "python.exe")
+    : path.join(workerVenvDir, "bin", "python");
 }
 
 function pythonCandidates() {
@@ -98,8 +101,8 @@ function ensureVenv() {
   if (!systemPython) {
     throw new Error("Python 3 was not found. Install Python 3.10+ first or set PYTHON_BIN.");
   }
-  console.log("Creating Python virtual environment .venv");
-  run(systemPython.command, [...systemPython.prefixArgs, "-m", "venv", ".venv"], "python -m venv .venv");
+  console.log("Creating Python virtual environment mr-backend/.venv");
+  run(systemPython.command, [...systemPython.prefixArgs, "-m", "venv", workerVenvDir], "python -m venv mr-backend/.venv");
   return { command: venvPython, prefixArgs: [] };
 }
 
@@ -128,9 +131,9 @@ function checkPythonDependencies() {
   const missing = pythonModules.filter((item) => !pythonModuleInstalled(python, item.module));
   if (!missing.length) return [];
   if (!installMissing) return missing.map((item) => `Python package missing: ${item.module}`);
-  console.log(`Installing missing Python runtime packages via requirements.txt: ${missing.map((item) => item.package).join(", ")}`);
+  console.log(`Installing missing Python runtime packages via mr-backend/requirements.txt: ${missing.map((item) => item.package).join(", ")}`);
   run(python.command, [...python.prefixArgs, "-m", "pip", "install", "--upgrade", "pip"], "pip install --upgrade pip");
-  run(python.command, [...python.prefixArgs, "-m", "pip", "install", "-r", "requirements.txt"], "pip install -r requirements.txt");
+  run(python.command, [...python.prefixArgs, "-m", "pip", "install", "-r", workerRequirementsPath], "pip install -r mr-backend/requirements.txt");
   python = { command: localVenvPython(), prefixArgs: [] };
   return pythonModules.filter((item) => !pythonModuleInstalled(python, item.module)).map((item) => `Python package still missing after pip install: ${item.module}`);
 }
@@ -146,7 +149,7 @@ if (errors.length) {
   console.error("");
   console.error("Fix:");
   console.error("- Run `npm install` to install Node packages including `pg`.");
-  console.error("- Run `.venv/bin/python -m pip install -r requirements.txt` on Linux/macOS, or `.\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt` on Windows.");
+  console.error("- Run `mr-backend/.venv/bin/python -m pip install -r mr-backend/requirements.txt` on Linux/macOS, or `mr-backend\\.venv\\Scripts\\python.exe -m pip install -r mr-backend\\requirements.txt` on Windows.");
   console.error("- Or start with dependency repair enabled: `JOLT_INSTALL_MISSING_DEPS=1 npm run dev` / `powershell -File scripts/start-windows.ps1 -InstallIfMissing`.");
   process.exit(1);
 }

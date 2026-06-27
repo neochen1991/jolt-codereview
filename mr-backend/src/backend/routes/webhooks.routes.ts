@@ -75,13 +75,20 @@ export function createWebhookRoutes(ctx: BackendRouteContext): Route[] {
       if (!mr) return notFound();
       const denied = ensureProjectRole(mr.project_id, actorId, "developer");
       if (denied) return denied;
+      const scopedFinding = (findingId: string) => get<FindingRow>(`
+        SELECT rf.*
+        FROM review_findings rf
+        JOIN review_runs rr ON rr.id = rf.review_run_id
+        JOIN review_jobs rj ON rj.id = rr.review_job_id
+        WHERE rf.id = $1 AND rj.merge_request_id = $2
+      `, [findingId, mr.id]);
       let responseBody = "";
       if (command.command === "explain") {
-        const finding = get<FindingRow>("SELECT * FROM review_findings WHERE id = $1", [command.arg]);
+        const finding = scopedFinding(command.arg);
         if (!finding) return notFound();
         responseBody = buildFindingExplanation(finding);
       } else if (command.command === "dismiss") {
-        const finding = get<FindingRow>("SELECT * FROM review_findings WHERE id = $1", [command.arg]);
+        const finding = scopedFinding(command.arg);
         if (!finding) return notFound();
         db.prepare("UPDATE review_findings SET lifecycle_state = 'dismissed', selected = 0 WHERE id = $1").run(finding.id);
         responseBody = `@jolt dismiss\n\n已将 ${finding.id} 标记为 dismissed。`;

@@ -105,8 +105,8 @@ export function createModelRoutes(ctx: BackendRouteContext): Route[] {
       const effective = result.effective_config;
       return {
         project_id: projectId,
-        llm: sanitizeLlmConfig((effective.llm ?? {}) as Record<string, unknown>),
-        effective_config: sanitizeEffectiveConfig(effective as Record<string, unknown>),
+        llm: (effective.llm ?? {}) as Record<string, unknown>,
+        effective_config: effective,
         source: result.source
       };
     })

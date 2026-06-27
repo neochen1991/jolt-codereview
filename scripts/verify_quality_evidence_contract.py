@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKER_DIR = ROOT / "worker"
+WORKER_DIR = ROOT / "mr-backend" / "worker"
 if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
@@ -100,7 +100,7 @@ def main() -> None:
     assert summary["weak_contract_count"] == 1, summary
     assert summary["quality_risk"] == "needs_attention", summary
 
-    frontend = (ROOT / "src/frontend/main.tsx").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "src" / "frontend" / "main.tsx").read_text(encoding="utf-8")
     assert "formatEvidenceContractStatus" in frontend
     assert "qualityTrace.evidence_contract" in frontend
 

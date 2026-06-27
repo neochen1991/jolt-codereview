@@ -13,6 +13,8 @@ export function openDatabase(config: AppConfig): Db {
   }
   const db = new PostgresSyncDatabase(config);
   migrate(db);
-  seed(db);
+  if (process.env.JOLT_SEED_DEV_DATA === "1" || process.env.JOLT_SEED_DEV_DATA === "true") {
+    seed(db);
+  }
   return db;
 }

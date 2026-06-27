@@ -9,6 +9,16 @@ const COMMON_PATH_PATTERNS = [
   /^\/api\/permissions(?:\/|$)/,
   /^\/api\/models(?:\/|$)/,
   /^\/api\/system(?:\/|$)/,
+  /^\/api\/projects$/,
+  /^\/api\/projects\/discover$/,
+  /^\/api\/projects\/join-by-invite$/,
+  /^\/api\/projects\/[^/]+$/,
+  /^\/api\/projects\/[^/]+\/members(?:\/|$)/,
+  /^\/api\/projects\/[^/]+\/settings(?:\/|$)/,
+  /^\/api\/projects\/[^/]+\/effective-config$/,
+  /^\/api\/projects\/[^/]+\/join-requests(?:\/|$)/,
+  /^\/api\/projects\/[^/]+\/invitations(?:\/|$)/,
+  /^\/api\/projects\/[^/]+\/audit-logs$/,
   /^\/internal\/auth(?:\/|$)/,
   /^\/internal\/models(?:\/|$)/
 ];

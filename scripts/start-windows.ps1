@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $RootDir = Resolve-Path (Join-Path $PSScriptRoot "..")
 $CommonConfigPath = Join-Path $RootDir "common-backend\config.json"
 $MrConfigPath = Join-Path $RootDir "mr-backend\config.json"
-$VenvPython = Join-Path $RootDir ".venv\Scripts\python.exe"
+$VenvPython = Join-Path $RootDir "mr-backend\.venv\Scripts\python.exe"
 
 function Write-Step {
   param([string]$Message)
@@ -39,18 +39,18 @@ function Ensure-ProjectReady {
     }
     if (-not (Test-Path $VenvPython)) {
       if (-not $InstallIfMissing) {
-        throw ".venv is missing. Run scripts\install-windows.ps1 or start with -InstallIfMissing."
+        throw "mr-backend\.venv is missing. Run scripts\install-windows.ps1 or start with -InstallIfMissing."
       }
       Write-Step "Creating Python virtual environment"
       if (Test-Command py) {
-        py -3 -m venv .venv
+        py -3 -m venv "mr-backend\.venv"
       } elseif (Test-Command python) {
-        python -m venv .venv
+        python -m venv "mr-backend\.venv"
       } else {
         throw "Python 3 was not found. Install Python 3.10+ first."
       }
       & $VenvPython -m pip install --upgrade pip
-      & $VenvPython -m pip install -r requirements.txt
+      & $VenvPython -m pip install -r "mr-backend\requirements.txt"
     }
     Write-Step "Checking runtime package dependencies"
     $depArgs = @("scripts/check-runtime-deps.mjs")
@@ -99,8 +99,9 @@ try {
 }
 
 Write-Step "Starting Jolt CodeReview"
-Write-Host "API:      http://127.0.0.1:9021"
-Write-Host "Frontend: http://127.0.0.1:9020"
+Write-Host "Common:    http://127.0.0.1:9022"
+Write-Host "MR Backend:http://127.0.0.1:9021"
+Write-Host "Frontend:  http://127.0.0.1:9020"
 Write-Host "Press Ctrl+C to stop all local services."
 
 Push-Location $RootDir

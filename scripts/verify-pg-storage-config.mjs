@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
-const systemRoutesModule = await import(pathToFileURL(path.join(root, "build/backend/routes/system.routes.js")));
+const systemRoutesModule = await import(pathToFileURL(path.join(root, "common-backend/build/backend/routes/system.routes.js")));
 const { effectivePostgresStorageInput, pgConnectionConfig } = systemRoutesModule;
 
 function fakeContext({ saved = {}, server = {} } = {}) {

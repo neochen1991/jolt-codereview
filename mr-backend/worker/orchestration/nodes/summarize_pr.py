@@ -25,21 +25,24 @@ def make_summarize_pr_node(
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     def summarize_pr_node(state: dict[str, Any]) -> dict[str, Any]:
         span = recorder.span("summarize_pr", "summary_agent")
-        summary = {
-            "intent": "",
-            "change_map": [],
-            "risk_highlights": [],
-            "test_coverage_gaps": [],
-            "cross_file_couplings": [],
-            "suggested_review_order": [],
-            "source": "disabled",
-            "skipped": True,
-            "skip_reason": "disabled_by_product_design",
-        }
-        recorder.event(span, "pr_summary_disabled", "PR Summary 已禁用：检视页面只展示问题、进度、工具和专家证据", summary)
-        persist_pr_summary(conn, job["id"], summary)
-        recorder.finish(span)
-        return {**state, "pr_summary": summary}
+        review_policy = project_config.get("review_policy") if isinstance(project_config, dict) else {}
+        enable_pr_summary = bool((review_policy or {}).get("enable_pr_summary", False))
+        if not enable_pr_summary:
+            summary = {
+                "intent": "",
+                "change_map": [],
+                "risk_highlights": [],
+                "test_coverage_gaps": [],
+                "cross_file_couplings": [],
+                "suggested_review_order": [],
+                "source": "disabled",
+                "skipped": True,
+                "skip_reason": "disabled_by_project_config",
+            }
+            recorder.event(span, "pr_summary_disabled", "PR Summary 已禁用：检视页面只展示问题、进度、工具和专家证据", summary)
+            persist_pr_summary(conn, job["id"], summary)
+            recorder.finish(span)
+            return {**state, "pr_summary": summary}
 
         files = state.get("files") or []
         final_findings = state.get("final_findings") or []

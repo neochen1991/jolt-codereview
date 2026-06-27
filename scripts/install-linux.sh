@@ -177,11 +177,11 @@ install_project_dependencies() {
   log "Installing project npm and Python dependencies"
   cd "$ROOT_DIR"
   npm install
-  if [ ! -d ".venv" ]; then
-    python3 -m venv .venv
+  if [ ! -d "mr-backend/.venv" ]; then
+    python3 -m venv mr-backend/.venv
   fi
-  .venv/bin/python -m pip install --upgrade pip
-  .venv/bin/python -m pip install -r requirements.txt
+  mr-backend/.venv/bin/python -m pip install --upgrade pip
+  mr-backend/.venv/bin/python -m pip install -r mr-backend/requirements.txt
   if [ ! -f "common-backend/config.json" ] && [ -f "common-backend/config.example.json" ]; then
     cp common-backend/config.example.json common-backend/config.json
   fi

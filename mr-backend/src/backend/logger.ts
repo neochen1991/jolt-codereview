@@ -32,9 +32,7 @@ export function clearLogFiles(config: AppConfig) {
   if (!logging.enabled) return;
   const dir = resolveLogDir(config);
   for (const target of [
-    path.join(dir, logging.apiFile),
-    path.join(dir, logging.workerFile),
-    path.join(dir, logging.reviewRunDir)
+    path.join(dir, logging.apiFile)
   ]) {
     rmSync(target, { recursive: true, force: true });
   }

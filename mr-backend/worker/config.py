@@ -12,15 +12,6 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "llm": {
-        "default_provider": "dashscope-openai-compatible",
-        "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-        "default_model": "MiniMax-M2.7",
-        "default_api_key_env": "MINIMAX_API_KEY",
-        "request_timeout_seconds": 120,
-        "max_output_tokens": 8192,
-        "enable_stream": True,
-    },
     "github": {
         "default_token_env": "GITHUB_TOKEN",
         "default_endpoint": "https://api.github.com",
@@ -158,16 +149,6 @@ def common_get_json(config: dict[str, Any], path: str, query: dict[str, str]) ->
     return json.loads(body or "{}")
 
 
-def load_project_settings(config: dict[str, Any], project_id: str) -> dict[str, dict[str, Any]]:
-    payload = common_get_json(config, "/internal/models/effective-config", {"project_id": project_id})
-    source = payload.get("source") or {}
-    settings = source.get("project_settings") or {}
-    return {
-        str(key): value if isinstance(value, dict) else {}
-        for key, value in settings.items()
-    }
-
-
 def load_user_settings(config: dict[str, Any], user_id: str | None) -> dict[str, dict[str, Any]]:
     if not user_id:
         return {}
@@ -206,7 +187,18 @@ def apply_project_vcs_policy(effective: dict[str, Any], settings: dict[str, dict
 
 def effective_project_config(base_config: dict[str, Any], conn: Any, project_id: str, user_id: str | None = None) -> dict[str, Any]:
     effective = copy.deepcopy(base_config)
-    settings = load_project_settings(base_config, project_id)
+    payload = common_get_json(base_config, "/internal/models/effective-config", {"project_id": project_id})
+    common_effective = payload.get("effective_config") if isinstance(payload.get("effective_config"), dict) else {}
+    common_llm = common_effective.get("llm") if isinstance(common_effective.get("llm"), dict) else payload.get("llm")
+    if isinstance(common_llm, dict) and common_llm:
+        effective["llm"] = copy.deepcopy(common_llm)
+    effective["_project_id"] = project_id
+    source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+    raw_settings = source.get("project_settings") if isinstance(source.get("project_settings"), dict) else {}
+    settings = {
+        str(key): value if isinstance(value, dict) else {}
+        for key, value in raw_settings.items()
+    }
     for settings_key, config_key in SETTINGS_TO_CONFIG.items():
         value = settings.get(settings_key) or {}
         if not value:

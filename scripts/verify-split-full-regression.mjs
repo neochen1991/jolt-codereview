@@ -174,7 +174,7 @@ function writeConfig(file, pythonBin = "") {
       default_base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
       default_model: "MiniMax-M2.7",
       default_api_key: "test-api-key",
-      default_api_key_env: "MINIMAX_API_KEY",
+      default_api_key_env: null,
       request_timeout_seconds: 30,
       max_output_tokens: 4096,
       enable_stream: false
@@ -355,6 +355,8 @@ async function main() {
   const serviceEnv = {
     CONFIG_PATH: configPath,
     JOLT_INTERNAL_SERVICE_TOKEN: internalToken,
+    JOLT_SEED_DEV_DATA: "1",
+    JOLT_LOCAL_ADMIN_PASSWORD: "admin123",
     PYTHON_BIN: venvPython
   };
 
@@ -383,7 +385,12 @@ async function main() {
   const internalModel = await http("/internal/models/effective-config?project_id=project_default", {
     headers: { "x-internal-service-token": internalToken }
   });
-  if ("default_api_key" in (internalModel.llm ?? {})) throw new Error("internal model config leaked default_api_key");
+  if (internalModel.llm?.default_api_key !== "test-api-key") {
+    throw new Error(`internal model config must include runtime default_api_key for MR/Worker services: ${JSON.stringify(internalModel.llm ?? {})}`);
+  }
+
+  await http("/api/projects", {}, 401);
+  await http("/api/mr-review/projects/project_default/merge-requests", {}, 401);
 
   const login = await http("/api/auth/login", {
     method: "POST",
@@ -412,13 +419,16 @@ async function main() {
       default_provider: "dashscope-openai-compatible",
       default_base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
       default_model: "MiniMax-M2.7",
-      default_api_key_env: "MINIMAX_API_KEY",
+      default_api_key: "test-api-key",
       request_timeout_seconds: 30,
       max_output_tokens: 4096,
       enable_stream: false
     })
   });
-  await http("/api/system/storage", { headers: auth });
+  const storageInfo = await http("/api/system/storage", { headers: auth });
+  if (storageInfo.service_scope !== "common-backend") {
+    throw new Error(`storage API must be scoped to Common backend only: ${JSON.stringify(storageInfo)}`);
+  }
   const storageTest = await http("/api/system/storage/test", {
     method: "POST",
     headers: auth,
@@ -442,6 +452,19 @@ async function main() {
   const projectId = projectCreate.project.id;
   const project = await http(`/api/projects/${projectId}`, { headers: auth });
   if (project.id !== projectId) throw new Error(`project read mismatch: ${JSON.stringify(project)}`);
+  const outsiderUsername = `split-outsider-${randomBytes(4).toString("hex")}`;
+  await http("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ username: outsiderUsername, password: "outsider123", display_name: "Split Outsider" })
+  });
+  const outsiderLogin = await http("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username: outsiderUsername, password: "outsider123" })
+  });
+  const outsiderAuth = { Authorization: `Bearer ${outsiderLogin.token}` };
+  await http(`/api/projects/${projectId}/settings`, { headers: outsiderAuth }, 403);
+  await http(`/api/projects/${projectId}/repositories`, { headers: outsiderAuth }, 403);
+  await http(`/api/mr-review/projects/${projectId}/merge-requests`, { headers: outsiderAuth }, 403);
   await http(`/api/projects/${projectId}`, {
     method: "PATCH",
     headers: auth,

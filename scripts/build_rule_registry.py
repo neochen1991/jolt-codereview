@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKER_DIR = ROOT / "worker"
+WORKER_DIR = ROOT / "mr-backend" / "worker"
 if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
@@ -91,8 +91,8 @@ def main() -> None:
 
     registry = {
         "generated_from": [
-            "worker/orchestration/nodes/judge_findings.py",
-            "worker/tools/tool_normalizer.py",
+            "mr-backend/worker/orchestration/nodes/judge_findings.py",
+            "mr-backend/worker/tools/tool_normalizer.py",
         ],
         "defaults": {
             "evidence_thresholds": {"drop_below": 0.35, "downgrade_below": 0.5},
@@ -100,7 +100,7 @@ def main() -> None:
         },
         "rules": [rules[key] for key in sorted(rules)],
     }
-    output = ROOT / "worker" / "rules" / "registry.json"
+    output = ROOT / "mr-backend" / "worker" / "rules" / "registry.json"
     output.write_text(json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n", "utf-8")
     print(json.dumps({"generated": str(output), "rule_count": len(rules)}, ensure_ascii=False))
 

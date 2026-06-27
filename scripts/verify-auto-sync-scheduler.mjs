@@ -1,4 +1,4 @@
-import { MrAutoSyncScheduler, shouldStartAutoSync } from "../build/backend/services/MrAutoSyncScheduler.js";
+import { MrAutoSyncScheduler, shouldStartAutoSync } from "../mr-backend/build/backend/services/MrAutoSyncScheduler.js";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -14,22 +14,16 @@ async function waitFor(condition, message) {
 }
 
 const calls = [];
-const projectRepository = {
-  listProjects() {
-    return [{ id: "project_a" }, { id: "project_b" }];
-  }
-};
-const projectConfigService = {
-  effectiveConfig(projectId) {
-    return {
-      effective_config: {
-        queue_policy: {
-          poll_interval_seconds: projectId === "project_a" ? 20 : 30
-        }
-      }
-    };
-  }
-};
+function listProjectIds() {
+  return ["project_a", "project_b"];
+}
+async function effectiveConfig(projectId) {
+  return {
+    queue_policy: {
+      poll_interval_seconds: projectId === "project_a" ? 20 : 30
+    }
+  };
+}
 const mrSyncService = {
   async syncProject(projectId) {
     calls.push(projectId);
@@ -40,8 +34,8 @@ const mrSyncService = {
 const logs = [];
 const scheduler = new MrAutoSyncScheduler(
   {},
-  projectRepository,
-  projectConfigService,
+  listProjectIds,
+  effectiveConfig,
   mrSyncService,
   { logger: { log: (line) => logs.push(line), error: (line) => logs.push(line) } }
 );

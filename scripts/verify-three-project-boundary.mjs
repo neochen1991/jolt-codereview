@@ -21,6 +21,13 @@ writeFileSync(
   configPath,
   JSON.stringify(
     {
+      llm: {
+        default_provider: "dashscope-openai-compatible",
+        default_base_url: "https://llm.example.com/v1",
+        default_model: "boundary-model",
+        default_api_key: "boundary-test-key",
+        default_api_key_env: null
+      },
       server: {
         host,
         port: mrPort,
@@ -74,11 +81,12 @@ async function jsonStatus(url) {
   return { status: response.status, json };
 }
 
-run("npm", ["run", "build:api"]);
+run("npm", ["--prefix", "common-backend", "run", "build"]);
+run("npm", ["--prefix", "mr-backend", "run", "build"]);
 run(process.execPath, [
   "--input-type=module",
   "-e",
-  "const { loadConfig } = await import('./build/backend/config.js'); const { openDatabase } = await import('./build/backend/db.js'); const db = openDatabase(loadConfig()); db.close?.();"
+  "const { loadConfig } = await import('./common-backend/build/backend/config.js'); const { openDatabase } = await import('./common-backend/build/backend/db.js'); const db = openDatabase(loadConfig()); db.close?.();"
 ], { CONFIG_PATH: configPath });
 
 const env = {
@@ -99,9 +107,9 @@ function startServer(entrypoint) {
 }
 
 try {
-  startServer("build/backend/common-server.js");
+  startServer("common-backend/build/backend/common-server.js");
   const commonHealth = await waitForJson(`http://${host}:${commonPort}/api/health`);
-  startServer("build/backend/mr-server.js");
+  startServer("mr-backend/build/backend/mr-server.js");
   const mrHealth = await waitForJson(`http://${host}:${mrPort}/api/health`);
   if (commonHealth.json.service !== "jolt-common-backend") {
     throw new Error(`common health service mismatch: ${JSON.stringify(commonHealth.json)}`);
@@ -139,7 +147,9 @@ try {
   });
   const modelJson = await authedModelConfig.json();
   if (!authedModelConfig.ok) throw new Error(`internal model route failed: ${JSON.stringify(modelJson)}`);
-  if ("default_api_key" in (modelJson.llm ?? {})) throw new Error("internal model route leaked default_api_key");
+  if (modelJson.llm?.default_api_key !== "boundary-test-key") {
+    throw new Error(`internal model route must provide runtime default_api_key to MR/Worker services: ${JSON.stringify(modelJson.llm ?? {})}`);
+  }
 
   console.log(JSON.stringify({
     common: commonHealth.json,

@@ -3724,6 +3724,20 @@ def make_judge_findings_node(
         )
         quality_selected_findings: list[dict[str, Any]] = []
         for finding in final_findings:
+            if not bool(finding.get("selected", 1)) or finding.get("judge_adjustment") == "evidence_score_below_drop_threshold":
+                rejected = {**finding, "rejected_reasons": ["evidence_score_below_drop_threshold"]}
+                judge_rejections.append(rejected)
+                recorder.event(
+                    judge_span,
+                    "finding_dropped",
+                    f"{finding.get('title', 'candidate')} 被 Judge 过滤：evidence_score_below_drop_threshold",
+                    {
+                        "dedupe_hash": finding.get("dedupe_hash"),
+                        "evidence_score": finding.get("evidence_score"),
+                        "judge_adjustment": finding.get("judge_adjustment"),
+                    },
+                )
+                continue
             if str(finding.get("severity") or "") in SELECTABLE_SEVERITIES:
                 quality_selected_findings.append(finding)
                 continue

@@ -7,16 +7,15 @@ const DEFAULT_CONFIG: AppConfig = {
     default_provider: "dashscope-openai-compatible",
     default_base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
     default_model: "MiniMax-M2.7",
-    default_api_key_env: "MINIMAX_API_KEY",
+    default_api_key_env: null,
     request_timeout_seconds: 120,
     max_output_tokens: 8192,
     enable_stream: true
   },
   server: {
     host: "127.0.0.1",
-    port: 9021,
+    port: 9022,
     common_port: 9022,
-    mr_port: 9021,
     database_driver: "postgres",
     postgres_url: "",
     postgres_user: "",

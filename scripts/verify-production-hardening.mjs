@@ -4,8 +4,9 @@ import path from "node:path";
 const ROOT = process.cwd();
 const TARGETS = [
   "README.md",
-  "src/backend",
-  "worker/orchestration",
+  "common-backend/src/backend",
+  "mr-backend/src/backend",
+  "mr-backend/worker/orchestration",
   "scripts/verify-local.mjs"
 ];
 
@@ -62,10 +63,10 @@ if (violations.length) {
 }
 
 const requiredFiles = [
-  "src/backend/routes/full-review.routes.ts",
-  "src/backend/routes/quality.routes.ts",
-  "worker/orchestration/graph.py",
-  "worker/orchestration/nodes/prescan.py"
+  "mr-backend/src/backend/routes/full-review.routes.ts",
+  "mr-backend/src/backend/routes/quality.routes.ts",
+  "mr-backend/worker/orchestration/graph.py",
+  "mr-backend/worker/orchestration/nodes/prescan.py"
 ];
 for (const file of requiredFiles) {
   if (!fs.existsSync(path.join(ROOT, file))) {
@@ -73,14 +74,14 @@ for (const file of requiredFiles) {
   }
 }
 
-const fullReviewRoutes = fs.readFileSync(path.join(ROOT, "src/backend/routes/full-review.routes.ts"), "utf-8");
+const fullReviewRoutes = fs.readFileSync(path.join(ROOT, "mr-backend/src/backend/routes/full-review.routes.ts"), "utf-8");
 for (const required of ["full_review_jobs", "full_review_snapshots", "full_review_findings", "ensureProjectRole", "auditLog"]) {
   if (!fullReviewRoutes.includes(required)) {
     throw new Error(`full review API is missing production behavior marker: ${required}`);
   }
 }
 
-const graph = fs.readFileSync(path.join(ROOT, "worker/orchestration/graph.py"), "utf-8");
+const graph = fs.readFileSync(path.join(ROOT, "mr-backend/worker/orchestration/graph.py"), "utf-8");
 if (!graph.includes("LangGraph is required in production review orchestration")) {
   throw new Error("LangGraph must be a required production dependency");
 }

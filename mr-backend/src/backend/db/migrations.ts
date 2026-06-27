@@ -490,6 +490,7 @@ export function migrate(db: Db) {
 
     CREATE TABLE IF NOT EXISTS llm_response_cache (
       cache_key TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'project_default',
       provider TEXT NOT NULL,
       model TEXT NOT NULL,
       schema_name TEXT NOT NULL,
@@ -630,6 +631,7 @@ export function migrate(db: Db) {
   addColumnIfMissing(db, "full_review_jobs", "locked_by", "TEXT");
   addColumnIfMissing(db, "full_review_jobs", "heartbeat_at", "TEXT");
   addColumnIfMissing(db, "full_review_jobs", "failure_reason", "TEXT");
+  addColumnIfMissing(db, "llm_response_cache", "project_id", "TEXT NOT NULL DEFAULT 'project_default'");
 }
 
 function addColumnIfMissing(db: Db, table: string, column: string, definition: string) {

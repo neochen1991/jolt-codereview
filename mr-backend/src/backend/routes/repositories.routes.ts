@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
-import { inferProviderFromGitUrl, parseGitRepositoryUrl, repositoryConfigFromGitUrl } from "../repositoryIdentity.js";
+import { inferProviderFromGitUrl, parseGitRepositoryUrl, repositoryConfigFromGitUrl, validateVcsEndpoint } from "../repositoryIdentity.js";
 import type { FindingRow } from "../types.js";
 import type { BackendRouteContext } from "./context.js";
 
@@ -58,6 +58,8 @@ export function createRepositoryRoutes(ctx: BackendRouteContext): Route[] {
       projectRepository.ensureReviewDefaults(params.projectId);
       const providerInput = typeof input.provider_config === "object" && input.provider_config ? input.provider_config : {};
       const providerConfig = repositoryConfigFromGitUrl(config, provider as "github" | "codehub", parsed, providerInput as Record<string, unknown>);
+      const endpointError = validateVcsEndpoint(providerConfig.endpoint);
+      if (endpointError) return badRequest(endpointError);
       const repository = repositoryRepository.upsert({
         id: id("repo"),
         projectId: params.projectId,

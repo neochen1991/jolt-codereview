@@ -8,20 +8,22 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-const runtime = read("worker/review_runtime.py");
-const deepagents = read("worker/orchestration/deepagents_runner.py");
-const prescan = read("worker/orchestration/nodes/prescan.py");
-const runExperts = read("worker/orchestration/nodes/run_experts.py");
-const seed = read("src/backend/db/seed.ts");
-const agentRoutes = read("src/backend/routes/agents.routes.ts");
-const frontend = read("src/frontend/main.tsx");
-const styles = read("src/frontend/styles.css");
-const projectRoutes = read("src/backend/routes/projects.routes.ts");
-const apiLogger = read("src/backend/logger.ts");
-const server = read("src/backend/server.ts");
-const workerLogger = read("worker/file_logger.py");
-const treeSitterTool = read("worker/tools/tree_sitter_tool.py");
-const requirements = read("requirements.txt");
+const runtime = read("mr-backend/worker/review_runtime.py");
+const deepagents = read("mr-backend/worker/orchestration/deepagents_runner.py");
+const prescan = read("mr-backend/worker/orchestration/nodes/prescan.py");
+const runExperts = read("mr-backend/worker/orchestration/nodes/run_experts.py");
+const seed = read("mr-backend/src/backend/db/seed.ts");
+const agentRoutes = read("mr-backend/src/backend/routes/agents.routes.ts");
+const frontend = read("frontend/src/frontend/main.tsx");
+const styles = read("frontend/src/frontend/styles.css");
+const projectRoutes = read("common-backend/src/backend/routes/projects.routes.ts");
+const llmConnectivityService = read("common-backend/src/backend/services/LlmConnectivityService.ts");
+const apiLogger = read("mr-backend/src/backend/logger.ts");
+const server = read("mr-backend/src/backend/mr-server.ts");
+const workerProcessLauncher = read("mr-backend/src/backend/services/WorkerProcessLauncher.ts");
+const workerLogger = read("mr-backend/worker/file_logger.py");
+const treeSitterTool = read("mr-backend/worker/tools/tree_sitter_tool.py");
+const requirements = read("mr-backend/requirements.txt");
 
 for (const forbidden of ["BoundedReviewChatModel", "scripted", "fake", "dummy", "simulated"]) {
   assert(!deepagents.toLowerCase().includes(forbidden.toLowerCase()), `DeepAgents runner contains forbidden fake marker: ${forbidden}`);
@@ -52,7 +54,7 @@ assert(treeSitterTool.includes("from tree_sitter import Language, Parser"), "Tre
 assert(treeSitterTool.includes("tree_sitter_java"), "Tree-sitter Java grammar must be used");
 assert(treeSitterTool.includes("parser.parse(source)"), "Tree-sitter tool must parse source through parser.parse");
 assert(runtime.includes("static.tree_sitter_code_graph"), "Tree-sitter code graph must be recorded as a static tool call");
-assert(requirements.includes("tree_sitter_java"), "requirements.txt must install tree-sitter Java grammar");
+assert(requirements.includes("tree_sitter_java"), "mr-backend/requirements.txt must install tree-sitter Java grammar");
 
 for (const tool of ["tree_sitter_code_graph", "semgrep", "gitleaks", "pmd", "checkstyle", "dependency-check", "osv-scanner", "trivy", "kics", "openapi-diff"]) {
   assert(runtime.includes(`"${tool}"`), `Missing static tool invocation for ${tool}`);
@@ -75,11 +77,12 @@ assert(styles.includes(".setting-form-card") && styles.includes("min-width: 0"),
 assert(!frontend.includes("JSON.stringify(item.value"), "Settings page must not expose raw JSON setting editor");
 assert(projectRoutes.includes("/api/projects/:projectId/settings/llm/test"), "Backend must expose LLM test endpoint");
 assert(projectRoutes.includes("compactLlmTestInput"), "LLM test endpoint must ignore blank fields instead of overriding saved credentials");
-assert(projectRoutes.includes("stream_options") && projectRoutes.includes("parseOpenAiLikeResponse"), "LLM test endpoint must support SSE connectivity tests");
-assert(projectRoutes.includes("Math.min(600"), "Backend LLM test must allow long LLM timeouts");
+assert(llmConnectivityService.includes("stream_options") && llmConnectivityService.includes("parseOpenAiLikeResponse"), "LLM test endpoint must support SSE connectivity tests");
+assert(llmConnectivityService.includes("Math.min(600"), "Backend LLM test must allow long LLM timeouts");
 assert(apiLogger.includes("beijingIsoString") && apiLogger.includes("+08:00"), "API file logs must use Beijing time");
 assert(apiLogger.includes("clearLogFiles") && server.includes("clearLogFiles(config)"), "API startup must clear previous file logs");
-assert(server.includes('JOLT_SKIP_LOG_CLEANUP: "1"'), "API-spawned one-shot workers must not clear logs mid-review");
+assert(apiLogger.includes("path.join(dir, logging.apiFile)") && !apiLogger.includes("path.join(dir, logging.workerFile)") && !apiLogger.includes("path.join(dir, logging.reviewRunDir)"), "API startup cleanup must not remove worker or review-run logs");
+assert(workerProcessLauncher.includes('JOLT_SKIP_LOG_CLEANUP: "1"'), "API-spawned workers must not clear logs mid-review");
 assert(workerLogger.includes("BEIJING_TZ") && workerLogger.includes("clear_worker_logs"), "Worker file logs must use Beijing time and support startup cleanup");
 
 console.log(JSON.stringify({

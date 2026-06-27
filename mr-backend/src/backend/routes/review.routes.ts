@@ -41,6 +41,45 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     effectiveConfig,
     feedbackLearningService
   } = ctx;
+
+  function projectIdForMr(mrId: string) {
+    const row = get<{ project_id: string }>(`
+      SELECT r.project_id
+      FROM merge_requests mr
+      JOIN repositories r ON r.id = mr.repository_id
+      WHERE mr.id = $1
+    `, [mrId]);
+    return row?.project_id ?? "";
+  }
+
+  function projectIdForRun(runId: string) {
+    const row = get<{ project_id: string }>(`
+      SELECT r.project_id
+      FROM review_runs rr
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      JOIN merge_requests mr ON mr.id = rj.merge_request_id
+      JOIN repositories r ON r.id = mr.repository_id
+      WHERE rr.id = $1
+    `, [runId]);
+    return row?.project_id ?? "";
+  }
+
+  function ensureProjectRead(projectId: string, req: { headers: Record<string, any> }) {
+    return ensureProjectRole(projectId, currentUserId(req), "observer");
+  }
+
+  function ensureMrRead(mrId: string, req: { headers: Record<string, any> }) {
+    const projectId = projectIdForMr(mrId);
+    if (!projectId) return notFound();
+    return ensureProjectRead(projectId, req);
+  }
+
+  function ensureRunRead(runId: string, req: { headers: Record<string, any> }) {
+    const projectId = projectIdForRun(runId);
+    if (!projectId) return notFound();
+    return ensureProjectRead(projectId, req);
+  }
+
   function compareRunsForMr(mrId: string) {
     const runs = all<{ id: string; review_job_id: string; started_at: string }>(`
       SELECT rr.id, rr.review_job_id, rr.started_at
@@ -385,7 +424,9 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
   }
 
   const routes: Route[] = [
-    route("GET", "/api/mr-review/projects/:projectId/merge-requests", async ({ params, url }) => {
+    route("GET", "/api/mr-review/projects/:projectId/merge-requests", async ({ params, req, url }) => {
+      const denied = ensureProjectRead(params.projectId, req);
+      if (denied) return denied;
       const status = url.searchParams.get("status");
       const activeJobStatuses = new Set(["fetching", "pre_scanning", "reviewing", "judging", "running"]);
       const activeProjectJobs = all<Record<string, any>>(`
@@ -452,8 +493,11 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       });
       return result;
     }),
-    route("GET", "/api/mr-review/projects/:projectId/dead-letters", ({ params }) => ({
-      items: all(`
+    route("GET", "/api/mr-review/projects/:projectId/dead-letters", ({ params, req }) => {
+      const denied = ensureProjectRead(params.projectId, req);
+      if (denied) return denied;
+      return {
+        items: all(`
         SELECT dl.*, r.name AS repository_name, mr.title AS merge_request_title, mr.number
         FROM review_jobs_dead_letter dl
         JOIN review_jobs rj ON rj.id = dl.review_job_id
@@ -462,8 +506,11 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         WHERE r.project_id = $1
         ORDER BY dl.created_at DESC
       `, [params.projectId])
-    })),
-    route("GET", "/api/mr-review/merge-requests/:mrId", ({ params }) => {
+      };
+    }),
+    route("GET", "/api/mr-review/merge-requests/:mrId", ({ params, req }) => {
+      const denied = ensureMrRead(params.mrId, req);
+      if (denied) return denied;
       const mr = mergeRequestRepository.findDetailById(params.mrId);
       if (!mr) return notFound();
       const jobs = reviewJobRepository.listByMergeRequest(params.mrId);
@@ -705,19 +752,27 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       runWorkerOnce();
       return updated;
     }),
-    route("GET", "/api/mr-review/review-runs/:runId", ({ params }) =>
-      get("SELECT * FROM review_runs WHERE id = $1", [params.runId]) ?? notFound()
-    ),
-    route("GET", "/api/mr-review/review-runs/:runId/trace", ({ params }) => ({
-      items: all(`
+    route("GET", "/api/mr-review/review-runs/:runId", ({ params, req }) => {
+      const denied = ensureRunRead(params.runId, req);
+      if (denied) return denied;
+      return get("SELECT * FROM review_runs WHERE id = $1", [params.runId]) ?? notFound();
+    }),
+    route("GET", "/api/mr-review/review-runs/:runId/trace", ({ params, req }) => {
+      const denied = ensureRunRead(params.runId, req);
+      if (denied) return denied;
+      return {
+        items: all(`
         SELECT s.*, e.event_type, e.summary, e.payload_json, e.created_at AS event_created_at
         FROM agent_trace_spans s
         LEFT JOIN agent_trace_events e ON e.span_id = s.id
         WHERE s.review_run_id = $1
         ORDER BY s.started_at, e.created_at
       `, [params.runId])
-    })),
-    route("GET", "/api/mr-review/review-runs/:runId/session-logs", ({ params }) => {
+      };
+    }),
+    route("GET", "/api/mr-review/review-runs/:runId/session-logs", ({ params, req }) => {
+      const denied = ensureRunRead(params.runId, req);
+      if (denied) return denied;
       const spans = all("SELECT * FROM agent_trace_spans WHERE review_run_id = $1 ORDER BY started_at", [params.runId]);
       const events = all(`
         SELECT e.*, s.span_key, s.agent_id
@@ -756,10 +811,16 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       `, [params.runId]);
       return { spans, events, messages, llm_calls: llmCalls, tool_calls: toolCalls, mcp_calls: mcpCalls };
     }),
-    route("GET", "/api/mr-review/review-runs/:runId/artifacts", ({ params }) => ({
-      items: all("SELECT * FROM review_artifacts WHERE review_run_id = $1 ORDER BY created_at", [params.runId])
-    })),
-    route("GET", "/api/mr-review/merge-requests/:mrId/review-runs/compare", ({ params }) => {
+    route("GET", "/api/mr-review/review-runs/:runId/artifacts", ({ params, req }) => {
+      const denied = ensureRunRead(params.runId, req);
+      if (denied) return denied;
+      return {
+        items: all("SELECT * FROM review_artifacts WHERE review_run_id = $1 ORDER BY created_at", [params.runId])
+      };
+    }),
+    route("GET", "/api/mr-review/merge-requests/:mrId/review-runs/compare", ({ params, req }) => {
+      const denied = ensureMrRead(params.mrId, req);
+      if (denied) return denied;
       return compareRunsForMr(params.mrId);
     }),
     route("POST", "/api/mr-review/merge-requests/:mrId/external-reports", ({ params, body, req }) => {

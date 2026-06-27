@@ -62,6 +62,30 @@ export function inferProviderFromGitUrl(parsed: ParsedGitRepository): VcsProvide
   return null;
 }
 
+function isPrivateIpv4(hostname: string) {
+  const parts = hostname.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b] = parts;
+  return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || a === 0;
+}
+
+export function validateVcsEndpoint(endpoint: unknown) {
+  const value = typeof endpoint === "string" ? endpoint.trim() : "";
+  if (!value) return "";
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return "VCS endpoint url is invalid";
+  }
+  const allowPrivate = process.env.JOLT_ALLOW_PRIVATE_VCS_ENDPOINTS === "1" || process.env.JOLT_ALLOW_PRIVATE_VCS_ENDPOINTS === "true";
+  if (parsed.protocol !== "https:" && !(allowPrivate && parsed.protocol === "http:")) return "VCS endpoint must use https";
+  const hostname = parsed.hostname.toLowerCase();
+  const privateHost = hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "::1" || hostname === "[::1]" || hostname.startsWith("fe80:") || isPrivateIpv4(hostname);
+  if (privateHost && !allowPrivate) return "VCS endpoint cannot target localhost or private network hosts";
+  return "";
+}
+
 export function repositoryConfigFromGitUrl(
   config: AppConfig,
   provider: VcsProviderName,

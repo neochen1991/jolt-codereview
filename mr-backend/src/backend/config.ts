@@ -3,15 +3,6 @@ import path from "node:path";
 import type { AppConfig } from "./types.js";
 
 const DEFAULT_CONFIG: AppConfig = {
-  llm: {
-    default_provider: "dashscope-openai-compatible",
-    default_base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
-    default_model: "MiniMax-M2.7",
-    default_api_key_env: "MINIMAX_API_KEY",
-    request_timeout_seconds: 120,
-    max_output_tokens: 8192,
-    enable_stream: true
-  },
   github: {
     default_token_env: "GITHUB_TOKEN",
     default_endpoint: "https://api.github.com"

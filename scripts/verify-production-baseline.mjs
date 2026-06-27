@@ -1,26 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { request } from "./api-auth.mjs";
 
-const API = process.env.API_BASE || "http://127.0.0.1:9021";
 const PROJECT_ID = process.env.PROJECT_ID || "project_default";
 const root = process.cwd();
 const configPath = process.env.CONFIG_PATH || process.env.MR_CONFIG_PATH || "mr-backend/config.json";
 const config = JSON.parse(readFileSync(path.resolve(root, configPath), "utf8"));
-
-async function request(path, init) {
-  const response = await fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {})
-    }
-  });
-  const json = await response.json();
-  if (!response.ok) {
-    throw new Error(`${path} failed: ${JSON.stringify(json)}`);
-  }
-  return json;
-}
 
 function assertArray(value, label) {
   if (!Array.isArray(value)) throw new Error(`${label} must be an array`);

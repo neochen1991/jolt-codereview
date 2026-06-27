@@ -9,9 +9,11 @@ interface EvaluationReportRow {
 }
 
 export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
-  const { all, get } = ctx;
+  const { all, get, currentUserId, ensureProjectRole } = ctx;
   const routes: Route[] = [
-    route("GET", "/api/projects/:projectId/review-quality/summary", ({ params }) => {
+    route("GET", "/api/projects/:projectId/review-quality/summary", ({ params, req }) => {
+      const denied = ensureProjectRole(params.projectId, currentUserId(req), "observer");
+      if (denied) return denied;
       const llmCalls = all(`
         SELECT COUNT(*) AS count, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens
         FROM llm_call_records l
@@ -62,7 +64,9 @@ export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
       };
     }),
 
-    route("GET", "/api/projects/:projectId/evaluation-reports", ({ params }) => {
+    route("GET", "/api/projects/:projectId/evaluation-reports", ({ params, req }) => {
+      const denied = ensureProjectRole(params.projectId, currentUserId(req), "observer");
+      if (denied) return denied;
       const accepted = Number(get<{ count: number }>(`
         SELECT COUNT(*) AS count
         FROM review_findings rf
@@ -110,9 +114,12 @@ export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
       return { project_id: params.projectId, items: [liveReport, ...storedReports] };
     }),
 
-    route("GET", "/api/projects/:projectId/rule-health", ({ params }) => ({
-      project_id: params.projectId,
-      items: all(`
+    route("GET", "/api/projects/:projectId/rule-health", ({ params, req }) => {
+      const denied = ensureProjectRole(params.projectId, currentUserId(req), "observer");
+      if (denied) return denied;
+      return {
+        project_id: params.projectId,
+        items: all(`
         SELECT
           rf.agent_id,
           rf.title AS rule_or_title,
@@ -130,7 +137,8 @@ export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
         ORDER BY false_positive_rate DESC, finding_count DESC
         LIMIT 30
       `, [params.projectId])
-    }))
+      };
+    })
   ];
   return routes;
 }

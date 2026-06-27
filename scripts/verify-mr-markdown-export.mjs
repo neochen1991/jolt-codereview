@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { formatMrReviewMarkdown } from "../build/backend/reviewMarkdown.js";
+import { formatMrReviewMarkdown } from "../mr-backend/build/backend/reviewMarkdown.js";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -81,12 +81,12 @@ for (const expected of [
   assert(markdown.includes(expected), `markdown missing: ${expected}`);
 }
 
-const frontend = readFileSync("src/frontend/main.tsx", "utf-8");
+const frontend = readFileSync("frontend/src/frontend/main.tsx", "utf-8");
 assert(frontend.includes("/export.md"), "frontend must call markdown export endpoint");
 assert(frontend.includes("导出 MD"), "frontend must expose export md button");
 assert(frontend.includes("download = filename"), "frontend must trigger browser md download");
 
-const routeSource = readFileSync("src/backend/routes/review.routes.ts", "utf-8");
+const routeSource = readFileSync("mr-backend/src/backend/routes/review.routes.ts", "utf-8");
 assert(routeSource.includes("/api/mr-review/merge-requests/:mrId/export.md"), "backend route must expose markdown export endpoint");
 
 console.log(JSON.stringify({ ok: true, markdown_length: markdown.length }, null, 2));

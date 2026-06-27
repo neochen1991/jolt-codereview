@@ -197,4 +197,8 @@ start("MR Backend", ["run", "dev:mr"], mrEnv);
 if (process.env.JOLT_START_EXTERNAL_POLLER === "1") {
   start("Poller", ["run", "poll"], mrEnv);
 }
-start("Frontend", ["run", "dev:web", "--", "--host", frontendHost, "--port", String(frontendPort), "--strictPort"], frontendEnv);
+start("Frontend", ["run", "dev:web"], {
+  ...frontendEnv,
+  JOLT_FRONTEND_HOST: frontendHost,
+  JOLT_FRONTEND_PORT: String(frontendPort)
+});

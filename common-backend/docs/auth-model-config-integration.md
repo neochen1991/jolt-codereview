@@ -4,6 +4,7 @@
 
 - 用户认证服务：登录、session、用户身份校验、项目 membership、用户个人 settings。
 - 模型配置服务：项目级 LLM 配置、有效配置查询、服务间配置拉取。
+- 公共信息读取：项目、成员、权限、项目 settings、系统设置等公共信息。
 
 接入系统必须通过 HTTP API 调用 Common，不允许直接读取或写入 Common 数据库表。
 
@@ -53,6 +54,87 @@ curl -sS "$COMMON_API_BASE/internal/auth/introspect" \
   -H "Authorization: Bearer $USER_TOKEN" \
   -H "x-internal-service-token: $JOLT_INTERNAL_SERVICE_TOKEN"
 ```
+
+## 公共信息读取 API
+
+Common 负责提供跨系统共享的用户、项目、权限、项目设置和系统设置。其它系统读取这些公共信息时，应按调用场景选择 Bearer 用户态 API 或 internal 服务间 API。
+
+### 读取方式选择
+
+| 场景 | 使用方式 | 说明 |
+| --- | --- | --- |
+| 前端页面读取用户、项目、成员、settings | Bearer 用户态 API | 使用当前登录用户权限，敏感字段已脱敏 |
+| 业务后端收到用户请求后做鉴权 | `/internal/auth/introspect` | 同时携带用户 Bearer Token 和 internal token |
+| Worker、定时任务读取项目配置 | `/internal/models/effective-config` | 只携带 internal token，返回运行时完整配置 |
+| 无用户上下文读取成员、审计、邀请等管理列表 | 需要新增 internal API | 当前这些列表只提供 Bearer 用户态接口 |
+
+### API 总览
+
+| 信息类型 | API | 鉴权 | 说明 |
+| --- | --- | --- | --- |
+| 当前用户和可访问项目 | `GET /api/me` | Bearer | 返回 `user` 和当前用户可访问的 `projects` |
+| 当前用户个人设置 | `GET /api/me/settings` | Bearer | 返回个人 settings，敏感字段脱敏 |
+| 用户身份和项目 membership | `GET /internal/auth/introspect` | internal token，可携带 Bearer | 返回 `active`、`user`、`memberships`、用户 settings |
+| 项目列表 | `GET /api/projects` | Bearer | 当前用户可访问项目；root 返回全部项目 |
+| 可发现项目 | `GET /api/projects/discover` | Bearer | 返回可申请加入项目和申请状态 |
+| 项目详情 | `GET /api/projects/:projectId` | observer+ | 返回项目名称、描述、data policy |
+| 项目成员 | `GET /api/projects/:projectId/members` | project_admin+ | 返回成员、用户、角色列表 |
+| 项目 settings | `GET /api/projects/:projectId/settings` | observer+ | 返回项目 settings，敏感字段脱敏 |
+| 项目有效配置 | `GET /api/projects/:projectId/effective-config` | observer+ | 返回部署默认配置和项目 settings 合并后的配置，敏感字段脱敏 |
+| 内部项目有效配置 | `GET /internal/models/effective-config?project_id=...` | internal token | 返回运行时完整项目配置和 `source.project_settings` |
+| 角色定义 | `GET /api/permissions/roles` | 无 | 返回全局角色和项目角色定义 |
+| 当前用户权限 | `GET /api/permissions/me` | Bearer | 返回当前用户和项目 membership |
+| 成员权限列表 | `GET /api/permissions/projects/:projectId/members` | project_admin+ | 返回项目成员权限视图 |
+| 加入申请 | `GET /api/projects/:projectId/join-requests` | project_admin+ | 返回项目加入申请 |
+| 邀请码 | `GET /api/projects/:projectId/invitations` | project_admin+ | 返回项目邀请记录 |
+| 项目审计 | `GET /api/projects/:projectId/audit-logs` | project_admin+ | 返回项目操作审计日志 |
+| 系统存储设置 | `GET /api/system/storage` | root | 返回数据库驱动、PostgreSQL 状态和配置状态 |
+
+### 典型读取示例
+
+业务后端校验用户 token 并获取 membership：
+
+```bash
+curl -sS "$COMMON_API_BASE/internal/auth/introspect" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H "x-internal-service-token: $JOLT_INTERNAL_SERVICE_TOKEN"
+```
+
+Worker 按项目读取运行时配置：
+
+```bash
+curl -sS "$COMMON_API_BASE/internal/models/effective-config?project_id=$PROJECT_ID" \
+  -H "x-internal-service-token: $JOLT_INTERNAL_SERVICE_TOKEN"
+```
+
+后台任务按用户 ID 读取用户 settings 和 membership：
+
+```bash
+curl -sS "$COMMON_API_BASE/internal/auth/introspect?user_id=$USER_ID" \
+  -H "x-internal-service-token: $JOLT_INTERNAL_SERVICE_TOKEN"
+```
+
+前端或管理后台读取项目成员：
+
+```bash
+curl -sS "$COMMON_API_BASE/api/projects/$PROJECT_ID/members" \
+  -H "Authorization: Bearer $USER_TOKEN"
+```
+
+前端或管理后台读取项目 settings：
+
+```bash
+curl -sS "$COMMON_API_BASE/api/projects/$PROJECT_ID/settings" \
+  -H "Authorization: Bearer $USER_TOKEN"
+```
+
+### 脱敏规则和边界
+
+- Bearer 用户态接口会脱敏敏感字段，例如 `default_api_key` 只返回 `default_api_key_has_value` 和 `default_api_key_masked`。
+- `/internal/models/effective-config` 面向服务运行时，可能返回完整项目配置，调用方不能把响应原样返回给前端。
+- `/internal/auth/introspect` 可能返回用户 settings，调用方不要在日志中打印 token、API key、VCS token。
+- Common 不提供业务域数据，例如仓库、MR、Review Job、Finding、Worker 日志。
+- 当前没有通用的 internal 成员列表、审计列表、邀请列表接口；无用户上下文的后端服务如需这些数据，应新增 internal API，不允许直接读 Common 表。
 
 ## 用户认证服务
 

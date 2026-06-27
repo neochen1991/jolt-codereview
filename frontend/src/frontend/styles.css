@@ -1591,6 +1591,16 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   line-height: 1.35;
 }
 
+.agent-config-list .agent-binding-file-preview {
+  margin-top: 3px;
+  display: block;
+  color: #6b7f99;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .agent-config-list .agent-binding-button:hover {
   border-color: var(--blue);
   background: var(--blue-soft);

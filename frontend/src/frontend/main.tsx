@@ -655,6 +655,25 @@ function skillAssetManifest(assets: Record<string, unknown>[]) {
     .join("\n");
 }
 
+function skillAssetPathPreview(assets: Array<Record<string, unknown> | { path: string }>) {
+  if (!assets.length) return "";
+  const paths = assets.map((asset) => String("asset_path" in asset ? asset.asset_path || "未命名资源" : asset.path || "未命名资源"));
+  const visible = paths.slice(0, 5).join(" / ");
+  return paths.length > 5 ? `${visible} / +${paths.length - 5}` : visible;
+}
+
+function skillBundleContent(skill: Record<string, unknown>, assets: Record<string, unknown>[]) {
+  if (!assets.length) return String(skill.content || "暂无 Skill 内容");
+  return assets
+    .map((asset) => {
+      const path = String(asset.asset_path || "未命名资源");
+      const kind = skillAssetKind(asset);
+      const content = String(asset.content ?? "");
+      return [`## ${path} (${kind})`, content.trim() ? content : "（空文件）"].join("\n\n");
+    })
+    .join("\n\n---\n\n");
+}
+
 function boolValue(value: unknown, fallback = false) {
   return typeof value === "boolean" ? value : fallback;
 }
@@ -3676,23 +3695,25 @@ function ConfigWorkspace({
           .filter((asset) => String(asset.skill_key) === String(skill.skill_key))
           .sort((left, right) => String(left.asset_path || "").localeCompare(String(right.asset_path || "")));
         const manifest = skillAssetManifest(assets);
+        const bundleContent = skillBundleContent(skill, assets);
         return {
           kind: "skill",
           title: String(skill.name || skill.skill_key || "未命名 Skill"),
           subtitle: `${String(skill.skill_key || "custom skill")} · ${skillAssetSummary(assets)}`,
           bindingId: String(binding?.id || ""),
           skillKey: String(skill.skill_key || ""),
-          content: [
-            String(skill.content || "暂无 Skill 内容"),
-            "",
-            "Bundle 文件清单",
-            manifest
-          ].join("\n"),
           assets: assets.map((asset) => ({
             path: String(asset.asset_path || "未命名资源"),
             type: skillAssetKind(asset),
             executable: Boolean(asset.executable)
           })),
+          content: [
+            "Bundle 文件清单",
+            manifest,
+            "",
+            "Bundle 文件内容",
+            bundleContent
+          ].join("\n"),
           metadata: compactMetadata([
             ["Skill Key", skill.skill_key],
             ["描述", skill.description],
@@ -4957,6 +4978,7 @@ function AgentProfileCard({
                   >
                     <b>{detail.title}</b>
                     <small>{detail.subtitle}</small>
+                    {detail.assets?.length ? <span className="agent-binding-file-preview">{skillAssetPathPreview(detail.assets)}</span> : null}
                   </button>
                   <button
                     className="agent-binding-remove-button"

@@ -142,25 +142,6 @@ def _augment_agents_from_tool_observations(
     return augmented, appended, evidence
 
 
-def _augment_agents_from_bound_rules_and_skills(
-    selected_agents: list[dict[str, Any]],
-    agent_configs: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[str]]:
-    by_id = {str(agent.get("agent_id")): agent for agent in agent_configs}
-    selected_ids = {str(agent.get("agent_id")) for agent in selected_agents}
-    augmented = list(selected_agents)
-    appended: list[str] = []
-    for agent_id, agent in by_id.items():
-        if agent_id in selected_ids:
-            continue
-        if not (agent.get("bound_rules") or agent.get("custom_skills") or agent.get("skill_assets")):
-            continue
-        augmented.append(agent)
-        selected_ids.add(agent_id)
-        appended.append(agent_id)
-    return augmented, appended
-
-
 def make_route_agents_node(
     *,
     recorder: Any,
@@ -196,10 +177,6 @@ def make_route_agents_node(
             agent_configs,
             state.get("tool_observations") or [],
         )
-        selected_agents, bound_config_augmented_agents = _augment_agents_from_bound_rules_and_skills(
-            selected_agents,
-            agent_configs,
-        )
         if tool_augmented_agents:
             recorder.event(
                 router_span,
@@ -210,16 +187,6 @@ def make_route_agents_node(
                     "evidence": tool_route_evidence[:50],
                 },
             )
-        if bound_config_augmented_agents:
-            recorder.event(
-                router_span,
-                "router_bound_config_experts_appended",
-                f"基于绑定规范/Skill 追加 {len(bound_config_augmented_agents)} 个专家 Agent",
-                {
-                    "agents": bound_config_augmented_agents,
-                    "reason": "bound_rules_or_skills_must_be_reviewed",
-                },
-            )
         recorder.event(
             router_span,
             "agent_routed",
@@ -228,7 +195,6 @@ def make_route_agents_node(
                 "agents": [agent["agent_id"] for agent in selected_agents],
                 "effort": effort,
                 "tool_augmented_agents": tool_augmented_agents,
-                "bound_config_augmented_agents": bound_config_augmented_agents,
             },
         )
         for agent in selected_agents:

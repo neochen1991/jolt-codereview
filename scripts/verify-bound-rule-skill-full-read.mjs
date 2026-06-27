@@ -55,12 +55,14 @@ const checks = [
   },
   {
     file: "mr-backend/worker/orchestration/nodes/route_agents.py",
-    forbidden: [],
-    required: [
+    forbidden: [
       "def _augment_agents_from_bound_rules_and_skills(",
-      "agent.get(\"bound_rules\") or agent.get(\"custom_skills\") or agent.get(\"skill_assets\")",
       "router_bound_config_experts_appended",
       "bound_config_augmented_agents"
+    ],
+    required: [
+      "route_agents(",
+      "_augment_agents_from_tool_observations("
     ]
   },
   {

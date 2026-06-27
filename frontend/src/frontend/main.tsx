@@ -5258,11 +5258,17 @@ function AgentBindingEditorModal({
         if (!skillKey) continue;
         const currentlyBound = existingSkillBindings.some((binding) => String(binding.skill_key) === skillKey);
         const shouldBind = selectedSkillKeys.has(skillKey);
-        if (shouldBind || currentlyBound) {
+        if (shouldBind) {
           await api(`/api/projects/${projectId}/expert-skill-bindings`, {
             method: "POST",
-            body: JSON.stringify({ agent_key: agentKey, skill_key: skillKey, priority: 100, enabled: shouldBind })
+            body: JSON.stringify({ agent_key: agentKey, skill_key: skillKey, priority: 100, enabled: true })
           });
+        }
+        if (!shouldBind && currentlyBound) {
+          const binding = existingSkillBindings.find((item) => String(item.skill_key) === skillKey);
+          if (binding?.id) {
+            await api(`/api/projects/${projectId}/expert-skill-bindings/${encodeURIComponent(String(binding.id))}`, { method: "DELETE" });
+          }
         }
       }
       for (const toolName of toolCandidates) {

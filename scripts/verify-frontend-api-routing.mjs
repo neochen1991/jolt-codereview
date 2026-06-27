@@ -41,7 +41,9 @@ const cases = [
   ["/api/full-review/projects/project_default/jobs", bases.mrBase],
   ["/api/vcs/project_default/capabilities", bases.mrBase],
   ["/api/projects/project_default/repositories", bases.mrBase],
-  ["/api/projects/project_default/agents", bases.mrBase]
+  ["/api/projects/project_default/agents", bases.mrBase],
+  ["/api/projects/project_default/expert-skill-bindings", bases.mrBase],
+  ["/api/projects/project_default/expert-skill-bindings/skill_binding_123", bases.mrBase]
 ];
 
 const failures = [];

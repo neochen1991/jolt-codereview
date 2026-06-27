@@ -24,6 +24,8 @@ const workerProcessLauncher = read("mr-backend/src/backend/services/WorkerProces
 const workerLogger = read("mr-backend/worker/file_logger.py");
 const treeSitterTool = read("mr-backend/worker/tools/tree_sitter_tool.py");
 const requirements = read("mr-backend/requirements.txt");
+assert(!fs.existsSync("agent-skills"), "Agent skill assets must not live at repository root");
+assert(fs.existsSync("mr-backend/agent-skills/security-review/SKILL.md"), "MR backend must own built-in agent skill assets");
 
 for (const forbidden of ["BoundedReviewChatModel", "scripted", "fake", "dummy", "simulated"]) {
   assert(!deepagents.toLowerCase().includes(forbidden.toLowerCase()), `DeepAgents runner contains forbidden fake marker: ${forbidden}`);

@@ -86,16 +86,16 @@ flowchart TD
 
 | Agent | 绑定规范文档 | 唯一职责 |
 | --- | --- | --- |
-| Security Agent | `agent-skills/security-review/JAVA_WEB_STANDARD.md` | 鉴权、越权、注入、敏感信息、安全配置、依赖安全 |
-| Spring Backend Agent | `agent-skills/backend-review/JAVA_WEB_STANDARD.md` | Controller、Service、事务、异常、幂等、接口契约 |
-| General Coding Agent | `agent-skills/coding-review/JAVA_WEB_STANDARD.md` | 空值、边界、异常、状态一致性、资源释放、可维护性 |
-| DDD Design Agent | `agent-skills/ddd-design-review/JAVA_WEB_STANDARD.md` | 聚合、实体、值对象、领域服务、上下文边界 |
-| Performance Agent | `agent-skills/performance-review/JAVA_WEB_STANDARD.md` | 查询、IO、批处理、并发、超时、重试、资源消耗 |
-| Redis Agent | `agent-skills/redis-review/JAVA_WEB_STANDARD.md` | key、TTL、锁、缓存一致性、危险命令、降级 |
-| Test Agent | `agent-skills/test-review/JAVA_WEB_STANDARD.md` | JaCoCo、新增逻辑覆盖、断言、边界、回归 |
-| Frontend Agent | `agent-skills/frontend-review/JAVA_WEB_STANDARD.md` | 前端状态、表单、异步、可访问性、浏览器安全 |
-| Dependency Agent | `agent-skills/dependency-review/JAVA_WEB_STANDARD.md` | CVE、license、版本冲突、大版本升级 |
-| Database Agent | `agent-skills/database-review/JAVA_WEB_STANDARD.md` | Flyway/Liquibase、DDL 兼容、索引、回滚 |
+| Security Agent | `mr-backend/agent-skills/security-review/JAVA_WEB_STANDARD.md` | 鉴权、越权、注入、敏感信息、安全配置、依赖安全 |
+| Spring Backend Agent | `mr-backend/agent-skills/backend-review/JAVA_WEB_STANDARD.md` | Controller、Service、事务、异常、幂等、接口契约 |
+| General Coding Agent | `mr-backend/agent-skills/coding-review/JAVA_WEB_STANDARD.md` | 空值、边界、异常、状态一致性、资源释放、可维护性 |
+| DDD Design Agent | `mr-backend/agent-skills/ddd-design-review/JAVA_WEB_STANDARD.md` | 聚合、实体、值对象、领域服务、上下文边界 |
+| Performance Agent | `mr-backend/agent-skills/performance-review/JAVA_WEB_STANDARD.md` | 查询、IO、批处理、并发、超时、重试、资源消耗 |
+| Redis Agent | `mr-backend/agent-skills/redis-review/JAVA_WEB_STANDARD.md` | key、TTL、锁、缓存一致性、危险命令、降级 |
+| Test Agent | `mr-backend/agent-skills/test-review/JAVA_WEB_STANDARD.md` | JaCoCo、新增逻辑覆盖、断言、边界、回归 |
+| Frontend Agent | `mr-backend/agent-skills/frontend-review/JAVA_WEB_STANDARD.md` | 前端状态、表单、异步、可访问性、浏览器安全 |
+| Dependency Agent | `mr-backend/agent-skills/dependency-review/JAVA_WEB_STANDARD.md` | CVE、license、版本冲突、大版本升级 |
+| Database Agent | `mr-backend/agent-skills/database-review/JAVA_WEB_STANDARD.md` | Flyway/Liquibase、DDL 兼容、索引、回滚 |
 
 ## 6. Agent 执行契约
 

@@ -13,12 +13,19 @@ function normalizeSkillKey(value: string) {
 }
 
 function normalizeSkillAssetPath(value: string) {
-  return value
+  const normalized = value
     .trim()
     .replace(/\\/g, "/")
     .replace(/^\/+/, "")
     .replace(/\/+/g, "/")
     .slice(0, 180);
+  const [head, ...tail] = normalized.split("/").filter(Boolean);
+  const lowerHead = String(head || "").toLowerCase();
+  if (lowerHead === "skill.md") return "SKILL.md";
+  if (lowerHead === "references") return ["references", ...tail].join("/");
+  if (lowerHead === "scripts") return ["scripts", ...tail].join("/");
+  if (lowerHead === "assets") return ["assets", ...tail].join("/");
+  return normalized;
 }
 
 function inferSkillAssetType(path: string, explicit?: unknown) {

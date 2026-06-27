@@ -35,6 +35,12 @@ import {
   Zap
 } from "lucide-react";
 import { resolveApiBase, type ApiBaseConfig } from "./apiRouting";
+import {
+  isStandardSkillAssetPath,
+  normalizeSkillBundleAssetPath,
+  skillRootNameFromFiles,
+  uploadRelativePath
+} from "./skillUploadPaths";
 import "./styles.css";
 
 const API_BASES: ApiBaseConfig = {
@@ -488,8 +494,6 @@ function listItems<T>(value: T[] | { items?: T[] } | null | undefined): T[] {
   return Array.isArray(value?.items) ? value.items : [];
 }
 
-type BrowserSkillFile = File & { webkitRelativePath?: string };
-
 function readUploadText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -497,31 +501,6 @@ function readUploadText(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("文件读取失败"));
     reader.readAsText(file, "utf-8");
   });
-}
-
-function cleanUploadPath(value: string) {
-  return value.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+/g, "/");
-}
-
-function uploadRelativePath(file: File) {
-  return cleanUploadPath((file as BrowserSkillFile).webkitRelativePath || file.name);
-}
-
-function normalizeSkillBundleAssetPath(file: File) {
-  const rawPath = uploadRelativePath(file);
-  const segments = rawPath.split("/").filter(Boolean);
-  const standardIndex = segments.findIndex((segment) => segment === "SKILL.md" || segment === "references" || segment === "scripts" || segment === "assets");
-  if (standardIndex >= 0) return segments.slice(standardIndex).join("/");
-  return segments.length > 1 ? segments.slice(1).join("/") : rawPath;
-}
-
-function isStandardSkillAssetPath(path: string) {
-  return path === "SKILL.md" || path.startsWith("references/") || path.startsWith("scripts/") || path.startsWith("assets/");
-}
-
-function skillRootNameFromFiles(files: File[]) {
-  const firstPath = files.map(uploadRelativePath).find((path) => path.includes("/"));
-  return firstPath ? firstPath.split("/")[0] : "";
 }
 
 function readableFileSize(bytes: number) {

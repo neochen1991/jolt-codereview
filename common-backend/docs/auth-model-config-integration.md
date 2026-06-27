@@ -37,13 +37,7 @@ VITE_COMMON_API_BASE=http://127.0.0.1:9022
 
 后端服务必须把 `JOLT_INTERNAL_SERVICE_TOKEN` 放在服务端环境变量或密钥系统中，不要下发到浏览器、移动端或任何不可信客户端。
 
-如果本地或内网模型网关使用 `http://127.0.0.1`、`http://localhost` 或私有网段地址，需要在 Common Backend 服务端显式允许私有 LLM Base URL：
-
-```bash
-JOLT_ALLOW_PRIVATE_LLM_BASE_URLS=1
-```
-
-本地 `scripts/start-all.mjs` 会默认设置这个变量。生产环境建议保持关闭，并使用 HTTPS 模型网关。
+模型网关可以部署在内网，`default_base_url` 支持 `http://` 和 `https://`。Common 只校验 URL 格式和协议类型，不强制 HTTPS，也不拦截 localhost 或私有网段地址。
 
 ## 鉴权方式
 

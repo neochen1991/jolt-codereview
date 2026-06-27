@@ -65,7 +65,6 @@ cp common-backend/config.example.json common-backend/config.json
 ```bash
 CONFIG_PATH=$PWD/common-backend/config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
-JOLT_ALLOW_PRIVATE_LLM_BASE_URLS=1 \
 npm run dev:common
 ```
 
@@ -92,7 +91,6 @@ npm install
 cp config.example.json config.json
 CONFIG_PATH=./config.json \
 JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
-JOLT_ALLOW_PRIVATE_LLM_BASE_URLS=1 \
 npm run dev
 ```
 
@@ -127,7 +125,6 @@ npm run start
 | `logging.dir` | common API 日志目录 |
 | `logging.api_file` | common API 日志文件，默认 `jolt-common-api.log` |
 | `JOLT_INTERNAL_SERVICE_TOKEN` | 内部服务 token；调用 `/internal/*` 必须携带 |
-| `JOLT_ALLOW_PRIVATE_LLM_BASE_URLS` | 允许项目模型 Base URL 使用 `http://localhost`、`http://127.0.0.1` 或内网地址；本地调试可设为 `1`，生产环境建议保持关闭并使用 HTTPS |
 
 ## 其他团队如何接入项目
 

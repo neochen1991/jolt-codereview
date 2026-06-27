@@ -157,6 +157,10 @@ export class RuleDocumentRepository {
     return this.listExpertSkillBindings(input.projectId);
   }
 
+  deleteExpertSkillBinding(projectId: string, bindingId: string) {
+    return this.db.prepare("DELETE FROM expert_skill_bindings WHERE project_id = $1 AND id = $2").run(projectId, bindingId);
+  }
+
   listCustomSkillAssets(projectId: string, skillKey?: string) {
     if (skillKey) {
       return this.db.prepare(`

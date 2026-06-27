@@ -307,6 +307,14 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       auditLog({ userId: actorId, projectId: params.projectId, action: "expert_skill_bindings.upsert", resourceType: "expert_skill_binding", resourceId: `${agentKey}:${skillKey}`, summary: `bind ${skillKey} to ${agentKey}` });
       return { items: bindings };
     }),
+    route("DELETE", "/api/projects/:projectId/expert-skill-bindings/:bindingId", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectWrite(params.projectId, actorId);
+      if (denied) return denied;
+      const result = ruleDocumentRepository.deleteExpertSkillBinding(params.projectId, params.bindingId);
+      auditLog({ userId: actorId, projectId: params.projectId, action: "expert_skill_bindings.delete", resourceType: "expert_skill_binding", resourceId: params.bindingId, summary: "delete expert skill binding" });
+      return { deleted: result.changes };
+    }),
     route("GET", "/api/projects/:projectId/custom-skill-assets", ({ params, url, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectRole(params.projectId, actorId, "project_admin");

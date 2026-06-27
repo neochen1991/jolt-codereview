@@ -413,6 +413,8 @@ type AgentBindingDetail = {
   content: string;
   metadata: Array<[string, string]>;
   assets?: Array<{ path: string; type: string; executable: boolean }>;
+  bindingId?: string;
+  skillKey?: string;
 };
 
 type AgentBindingEditorOptions = {
@@ -3699,6 +3701,8 @@ function ConfigWorkspace({
           kind: "skill",
           title: String(skill.name || skill.skill_key || "未命名 Skill"),
           subtitle: `${String(skill.skill_key || "custom skill")} · ${skillAssetSummary(assets)}`,
+          bindingId: String(binding?.id || ""),
+          skillKey: String(skill.skill_key || ""),
           content: [
             String(skill.content || "暂无 Skill 内容"),
             "",
@@ -3717,7 +3721,8 @@ function ConfigWorkspace({
             ["版本", skill.version],
             ["状态", skill.status],
             ["优先级", binding?.priority],
-            ["绑定状态", binding?.enabled === false ? "停用" : "启用"]
+            ["绑定状态", binding?.enabled === false ? "停用" : "启用"],
+            ["绑定 ID", binding?.id]
           ])
         };
       });
@@ -4887,6 +4892,18 @@ function AgentProfileCard({
     await reload();
   }
 
+  async function removeSkillBinding(detail: AgentBindingDetail) {
+    if (!detail.bindingId) {
+      setMessage("该 Skill 绑定缺少绑定 ID，请刷新后重试");
+      return;
+    }
+    const confirmed = window.confirm(`确认从 ${String(row.display_name || agentKey)} 移除 Skill「${detail.title}」吗？Skill 包本身会保留，可重新绑定。`);
+    if (!confirmed) return;
+    await api(`/api/projects/${projectId}/expert-skill-bindings/${encodeURIComponent(detail.bindingId)}`, { method: "DELETE" });
+    setMessage(`已移除 Skill 绑定：${detail.title}`);
+    await reload();
+  }
+
   return (
     <article className="agent-config-card">
       <div className="agent-card-main">
@@ -4949,16 +4966,30 @@ function AgentProfileCard({
             <strong>绑定 Skill</strong>
             {skillDetails.length
               ? skillDetails.map((detail, index) => (
-                <button
-                  className="agent-binding-button"
-                  type="button"
+                <div
+                  className="agent-binding-item"
                   key={`${agentKey}-skill-${index}-${detail.title}`}
-                  onClick={() => setBindingDetail(detail)}
-                  title="查看 Skill 内容"
                 >
-                  <b>{detail.title}</b>
-                  <small>{detail.subtitle}</small>
-                </button>
+                  <button
+                    className="agent-binding-button"
+                    type="button"
+                    onClick={() => setBindingDetail(detail)}
+                    title="查看 Skill 内容"
+                  >
+                    <b>{detail.title}</b>
+                    <small>{detail.subtitle}</small>
+                  </button>
+                  <button
+                    className="agent-binding-remove-button"
+                    type="button"
+                    onClick={() => { removeSkillBinding(detail).catch((error) => setMessage(error instanceof Error ? error.message : String(error))); }}
+                    disabled={!canEdit}
+                    title="移除这个专家的 Skill 绑定"
+                    aria-label={`移除 Skill 绑定 ${detail.title}`}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               ))
               : <span>未绑定自定义 Skill</span>}
           </div>

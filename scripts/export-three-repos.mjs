@@ -32,10 +32,15 @@ function shouldCopy(item) {
     "data",
     "logs",
     "output",
+    "outputs",
     ".venv",
     "__pycache__",
     ".pytest_cache",
     ".ruff_cache",
+    ".playwright-cli",
+    "coverage",
+    "playwright-report",
+    "test-results",
     ".git"
   ].some((blocked) => relative === blocked || relative.includes(`${path.sep}${blocked}${path.sep}`) || relative.endsWith(`${path.sep}${blocked}`));
 }

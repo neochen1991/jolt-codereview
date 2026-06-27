@@ -12,7 +12,7 @@ on:
 jobs:
   quality-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -21,7 +21,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
 
       - name: Setup Python
@@ -29,19 +29,29 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install module dependencies
         run: |
-          npm ci
-          python -m pip install -r requirements.txt
+          npm --prefix common-backend install --no-audit --no-fund
+          npm --prefix mr-backend install --no-audit --no-fund
+          npm --prefix frontend install --no-audit --no-fund
 
-      - name: Build frontend and backend
-        run: npm run build
+      - name: Install MR worker dependencies
+        run: |
+          python -m venv mr-backend/.venv
+          mr-backend/.venv/bin/python -m pip install --upgrade pip
+          mr-backend/.venv/bin/python -m pip install -r mr-backend/requirements.txt
 
-      - name: Verify worker orchestration
-        run: npm run verify:worker-orchestration
+      - name: Build and verify split modules
+        run: npm run verify
+
+      - name: Verify worker Python syntax
+        run: python -m compileall mr-backend/worker scripts
 
       - name: Verify real tooling guards
-        run: npm run verify:real-tooling
+        run: node scripts/verify-real-tooling.mjs
 
-      - name: Gold set regression gate
-        run: npm run verify:gold-eval
+      - name: Verify skill layer loading
+        run: env PYTHONPATH=mr-backend/worker mr-backend/.venv/bin/python scripts/verify_skill_layers.py

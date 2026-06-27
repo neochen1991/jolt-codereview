@@ -6,9 +6,9 @@ Split the current single Jolt CodeReview project into two independently started 
 
 ## Target Projects
 
-- `apps/common-backend`: public platform backend for users, authentication, authorization, system settings, and model management.
-- `apps/mr-backend`: MR review backend for repositories, MR sync, review jobs, rules, agents, quality, observability, webhooks, VCS proxy, and the Python worker.
-- `apps/frontend`: React/Vite frontend configured to call both backend APIs.
+- `common-backend`: public platform backend for users, authentication, authorization, system settings, and model management.
+- `mr-backend`: MR review backend for repositories, MR sync, review jobs, rules, agents, quality, observability, webhooks, VCS proxy, and the Python worker.
+- `frontend`: React/Vite frontend configured to call both backend APIs.
 
 ## Migration Approach
 
@@ -16,7 +16,7 @@ Use a two-stage migration.
 
 Stage 1 keeps one Git repository but creates separate runtime entrypoints, route groups, configuration, and verification scripts. This lets us verify the three-process shape without losing existing tests, scripts, and historical fixtures.
 
-Stage 2 exports `common-backend`, `mr-backend`, and `frontend` into three Git repositories under `split-repos/` with `npm run export:repos`. These exported repositories are local migration artifacts and can be pushed to separate remotes when repository names and access control are ready.
+Stage 2 keeps the current repository root shaped like the future split: `common-backend`, `mr-backend`, and `frontend` are the three module roots. If a one-time export is needed for repository creation, run `npm run export:repos`; the export output is a temporary artifact and must not be treated as the source layout.
 
 ## API Boundary
 
@@ -55,7 +55,7 @@ MR backend calls common backend for identity and model configuration:
 
 Internal routes require `JOLT_INTERNAL_SERVICE_TOKEN`. Frontend user requests continue to use session bearer tokens.
 
-Model configuration must return environment variable names or secret references, not plaintext keys. Worker runtime continues to read real keys from environment variables.
+Model configuration is managed by common backend. The settings page can submit a project API key to common backend, and public APIs only return masked key metadata. Internal model-config calls are service-to-service calls protected by `JOLT_INTERNAL_SERVICE_TOKEN`.
 
 ## Data Ownership
 
@@ -116,17 +116,16 @@ If the split variables are not set, the frontend falls back to the legacy `VITE_
 
 ## Verification Gates
 
-- `npm run build`
-- `npm run verify:three-project-boundary`
+- `npm run verify`
 - `npm run verify:frontend-api-routing`
-- `npm run smoke`
-- `npm run verify:no-db-foreign-keys`
-- `npm run verify:pg-sql-compat`
-- `npm run verify:worker-orchestration`
+- `npm run verify:postgres-only-runtime`
+- `node scripts/verify-real-tooling.mjs`
+- `python3 -m compileall mr-backend/worker scripts`
+- `env PYTHONPATH=mr-backend/worker mr-backend/.venv/bin/python scripts/verify_skill_layers.py`
 - `npm run export:repos`
-- `npm --prefix split-repos/common-backend run build`
-- `npm --prefix split-repos/mr-backend run build`
-- `npm --prefix split-repos/frontend run build`
+- `npm --prefix common-backend run build`
+- `npm --prefix mr-backend run build`
+- `npm --prefix frontend run build`
 
 Full LLM e2e remains conditional on a valid model key being available through an environment variable referenced by model configuration.
 

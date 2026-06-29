@@ -1,6 +1,6 @@
 # Jolt Frontend
 
-Jolt Frontend 是 React + Vite 前端，负责登录、项目空间、MR 队列、评审详情、规则/专家配置、用户权限、系统设置和全仓 review 的交互界面。它不是单后端前端：运行时会按 API 路径把请求分发到 Common Backend 或 MR Backend。
+Jolt Frontend 是前端服务，也是浏览器访问入口。默认对外端口是 `9020`，内部包含一个轻量 Frontend Gateway：浏览器只访问同源 `/api/*`，Gateway 再按路径代理到 Common Backend 或 MR Backend。开发模式下 Gateway 会同时拉起 Vite dev server，Vite 默认只监听内部端口 `9023`。
 
 ## 服务职责
 
@@ -24,9 +24,6 @@ Jolt Frontend 是 React + Vite 前端，负责登录、项目空间、MR 队列�
 
 ```bash
 npm install
-VITE_COMMON_API_BASE=http://127.0.0.1:9022 \
-VITE_MR_API_BASE=http://127.0.0.1:9021 \
-VITE_API_BASE=http://127.0.0.1:9021 \
 npm run dev:web
 ```
 
@@ -49,22 +46,25 @@ npm run dev
 `.env` 示例：
 
 ```bash
-VITE_COMMON_API_BASE=http://127.0.0.1:9022
-VITE_MR_API_BASE=http://127.0.0.1:9021
-VITE_API_BASE=http://127.0.0.1:9021
+JOLT_FRONTEND_HOST=127.0.0.1
+JOLT_FRONTEND_PORT=9020
+JOLT_VITE_PORT=9023
+COMMON_API_BASE=http://127.0.0.1:9022
+MR_API_BASE=http://127.0.0.1:9021
 ```
 
 生产构建：
 
 ```bash
 npm run build
+npm run start
 ```
 
-预览或部署 `dist/` 即可。部署到 Nginx/CDN 时，需要让前端构建时使用线上 API base。
+生产模式下 `npm run start` 会启动同一个 Frontend Gateway，从 `dist/` 提供静态资源，并继续把 `/api/*`、`/internal/*` 代理到 Common/MR。部署时浏览器入口仍然只需要暴露 Frontend Gateway。
 
 ## API 分流规则
 
-前端统一使用 `api(path, init)` 调用后端，底层由 `resolveApiBase()` 按路径分流。
+前端统一使用 `api(path, init)` 调用同源 API。默认 `resolveApiBase()` 返回空字符串，即走 Frontend Gateway；Gateway 的路由规则和前端路由规则保持一致。
 
 Common Backend 路径：
 
@@ -94,9 +94,12 @@ Common Backend 路径：
 
 | 环境变量 | 说明 |
 | --- | --- |
-| `VITE_COMMON_API_BASE` | Common Backend 地址。新部署必须配置 |
-| `VITE_MR_API_BASE` | MR Backend 地址。新部署必须配置 |
-| `VITE_API_BASE` | 旧单后端兼容地址；当上面两个变量缺失时作为 fallback |
+| `COMMON_API_BASE` | Frontend Gateway 代理到 Common Backend 的地址，默认 `http://127.0.0.1:9022` |
+| `MR_API_BASE` | Frontend Gateway 代理到 MR Backend 的地址，默认 `http://127.0.0.1:9021` |
+| `JOLT_FRONTEND_HOST` | Frontend Gateway 监听地址，默认 `127.0.0.1` |
+| `JOLT_FRONTEND_PORT` | Frontend Gateway 监听端口，默认 `9020` |
+| `JOLT_VITE_PORT` | 开发模式内部 Vite 端口，默认 `9023` |
+| `VITE_COMMON_API_BASE` / `VITE_MR_API_BASE` / `VITE_API_BASE` | 仅保留给旧的浏览器直连后端部署；默认不要设置 |
 
 ## 用户接入流程
 
@@ -158,17 +161,19 @@ Common Backend 路径：
 
 如果把 Frontend 部署在独立域名下：
 
-1. 构建时设置 `VITE_COMMON_API_BASE` 和 `VITE_MR_API_BASE` 为可访问的 HTTPS 地址。
-2. 两个后端需要允许前端域名的 CORS。
-3. 登录 token 存储在浏览器 `localStorage` 的 `jolt_auth_token`。
-4. 前端请求会自动添加 `Authorization: Bearer <token>`。
+1. 对外只暴露 Frontend Gateway 域名。
+2. 在 Frontend Gateway 所在机器配置 `COMMON_API_BASE` 和 `MR_API_BASE`。
+3. Common/MR 后端只需要允许 Frontend Gateway 访问；浏览器不再直接访问两个后端。
+4. 登录 token 存储在浏览器 `localStorage` 的 `jolt_auth_token`。
+5. 前端请求会自动添加 `Authorization: Bearer <token>`。
 
 示例：
 
 ```bash
-VITE_COMMON_API_BASE=https://jolt-common.example.com \
-VITE_MR_API_BASE=https://jolt-mr.example.com \
 npm run build
+COMMON_API_BASE=http://jolt-common.internal:9022 \
+MR_API_BASE=http://jolt-mr.internal:9021 \
+npm run start
 ```
 
 ## 验证

@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 9020",
+    "dev": "node src/gateway/server.mjs --dev",
+    "vite:dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "start": "vite --host 127.0.0.1 --port 9020",
+    "start": "node src/gateway/server.mjs",
     "verify": "npm run build"
   },
   "dependencies": {

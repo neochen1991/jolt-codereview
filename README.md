@@ -4,7 +4,7 @@ Jolt CodeReview 已拆分为当前仓库根目录下的三个模块：
 
 - `common-backend`: 公共平台后端，负责登录、用户、权限、系统设置和模型配置。
 - `mr-backend`: MR 检视后端，负责项目、仓库、MR 队列、评审任务、规则、专家 Agent、质量观测、Webhook、VCS 代理和 Python Worker。
-- `frontend`: React/Vite 前端，通过路径规则同时接入 `common-backend` 和 `mr-backend`。
+- `frontend`: 前端服务和 Frontend Gateway，对外提供浏览器入口，并按路径代理到 `common-backend` 和 `mr-backend`。
 
 运行时只支持 PostgreSQL。SQLite 已不再作为运行库使用。
 
@@ -13,7 +13,11 @@ Jolt CodeReview 已拆分为当前仓库根目录下的三个模块：
 ```text
 Browser
   |
-  | VITE_COMMON_API_BASE: /api/auth /api/me /api/permissions /api/models /api/system
+  | http://127.0.0.1:9020
+  v
+Frontend Gateway + React/Vite (default 127.0.0.1:9020)
+  |
+  | /api/auth /api/me /api/permissions /api/models /api/system
   v
 Common Backend (default 127.0.0.1:9022)
   |
@@ -26,12 +30,12 @@ PostgreSQL
 MR Backend (default 127.0.0.1:9021) <---- Python Review Worker
   ^
   |
-  | VITE_MR_API_BASE: /api/projects /api/mr-review /api/full-review /api/vcs /api/webhooks ...
+  | /api/mr-review /api/full-review /api/vcs /api/webhooks ...
   |
-Browser
+Frontend Gateway
 ```
 
-前端不会把所有请求都打到同一个后端。路由规则在 [frontend/src/frontend/apiRouting.ts](frontend/src/frontend/apiRouting.ts)：
+浏览器默认只访问 Frontend Gateway，不再直连 Common/MR。Gateway 和前端 API helper 使用同一套路由规则，规则在 [frontend/src/frontend/apiRouting.ts](frontend/src/frontend/apiRouting.ts) 和 [frontend/src/gateway/server.mjs](frontend/src/gateway/server.mjs)：
 
 - Common API: `/api/auth/*`、`/api/me/*`、`/api/users/*`、`/api/permissions/*`、`/api/models/*`、`/api/system/*`、`/internal/auth/*`、`/internal/models/*`
 - MR API: 其它业务 API，主要是 `/api/projects/*`、`/api/mr-review/*`、`/api/full-review/*`、`/api/vcs/*`、`/api/webhooks/*`
@@ -121,17 +125,23 @@ MR Backend 会按活跃项目的 `queue_policy.max_concurrency` 自动补足 wor
 启动 Frontend：
 
 ```bash
-VITE_COMMON_API_BASE=http://127.0.0.1:9022 \
-VITE_MR_API_BASE=http://127.0.0.1:9021 \
-VITE_API_BASE=http://127.0.0.1:9021 \
+COMMON_API_BASE=http://127.0.0.1:9022 \
+MR_API_BASE=http://127.0.0.1:9021 \
 npm --prefix frontend run dev
 ```
 
 访问：
 
 - Frontend: `http://127.0.0.1:9020`
+- Frontend internal Vite dev server: `http://127.0.0.1:9023`
 - Common health: `http://127.0.0.1:9022/api/health`
 - MR health: `http://127.0.0.1:9021/api/health`
+
+三个服务可以独立重启：
+
+- 只改公共平台能力时，重启 `common-backend`。
+- 只改 MR 检视、Worker、仓库同步时，重启 `mr-backend`。
+- 只改页面、静态资源或 API 网关路由时，重启 `frontend`。
 
 默认本机 root 账号：
 
@@ -254,14 +264,13 @@ MR Backend 默认端口 `9021`，承载项目和检视业务能力。
 
 ## Frontend 接入方式
 
-Frontend 默认端口 `9020`。需要配置两个 API base：
+Frontend 默认端口 `9020`。浏览器只访问 Frontend Gateway；Gateway 需要知道两个后端地址：
 
 ```bash
-VITE_COMMON_API_BASE=http://127.0.0.1:9022
-VITE_MR_API_BASE=http://127.0.0.1:9021
-VITE_API_BASE=http://127.0.0.1:9021
+COMMON_API_BASE=http://127.0.0.1:9022
+MR_API_BASE=http://127.0.0.1:9021
 ```
 
-`VITE_API_BASE` 是旧单后端兼容项。新部署应显式配置 `VITE_COMMON_API_BASE` 和 `VITE_MR_API_BASE`。
+旧的 `VITE_COMMON_API_BASE`、`VITE_MR_API_BASE`、`VITE_API_BASE` 只保留给浏览器直连后端的历史部署，默认不要设置。
 
 详细说明见 [frontend/README.md](frontend/README.md)。

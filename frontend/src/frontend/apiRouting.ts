@@ -33,7 +33,7 @@ function cleanBase(value?: string) {
 }
 
 export function resolveApiBase(path: string, bases: ApiBaseConfig) {
-  const legacyBase = cleanBase(bases.legacyBase) || "http://127.0.0.1:9021";
+  const legacyBase = cleanBase(bases.legacyBase);
   const commonBase = cleanBase(bases.commonBase);
   const mrBase = cleanBase(bases.mrBase);
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;

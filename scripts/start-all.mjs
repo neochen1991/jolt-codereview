@@ -27,6 +27,7 @@ const commonPort = Number(commonConfig.server?.common_port || commonConfig.serve
 const mrPort = Number(mrConfig.server?.mr_port || mrConfig.server?.port || 9021);
 const frontendHost = process.env.JOLT_FRONTEND_HOST || "127.0.0.1";
 const frontendPort = Number(process.env.JOLT_FRONTEND_PORT || 9020);
+const frontendVitePort = Number(process.env.JOLT_VITE_PORT || 9023);
 
 if (!existsSync(path.join(root, "node_modules"))) {
   console.error("node_modules not found. Run npm install first.");
@@ -54,10 +55,7 @@ const baseEnv = {
   ...process.env,
   JOLT_INTERNAL_SERVICE_TOKEN: process.env.JOLT_INTERNAL_SERVICE_TOKEN || "jolt-local-internal-service-token",
   COMMON_API_BASE: process.env.COMMON_API_BASE || `http://${apiHost}:${commonPort}`,
-  MR_API_BASE: process.env.MR_API_BASE || `http://${apiHost}:${mrPort}`,
-  VITE_COMMON_API_BASE: process.env.VITE_COMMON_API_BASE || `http://${apiHost}:${commonPort}`,
-  VITE_MR_API_BASE: process.env.VITE_MR_API_BASE || `http://${apiHost}:${mrPort}`,
-  VITE_API_BASE: process.env.VITE_API_BASE || `http://${apiHost}:${mrPort}`
+  MR_API_BASE: process.env.MR_API_BASE || `http://${apiHost}:${mrPort}`
 };
 const commonEnv = { ...baseEnv, CONFIG_PATH: commonConfigPath };
 const mrEnv = { ...baseEnv, CONFIG_PATH: mrConfigPath };
@@ -184,13 +182,15 @@ process.on("SIGTERM", () => shutdown(0));
 console.log("Jolt CodeReview local dev");
 console.log(`Common:  http://${apiHost}:${commonPort}`);
 console.log(`MR Backend: http://${apiHost}:${mrPort}`);
-console.log(`Frontend: http://${frontendHost}:${frontendPort}`);
+console.log(`Frontend Gateway: http://${frontendHost}:${frontendPort}`);
+console.log(`Frontend Vite dev server: http://${frontendHost}:${frontendVitePort}`);
 console.log("MR worker: managed by MR Backend");
 console.log("MR poller: built into API auto-sync scheduler");
 
 await releasePort("Common API", commonPort);
 await releasePort("MR Backend", mrPort);
 await releasePort("Frontend", frontendPort);
+await releasePort("Frontend Vite", frontendVitePort);
 
 start("Common API", ["run", "dev:common"], commonEnv);
 start("MR Backend", ["run", "dev:mr"], mrEnv);
@@ -200,5 +200,6 @@ if (process.env.JOLT_START_EXTERNAL_POLLER === "1") {
 start("Frontend", ["run", "dev:web"], {
   ...frontendEnv,
   JOLT_FRONTEND_HOST: frontendHost,
-  JOLT_FRONTEND_PORT: String(frontendPort)
+  JOLT_FRONTEND_PORT: String(frontendPort),
+  JOLT_VITE_PORT: String(frontendVitePort)
 });

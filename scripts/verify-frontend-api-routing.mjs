@@ -4,6 +4,14 @@ import { pathToFileURL } from "node:url";
 
 const root = path.resolve(import.meta.dirname, "..");
 const sourcePath = path.join(root, "frontend", "src", "frontend", "apiRouting.ts");
+const gatewaySourcePath = path.join(root, "frontend", "src", "gateway", "server.mjs");
+
+delete process.env.COMMON_API_BASE;
+delete process.env.VITE_COMMON_API_BASE;
+delete process.env.MR_API_BASE;
+delete process.env.VITE_MR_API_BASE;
+delete process.env.VITE_API_BASE;
+
 const source = readFileSync(sourcePath, "utf8");
 const compiled = source
   .replace(/\bexport\s+type\s+[A-Za-z0-9_]+\s*=\s*\{[\s\S]*?\};/g, "")
@@ -14,6 +22,7 @@ const compiled = source
   .concat("\nexport { resolveApiBase, COMMON_API_PATH_PATTERNS };\n");
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
 const { resolveApiBase, COMMON_API_PATH_PATTERNS } = await import(moduleUrl);
+const { resolveGatewayTarget } = await import(pathToFileURL(gatewaySourcePath).href);
 
 const bases = {
   legacyBase: "http://legacy.example",
@@ -55,6 +64,21 @@ for (const [apiPath, expected] of cases) {
 const legacyFallback = resolveApiBase("/api/auth/login", { legacyBase: bases.legacyBase });
 if (legacyFallback !== bases.legacyBase) {
   failures.push({ apiPath: "legacy fallback", expected: bases.legacyBase, actual: legacyFallback });
+}
+
+const sameOriginFallback = resolveApiBase("/api/auth/login", {});
+if (sameOriginFallback !== "") {
+  failures.push({ apiPath: "same-origin fallback", expected: "", actual: sameOriginFallback });
+}
+
+const gatewayBases = {
+  common: "http://127.0.0.1:9022",
+  mr: "http://127.0.0.1:9021"
+};
+for (const [apiPath, expected] of cases) {
+  const expectedGateway = expected === bases.commonBase ? gatewayBases.common : gatewayBases.mr;
+  const actual = resolveGatewayTarget(apiPath);
+  if (actual !== expectedGateway) failures.push({ apiPath: `gateway ${apiPath}`, expected: expectedGateway, actual });
 }
 
 if (!Array.isArray(COMMON_API_PATH_PATTERNS) || COMMON_API_PATH_PATTERNS.length === 0) {

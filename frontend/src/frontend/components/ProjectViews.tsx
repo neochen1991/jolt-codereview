@@ -14,12 +14,29 @@ import {
   User,
   Project,
   Repo,
+  LlmSettingsForm,
+  LlmTestState,
   api,
   repoNameFromGitUrl,
   providerLabel,
   isRootUser,
-  isProjectAdminRole
+  isProjectAdminRole,
+  recordValue,
+  clampLlmTimeout,
+  clampLlmOutputTokens
 } from "../shared";
+
+const DEFAULT_LLM_FORM: LlmSettingsForm = {
+  default_provider: "dashscope-openai-compatible",
+  default_base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
+  default_model: "MiniMax-M2.7",
+  default_api_key: "",
+  default_api_key_has_value: false,
+  default_api_key_masked: "",
+  request_timeout_seconds: "120",
+  max_output_tokens: "8192",
+  enable_stream: true
+};
 
 export function ProjectSelectionPage({
   user,
@@ -333,14 +350,51 @@ export function ProjectCard({
   const [repoName, setRepoName] = useState("");
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [llmForm, setLlmForm] = useState<LlmSettingsForm>(DEFAULT_LLM_FORM);
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmSaving, setLlmSaving] = useState(false);
+  const [llmTest, setLlmTest] = useState<LlmTestState>({ status: "idle", message: "" });
 
   async function loadRepos() {
     setRepos(await api<Repo[]>(`/api/projects/${project.id}/repositories`));
   }
 
+  async function loadProjectLlmSettings() {
+    setLlmLoading(true);
+    try {
+      const [settings, effective] = await Promise.all([
+        api<Record<string, unknown>>(`/api/projects/${project.id}/settings`),
+        api<Record<string, unknown>>(`/api/projects/${project.id}/effective-config`)
+      ]);
+      const settingsMap = recordValue((settings as Record<string, unknown>).settings);
+      const effectiveRoot = recordValue((effective as Record<string, unknown>).effective_config);
+      const llm = { ...recordValue(effectiveRoot.llm), ...recordValue(settingsMap.llm_policy) };
+      setLlmForm({
+        default_provider: String(llm.default_provider ?? DEFAULT_LLM_FORM.default_provider),
+        default_base_url: String(llm.default_base_url ?? DEFAULT_LLM_FORM.default_base_url),
+        default_model: String(llm.default_model ?? DEFAULT_LLM_FORM.default_model),
+        default_api_key: "",
+        default_api_key_has_value: Boolean(llm.default_api_key_has_value),
+        default_api_key_masked: String(llm.default_api_key_masked ?? ""),
+        request_timeout_seconds: String(llm.request_timeout_seconds ?? DEFAULT_LLM_FORM.request_timeout_seconds),
+        max_output_tokens: String(llm.max_output_tokens ?? DEFAULT_LLM_FORM.max_output_tokens),
+        enable_stream: llm.enable_stream !== false
+      });
+      setLlmTest({ status: "idle", message: "" });
+    } catch (error) {
+      setLlmTest({ status: "failed", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setLlmLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadRepos().catch(() => undefined);
   }, [project.id]);
+
+  useEffect(() => {
+    if (maintenanceOpen) loadProjectLlmSettings().catch(() => undefined);
+  }, [maintenanceOpen, project.id]);
 
   useEffect(() => {
     setName(project.name);
@@ -379,6 +433,61 @@ export function ProjectCard({
       await loadRepos();
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function saveProjectLlmSettings() {
+    setLlmSaving(true);
+    try {
+      const value: Record<string, unknown> = {
+        default_provider: llmForm.default_provider.trim(),
+        default_base_url: llmForm.default_base_url.trim(),
+        default_model: llmForm.default_model.trim(),
+        request_timeout_seconds: clampLlmTimeout(llmForm.request_timeout_seconds),
+        max_output_tokens: clampLlmOutputTokens(llmForm.max_output_tokens),
+        enable_stream: llmForm.enable_stream
+      };
+      if (llmForm.default_api_key.trim()) value.default_api_key = llmForm.default_api_key.trim();
+      await api(`/api/projects/${project.id}/settings/llm_policy`, {
+        method: "PATCH",
+        body: JSON.stringify({ value })
+      });
+      await loadProjectLlmSettings();
+      setLlmTest({ status: "ok", message: "模型配置已保存，后续该项目下的 MR 检视会使用最新配置。" });
+    } catch (error) {
+      setLlmTest({ status: "failed", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setLlmSaving(false);
+    }
+  }
+
+  async function testProjectLlmSettings() {
+    setLlmTest({ status: "testing", message: "正在测试模型服务连通性..." });
+    try {
+      const result = await api<Record<string, unknown>>(`/api/projects/${project.id}/settings/llm/test`, {
+        method: "POST",
+        body: JSON.stringify({
+          default_provider: llmForm.default_provider.trim(),
+          default_base_url: llmForm.default_base_url.trim(),
+          default_model: llmForm.default_model.trim(),
+          default_api_key: llmForm.default_api_key.trim(),
+          request_timeout_seconds: clampLlmTimeout(llmForm.request_timeout_seconds),
+          max_output_tokens: clampLlmOutputTokens(llmForm.max_output_tokens),
+          enable_stream: llmForm.enable_stream
+        })
+      });
+      const ok = Boolean(result.ok);
+      const statusText = result.status ? `HTTP ${String(result.status)}` : "无 HTTP 状态";
+      const sampleText = String(result.sample ?? "").trim();
+      const streamText = result.stream === false ? "非流式" : "流式";
+      setLlmTest({
+        status: ok ? "ok" : "failed",
+        message: ok
+          ? `连接成功，${statusText}，${streamText}，耗时 ${String(result.latency_ms ?? "--")}ms，模型 ${String(result.model ?? llmForm.default_model)}${sampleText ? `，返回：${sampleText}` : ""}`
+          : `连接失败，${statusText}：${String(result.error_preview ?? "未知错误")}`
+      });
+    } catch (error) {
+      setLlmTest({ status: "failed", message: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -456,7 +565,7 @@ export function ProjectCard({
                 <div className="project-section-title">
                   <span><Database size={16} /></span>
                   <div>
-                    <h3>项目档案</h3>
+                    <h3>项目信息</h3>
                     <p>这些信息用于团队识别项目边界。</p>
                   </div>
                 </div>
@@ -476,7 +585,7 @@ export function ProjectCard({
                 <div className="project-section-title">
                   <span><GitBranch size={16} /></span>
                   <div>
-                    <h3>代码仓接入</h3>
+                    <h3>代码仓维护</h3>
                     <p>以 Git 链接为准拉取 MR 和提交检视意见。</p>
                   </div>
                 </div>
@@ -528,6 +637,60 @@ export function ProjectCard({
                   {!repos.length && <div className="config-table-empty">暂无绑定仓库</div>}
                 </div>
               </section>
+              <section className="project-maintenance-section project-llm-panel">
+                <div className="project-section-title">
+                  <span><Zap size={16} /></span>
+                  <div>
+                    <h3>大模型维护</h3>
+                    <p>维护当前项目 AI 检视使用的模型网关、模型名和 API Key。</p>
+                  </div>
+                </div>
+                <div className="project-llm-grid">
+                  <label>
+                    <span>Provider</span>
+                    <input value={llmForm.default_provider} onChange={(event) => setLlmForm({ ...llmForm, default_provider: event.target.value })} disabled={!canEdit || llmLoading} />
+                  </label>
+                  <label>
+                    <span>Base URL</span>
+                    <input value={llmForm.default_base_url} onChange={(event) => setLlmForm({ ...llmForm, default_base_url: event.target.value })} disabled={!canEdit || llmLoading} />
+                  </label>
+                  <label>
+                    <span>Model</span>
+                    <input value={llmForm.default_model} onChange={(event) => setLlmForm({ ...llmForm, default_model: event.target.value })} disabled={!canEdit || llmLoading} />
+                  </label>
+                  <label>
+                    <span>API Key</span>
+                    <input type="password" value={llmForm.default_api_key} onChange={(event) => setLlmForm({ ...llmForm, default_api_key: event.target.value })} placeholder={llmForm.default_api_key_has_value ? "留空则保留已保存的 API Key" : "输入模型 API Key"} disabled={!canEdit || llmLoading} autoComplete="off" />
+                  </label>
+                  <label>
+                    <span>调用超时（秒）</span>
+                    <input type="number" min="1" max="600" value={llmForm.request_timeout_seconds} onChange={(event) => setLlmForm({ ...llmForm, request_timeout_seconds: event.target.value })} disabled={!canEdit || llmLoading} />
+                  </label>
+                  <label>
+                    <span>输出上限 Tokens</span>
+                    <input type="number" min="1024" max="12000" value={llmForm.max_output_tokens} onChange={(event) => setLlmForm({ ...llmForm, max_output_tokens: event.target.value })} disabled={!canEdit || llmLoading} />
+                  </label>
+                  <label className="project-llm-stream">
+                    <span>流式调用</span>
+                    <em>
+                      <input type="checkbox" checked={llmForm.enable_stream} onChange={(event) => setLlmForm({ ...llmForm, enable_stream: event.target.checked })} disabled={!canEdit || llmLoading} />
+                      启用 SSE 流式响应
+                    </em>
+                  </label>
+                  <div className="project-llm-key-status">
+                    {llmForm.default_api_key_has_value ? `已保存 ${llmForm.default_api_key_masked || "API Key"}；重新输入后会覆盖。` : "API Key 会保存到 Common 服务的项目配置中，接口不会回显明文。"}
+                  </div>
+                </div>
+                <div className="project-maintenance-actions project-llm-actions">
+                  <button type="button" onClick={testProjectLlmSettings} disabled={!canEdit || llmLoading || llmTest.status === "testing"}>
+                    {llmTest.status === "testing" ? "测试中..." : "测试连接"}
+                  </button>
+                  <button type="button" onClick={saveProjectLlmSettings} disabled={!canEdit || llmLoading || llmSaving}>
+                    {llmSaving ? "保存中..." : "保存模型配置"}
+                  </button>
+                </div>
+                {llmTest.message && <p className={`llm-test-result ${llmTest.status}`}>{llmTest.message}</p>}
+              </section>
             </div>
           </section>
         </div>
@@ -535,4 +698,3 @@ export function ProjectCard({
     </article>
   );
 }
-

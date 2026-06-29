@@ -618,7 +618,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .project-maintenance {
   display: grid;
-  grid-template-columns: minmax(330px, 0.74fr) minmax(0, 1.26fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   padding: 20px 24px 24px;
 }
@@ -733,6 +733,49 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .project-maintenance-actions button {
   min-width: 132px;
+}
+
+.project-llm-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.project-llm-grid label:nth-child(2),
+.project-llm-grid label:nth-child(4),
+.project-llm-key-status {
+  grid-column: 1 / -1;
+}
+
+.project-llm-stream em,
+.project-llm-key-status {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: #41536c;
+  font-size: 13px;
+  font-style: normal;
+  line-height: 1.45;
+  padding: 9px 12px;
+}
+
+.project-llm-stream input {
+  width: 16px;
+  min-height: auto;
+  padding: 0;
+}
+
+.project-llm-key-status {
+  overflow-wrap: anywhere;
+}
+
+.project-llm-actions {
+  gap: 10px;
 }
 
 .project-repo-editor {
@@ -5970,6 +6013,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .top-actions { grid-column: 1 / -1; justify-content: flex-end; padding-bottom: 10px; }
   .workspace { grid-template-rows: auto minmax(0, 1fr); }
   .workspace-scroll { max-width: 100%; }
+  .project-llm-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .content-grid {
     grid-template-columns: 1fr;
     height: 100%;
@@ -6168,7 +6212,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   }
 
   .agent-binding-upload-grid,
-  .agent-binding-editor-columns {
+  .agent-binding-editor-columns,
+  .project-maintenance,
+  .project-llm-grid {
     grid-template-columns: 1fr;
   }
 

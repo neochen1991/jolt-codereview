@@ -253,8 +253,6 @@ export function MrQueue({
             const queueBlocked = !action && mr.queue_blocked_by_project && mr.review_status === "queued";
             const displayStatus = queueBlocked ? "project_queued" : workflowStatus;
             const queueBlockedReason = mr.queue_blocked_reason || "项目内已有 MR 正在检视，当前 MR 将排队等待";
-            const sizePolicyWarning = mr.size_policy_state === "over_limit";
-            const sizePolicyMessage = mr.size_policy_message || "";
             const terminal = isTerminalMrStatus(workflowStatus);
             const terminalReason = workflowStatus === "merged" ? "该 MR 已合入，不能再检视或提交意见" : workflowStatus === "closed" ? "该 MR 已关闭，不能再检视或提交意见" : "";
             const rowBusy = Boolean(action);
@@ -294,13 +292,6 @@ export function MrQueue({
                       </>
                     )}
                   </span>
-                  {queueBlocked && <small>{queueBlockedReason}</small>}
-                  {terminalReason && <small className="mr-terminal-hint">{terminalReason}</small>}
-                  {sizePolicyMessage && (
-                    <small className={sizePolicyWarning ? "mr-size-hint warning" : "mr-size-hint"}>
-                      {sizePolicyMessage}
-                    </small>
-                  )}
                 </span>
                 <span>{mr.repository_name}</span>
                 <span>{mr.author}</span>

@@ -64,6 +64,18 @@ import {
   readPathMap
 } from "../shared";
 
+function llmCallSucceeded(row: Record<string, unknown>) {
+  const status = String(row.status || "").toLowerCase();
+  return ["completed", "success", "ok"].includes(status);
+}
+
+function llmCallStats(rows: Array<Record<string, unknown>> | undefined) {
+  const total = rows?.length || 0;
+  const succeeded = (rows || []).filter(llmCallSucceeded).length;
+  const successRate = total ? Math.round((succeeded / total) * 100) : null;
+  return { total, succeeded, successRate };
+}
+
 export function MrQueue({
   items,
   activeMrId,
@@ -588,7 +600,7 @@ export function ReviewProgressPanel({ detail, status }: { detail: Detail; status
   const latestRun = detail.runs?.[0] || {};
   const sessionLogs = detail.session_logs;
   const toolCount = sessionLogs?.tool_calls?.length || detail.tool_observations?.length || 0;
-  const llmCount = sessionLogs?.llm_calls?.length || 0;
+  const llmStats = llmCallStats(sessionLogs?.llm_calls);
   const agentMessages = sessionLogs?.messages?.length || 0;
   const percent = Math.round((index / (REVIEW_STEPS.length - 1)) * 100);
   return (
@@ -616,7 +628,8 @@ export function ReviewProgressPanel({ detail, status }: { detail: Detail; status
         <p><strong>Job</strong><span>{String(latestJob.id || "--")}</span></p>
         <p><strong>Run</strong><span>{String(latestRun.id || "--")}</span></p>
         <p><strong>工具调用</strong><span>{toolCount}</span></p>
-        <p><strong>LLM 调用</strong><span>{llmCount}</span></p>
+        <p><strong>LLM 调用</strong><span>{llmStats.total}</span></p>
+        <p><strong>LLM 成功率</strong><span>{llmStats.successRate === null ? "--" : `${llmStats.succeeded}/${llmStats.total} · ${llmStats.successRate}%`}</span></p>
         <p><strong>Agent 消息</strong><span>{agentMessages}</span></p>
       </div>
     </section>
@@ -692,13 +705,15 @@ export function ProcessTimeline({ detail }: { detail: Detail }) {
   const sessionLogs = detail.session_logs;
   const toolCalls = (sessionLogs?.tool_calls || []).filter((row) => !isSummaryNoise(row));
   const staticToolCalls = toolCalls.filter((row) => String(row.tool_name || "").startsWith("static."));
+  const llmCalls = (sessionLogs?.llm_calls || []).filter((row) => !isSummaryNoise(row));
+  const llmStats = llmCallStats(llmCalls);
   const latestJob = detail.jobs?.[0] || {};
   const latestRun = detail.runs?.[0] || {};
   const status = effectiveReviewStatus(detail);
   const groups = [
     ["Agent 对话", (sessionLogs?.messages || []).filter((row) => !isSummaryNoise(row)), "content_summary"],
     ["工具调用", toolCalls, "output_summary"],
-    ["LLM 调用", (sessionLogs?.llm_calls || []).filter((row) => !isSummaryNoise(row)), "status"],
+    ["LLM 调用", llmCalls, "status"],
     ["MCP 调用", (sessionLogs?.mcp_calls || []).filter((row) => !isSummaryNoise(row)), "status"],
     ["Artifacts", sessionLogs?.artifacts || [], "name"]
   ] as const;
@@ -714,7 +729,7 @@ export function ProcessTimeline({ detail }: { detail: Detail }) {
         <p><strong>Run 状态</strong><span>{String(latestRun.status || "--")}</span></p>
         <p><strong>Trace</strong><span>{trace.length} 条</span></p>
         <p><strong>Tool</strong><span>{sessionLogs?.tool_calls?.length || detail.tool_observations?.length || 0} 次</span></p>
-        <p><strong>LLM</strong><span>{sessionLogs?.llm_calls?.length || 0} 次</span></p>
+        <p><strong>LLM</strong><span>{llmStats.total} 次 · 成功率 {llmStats.successRate === null ? "--" : `${llmStats.successRate}%`}</span></p>
       </section>
       <div className="process-list">
         {trace.slice(0, 80).map((item, index) => (

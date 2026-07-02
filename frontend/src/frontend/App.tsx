@@ -53,7 +53,7 @@ import {
 const MR_LIST_POLL_MS = 15000;
 const MR_DETAIL_POLL_MS = 30000;
 const REMOTE_STATUS_POLL_MS = 300000;
-const MR_DETAIL_QUERY = "log_limit=160&observation_limit=300&artifact_limit=50";
+const MR_DETAIL_QUERY = "log_limit=160&observation_limit=300&artifact_limit=50&finding_limit=200&compare_limit=200&run_limit=20&job_limit=20";
 
 type MrListResponse = {
   items: MergeRequest[];
@@ -90,6 +90,10 @@ export function App() {
   const [activeProjectId, setActiveProjectId] = useState(initialRoute.projectId || DEFAULT_PROJECT_ID);
   const [projectChosen, setProjectChosen] = useState(Boolean(authToken && initialRoute.screen === "workspace"));
   const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
+  const loadAllInFlightRef = useRef(false);
+  const detailInFlightRef = useRef(false);
+  const statusRefreshInFlightRef = useRef(false);
+  const detailAbortRef = useRef<AbortController | null>(null);
 
   async function loadCurrentUser() {
     const me = await api<{ user: User | null; projects: Project[] }>("/api/me");
@@ -106,8 +110,8 @@ export function App() {
     }
   }
 
-  async function loadMrDetail(id: string) {
-    return api<Detail>(`/api/mr-review/merge-requests/${id}?${MR_DETAIL_QUERY}`);
+  async function loadMrDetail(id: string, signal?: AbortSignal) {
+    return api<Detail>(`/api/mr-review/merge-requests/${id}?${MR_DETAIL_QUERY}`, signal ? { signal } : undefined);
   }
 
   function mergeRequestListPath() {
@@ -119,43 +123,55 @@ export function App() {
 
   async function loadAll(
     nextActiveId?: string | null,
-    options: { refreshRepos?: boolean; refreshDetail?: boolean } = {}
+    options: { refreshRepos?: boolean; refreshDetail?: boolean; skipIfBusy?: boolean } = {}
   ) {
+    if (options.skipIfBusy && loadAllInFlightRef.current) return;
+    loadAllInFlightRef.current = true;
     const refreshRepos = options.refreshRepos ?? true;
     const refreshDetail = options.refreshDetail ?? true;
-    const [repoData, mrData] = await Promise.all([
-      refreshRepos ? api<Repo[]>(`/api/projects/${activeProjectId}/repositories`) : Promise.resolve(null),
-      api<MrListResponse>(mergeRequestListPath())
-    ]);
-    if (repoData) setRepos(repoData);
-    setMrs(mrData.items);
-    setSelectedMrIds((previous) => previous.filter((id) => mrData.items.some((mr) => mr.id === id)));
-    const requestedId = nextActiveId ?? activeMrIdRef.current ?? activeMrId ?? null;
-    const selectedId = requestedId && mrData.items.some((mr) => mr.id === requestedId)
-      ? requestedId
-      : mrData.items[0]?.id ?? null;
-    activeMrIdRef.current = selectedId;
-    setActiveMrId(selectedId);
-    if (selectedId && refreshDetail) {
-      setDetail(await loadMrDetail(selectedId));
-    } else {
-      if (!selectedId) setDetail(null);
+    try {
+      const [repoData, mrData] = await Promise.all([
+        refreshRepos ? api<Repo[]>(`/api/projects/${activeProjectId}/repositories`) : Promise.resolve(null),
+        api<MrListResponse>(mergeRequestListPath())
+      ]);
+      if (repoData) setRepos(repoData);
+      setMrs(mrData.items);
+      setSelectedMrIds((previous) => previous.filter((id) => mrData.items.some((mr) => mr.id === id)));
+      const requestedId = nextActiveId ?? activeMrIdRef.current ?? activeMrId ?? null;
+      const selectedId = requestedId && mrData.items.some((mr) => mr.id === requestedId)
+        ? requestedId
+        : mrData.items[0]?.id ?? null;
+      activeMrIdRef.current = selectedId;
+      setActiveMrId(selectedId);
+      if (selectedId && refreshDetail) {
+        setDetail(await loadMrDetail(selectedId));
+      } else {
+        if (!selectedId) setDetail(null);
+      }
+    } finally {
+      loadAllInFlightRef.current = false;
     }
   }
 
   async function refreshMrRemoteStatuses(showMessage = false) {
-    const result = await api<{ checked: number; refreshed: number; merged: number; closed: number; errors: string[] }>(
-      `/api/mr-review/projects/${activeProjectId}/merge-requests/status-refresh`,
-      { method: "POST", body: "{}" }
-    );
-    if (result.merged || result.closed) {
-      await loadAll(activeMrIdRef.current);
+    if (!showMessage && statusRefreshInFlightRef.current) return null;
+    statusRefreshInFlightRef.current = true;
+    try {
+      const result = await api<{ checked: number; refreshed: number; merged: number; closed: number; errors: string[] }>(
+        `/api/mr-review/projects/${activeProjectId}/merge-requests/status-refresh`,
+        { method: "POST", body: "{}" }
+      );
+      if (result.merged || result.closed) {
+        await loadAll(activeMrIdRef.current);
+      }
+      if (showMessage) {
+        const terminalText = result.merged || result.closed ? `，发现已合入 ${result.merged} 个、已关闭 ${result.closed} 个` : "";
+        setMessage(`已刷新 ${result.refreshed}/${result.checked} 个 MR 远端状态${terminalText}${result.errors.length ? `，失败 ${result.errors.length} 个` : ""}`);
+      }
+      return result;
+    } finally {
+      statusRefreshInFlightRef.current = false;
     }
-    if (showMessage) {
-      const terminalText = result.merged || result.closed ? `，发现已合入 ${result.merged} 个、已关闭 ${result.closed} 个` : "";
-      setMessage(`已刷新 ${result.refreshed}/${result.checked} 个 MR 远端状态${terminalText}${result.errors.length ? `，失败 ${result.errors.length} 个` : ""}`);
-    }
-    return result;
   }
 
   useEffect(() => {
@@ -188,13 +204,22 @@ export function App() {
     loadAll(null).catch((error) => setMessage(error.message));
     const timer = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
-      loadAll(activeMrIdRef.current, { refreshRepos: false, refreshDetail: false }).catch(() => undefined);
+      loadAll(activeMrIdRef.current, { refreshRepos: false, refreshDetail: false, skipIfBusy: true }).catch(() => undefined);
     }, MR_LIST_POLL_MS);
     const detailTimer = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
       const selectedId = activeMrIdRef.current;
       if (!selectedId) return;
-      loadMrDetail(selectedId).then(setDetail).catch(() => undefined);
+      if (detailInFlightRef.current) return;
+      detailInFlightRef.current = true;
+      loadMrDetail(selectedId)
+        .then((nextDetail) => {
+          if (activeMrIdRef.current === selectedId) setDetail(nextDetail);
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          detailInFlightRef.current = false;
+        });
     }, MR_DETAIL_POLL_MS);
     const statusTimer = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
@@ -304,8 +329,20 @@ export function App() {
   async function openMr(id: string, showPreview = false) {
     activeMrIdRef.current = id;
     setActiveMrId(id);
-    const nextDetail = await loadMrDetail(id);
-    setDetail(nextDetail);
+    detailAbortRef.current?.abort();
+    const detailAbort = new AbortController();
+    detailAbortRef.current = detailAbort;
+    detailInFlightRef.current = true;
+    let nextDetail: Detail;
+    try {
+      nextDetail = await loadMrDetail(id, detailAbort.signal);
+      if (activeMrIdRef.current === id) setDetail(nextDetail);
+    } catch (error) {
+      if ((error as Error).name === "AbortError") return;
+      throw error;
+    } finally {
+      detailInFlightRef.current = false;
+    }
     if (showPreview) {
       setMrPreview(nextDetail);
       setMrPreviewFiles([]);

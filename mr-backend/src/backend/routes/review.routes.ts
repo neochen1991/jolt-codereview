@@ -80,7 +80,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     return ensureProjectRead(projectId, req);
   }
 
-  function compareRunsForMr(mrId: string) {
+  function compareRunsForMr(mrId: string, limit = 200) {
     const runs = all<{ id: string; review_job_id: string; started_at: string }>(`
       SELECT rr.id, rr.review_job_id, rr.started_at
       FROM review_runs rr
@@ -91,8 +91,8 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     `, [mrId]);
     if (runs.length < 2) return { base_run: runs[1] ?? null, head_run: runs[0] ?? null, added: [], resolved: [], retained: [] };
     const [headRun, baseRun] = runs;
-    const head = all<FindingRow>("SELECT * FROM review_findings WHERE review_run_id = $1", [headRun.id]);
-    const base = all<FindingRow>("SELECT * FROM review_findings WHERE review_run_id = $1", [baseRun.id]);
+    const head = all<FindingRow>("SELECT * FROM review_findings WHERE review_run_id = $1 ORDER BY severity DESC, confidence DESC LIMIT $2", [headRun.id, limit]);
+    const base = all<FindingRow>("SELECT * FROM review_findings WHERE review_run_id = $1 ORDER BY severity DESC, confidence DESC LIMIT $2", [baseRun.id, limit]);
     const headByHash = new Map(head.map((finding) => [finding.dedupe_hash, finding]));
     const baseByHash = new Map(base.map((finding) => [finding.dedupe_hash, finding]));
     return {
@@ -286,6 +286,12 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
   function boundedQueryLimit(url: URL, key: string, defaultValue: number, maxValue: number) {
     const value = Number(url.searchParams.get(key) || defaultValue);
     if (!Number.isFinite(value) || value <= 0) return defaultValue;
+    return Math.min(Math.floor(value), maxValue);
+  }
+
+  function boundedQueryOffset(url: URL, key = "offset", maxValue = 100000) {
+    const value = Number(url.searchParams.get(key) || 0);
+    if (!Number.isFinite(value) || value <= 0) return 0;
     return Math.min(Math.floor(value), maxValue);
   }
 
@@ -621,18 +627,29 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const logLimit = boundedQueryLimit(url, "log_limit", 240, 1000);
       const observationLimit = boundedQueryLimit(url, "observation_limit", 500, 2000);
       const artifactLimit = boundedQueryLimit(url, "artifact_limit", 80, 500);
+      const findingLimit = boundedQueryLimit(url, "finding_limit", 200, 1000);
+      const compareLimit = boundedQueryLimit(url, "compare_limit", 200, 1000);
+      const runLimit = boundedQueryLimit(url, "run_limit", 20, 200);
+      const jobLimit = boundedQueryLimit(url, "job_limit", 20, 200);
       const mr = mergeRequestRepository.findDetailById(params.mrId);
       if (!mr) return notFound();
-      const jobs = reviewJobRepository.listByMergeRequest(params.mrId);
+      const jobs = all(`
+        SELECT *
+        FROM review_jobs
+        WHERE merge_request_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2
+      `, [params.mrId, jobLimit]);
       const runs = all(`
         SELECT rr.* FROM review_runs rr
         JOIN review_jobs rj ON rj.id = rr.review_job_id
         WHERE rj.merge_request_id = $1
         ORDER BY rr.started_at DESC
-      `, [params.mrId]);
+        LIMIT $2
+      `, [params.mrId, runLimit]);
       const latestRun = runs[0] as { id: string } | undefined;
       const findings = latestRun
-        ? all("SELECT * FROM review_findings WHERE review_run_id = $1 ORDER BY severity DESC, confidence DESC", [latestRun.id])
+        ? all("SELECT * FROM review_findings WHERE review_run_id = $1 ORDER BY severity DESC, confidence DESC LIMIT $2", [latestRun.id, findingLimit])
         : [];
       const toolObservations = latestRun
         ? all(`
@@ -725,7 +742,24 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
             `, [latestRun.id, artifactLimit])
           }
         : { messages: [], tool_calls: [], llm_calls: [], mcp_calls: [], skill_calls: [], artifacts: [] };
-      return { mr, jobs, runs, findings, tool_observations: toolObservations, trace, session_logs: sessionLogs, compare: compareRunsForMr(params.mrId) };
+      return {
+        mr,
+        jobs,
+        runs,
+        findings,
+        limits: {
+          jobs: jobLimit,
+          runs: runLimit,
+          findings: findingLimit,
+          logs: logLimit,
+          observations: observationLimit,
+          artifacts: artifactLimit
+        },
+        tool_observations: toolObservations,
+        trace,
+        session_logs: sessionLogs,
+        compare: compareRunsForMr(params.mrId, compareLimit)
+      };
     }),
     route("DELETE", "/api/mr-review/merge-requests/:mrId", ({ params, req }) => {
       const actorId = currentUserId(req);
@@ -913,71 +947,133 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       return get("SELECT * FROM review_runs WHERE id = $1", [params.runId]) ?? notFound();
     }),
-    route("GET", "/api/mr-review/review-runs/:runId/trace", ({ params, req }) => {
+    route("GET", "/api/mr-review/review-runs/:runId/trace", ({ params, req, url }) => {
       const denied = ensureRunRead(params.runId, req);
       if (denied) return denied;
+      const limit = boundedQueryLimit(url, "limit", 240, 1000);
+      const offset = boundedQueryOffset(url);
       return {
         items: all(`
-        SELECT s.*, e.event_type, e.summary, e.payload_json, e.created_at AS event_created_at
-        FROM agent_trace_spans s
-        LEFT JOIN agent_trace_events e ON e.span_id = s.id
-        WHERE s.review_run_id = $1
-        ORDER BY s.started_at, e.created_at
-      `, [params.runId])
+          SELECT *
+          FROM (
+            SELECT s.*, e.event_type, e.summary, e.payload_json, e.created_at AS event_created_at
+            FROM agent_trace_spans s
+            LEFT JOIN agent_trace_events e ON e.span_id = s.id
+            WHERE s.review_run_id = $1
+            ORDER BY e.created_at DESC NULLS LAST, s.started_at DESC
+            LIMIT $2 OFFSET $3
+          ) recent_trace
+          ORDER BY event_created_at, started_at
+        `, [params.runId, limit, offset]),
+        page: { limit, offset }
       };
     }),
-    route("GET", "/api/mr-review/review-runs/:runId/session-logs", ({ params, req }) => {
+    route("GET", "/api/mr-review/review-runs/:runId/session-logs", ({ params, req, url }) => {
       const denied = ensureRunRead(params.runId, req);
       if (denied) return denied;
-      const spans = all("SELECT * FROM agent_trace_spans WHERE review_run_id = $1 ORDER BY started_at", [params.runId]);
+      const limit = boundedQueryLimit(url, "limit", 240, 1000);
+      const offset = boundedQueryOffset(url);
+      const type = String(url.searchParams.get("type") || "all");
+      const include = (name: string) => type === "all" || type === name;
+      const spans = include("spans")
+        ? all(`
+            SELECT *
+            FROM (
+              SELECT *
+              FROM agent_trace_spans
+              WHERE review_run_id = $1
+              ORDER BY started_at DESC
+              LIMIT $2 OFFSET $3
+            ) recent_spans
+            ORDER BY started_at
+          `, [params.runId, limit, offset])
+        : [];
       const events = all<Record<string, any>>(`
-        SELECT e.*, s.span_key, s.agent_id
-        FROM agent_trace_events e
-        JOIN agent_trace_spans s ON s.id = e.span_id
-        WHERE s.review_run_id = $1
-        ORDER BY e.created_at
-      `, [params.runId]);
-      const llmCalls = all(`
-        SELECT l.*, s.span_key, s.agent_id
-        FROM llm_call_records l
-        JOIN agent_trace_spans s ON s.id = l.span_id
-        WHERE s.review_run_id = $1
-        ORDER BY l.created_at
-      `, [params.runId]);
-      const toolCalls = all(`
-        SELECT t.*, s.span_key, s.agent_id
-        FROM tool_call_records t
-        JOIN agent_trace_spans s ON s.id = t.span_id
-        WHERE s.review_run_id = $1
-        ORDER BY t.created_at
-      `, [params.runId]);
-      const mcpCalls = all(`
-        SELECT m.*, s.span_key, s.agent_id
-        FROM mcp_call_records m
-        JOIN agent_trace_spans s ON s.id = m.span_id
-        WHERE s.review_run_id = $1
-        ORDER BY m.created_at
-      `, [params.runId]);
-      const messages = all(`
-        SELECT msg.*, s.span_key, s.agent_id
-        FROM agent_messages msg
-        JOIN agent_trace_spans s ON s.id = msg.span_id
-        WHERE s.review_run_id = $1
-        ORDER BY msg.created_at
-      `, [params.runId]);
-      return { spans, events, messages, llm_calls: llmCalls, tool_calls: toolCalls, mcp_calls: mcpCalls, skill_calls: normalizeSkillCalls(events) };
+        SELECT *
+        FROM (
+          SELECT e.*, s.span_key, s.agent_id
+          FROM agent_trace_events e
+          JOIN agent_trace_spans s ON s.id = e.span_id
+          WHERE s.review_run_id = $1
+          ORDER BY e.created_at DESC
+          LIMIT $2 OFFSET $3
+        ) recent_events
+        ORDER BY created_at
+      `, include("events") || include("skill_calls") ? [params.runId, limit, offset] : [params.runId, 0, 0]);
+      const llmCalls = include("llm_calls") ? all(`
+        SELECT *
+        FROM (
+          SELECT l.*, s.span_key, s.agent_id
+          FROM llm_call_records l
+          JOIN agent_trace_spans s ON s.id = l.span_id
+          WHERE s.review_run_id = $1
+          ORDER BY l.created_at DESC
+          LIMIT $2 OFFSET $3
+        ) recent_llm_calls
+        ORDER BY created_at
+      `, [params.runId, limit, offset]) : [];
+      const toolCalls = include("tool_calls") ? all(`
+        SELECT *
+        FROM (
+          SELECT t.*, s.span_key, s.agent_id
+          FROM tool_call_records t
+          JOIN agent_trace_spans s ON s.id = t.span_id
+          WHERE s.review_run_id = $1
+          ORDER BY t.created_at DESC
+          LIMIT $2 OFFSET $3
+        ) recent_tool_calls
+        ORDER BY created_at
+      `, [params.runId, limit, offset]) : [];
+      const mcpCalls = include("mcp_calls") ? all(`
+        SELECT *
+        FROM (
+          SELECT m.*, s.span_key, s.agent_id
+          FROM mcp_call_records m
+          JOIN agent_trace_spans s ON s.id = m.span_id
+          WHERE s.review_run_id = $1
+          ORDER BY m.created_at DESC
+          LIMIT $2 OFFSET $3
+        ) recent_mcp_calls
+        ORDER BY created_at
+      `, [params.runId, limit, offset]) : [];
+      const messages = include("messages") ? all(`
+        SELECT *
+        FROM (
+          SELECT msg.*, s.span_key, s.agent_id
+          FROM agent_messages msg
+          JOIN agent_trace_spans s ON s.id = msg.span_id
+          WHERE s.review_run_id = $1
+          ORDER BY msg.created_at DESC
+          LIMIT $2 OFFSET $3
+        ) recent_messages
+        ORDER BY created_at
+      `, [params.runId, limit, offset]) : [];
+      return { spans, events, messages, llm_calls: llmCalls, tool_calls: toolCalls, mcp_calls: mcpCalls, skill_calls: normalizeSkillCalls(events), page: { limit, offset, type } };
     }),
-    route("GET", "/api/mr-review/review-runs/:runId/artifacts", ({ params, req }) => {
+    route("GET", "/api/mr-review/review-runs/:runId/artifacts", ({ params, req, url }) => {
       const denied = ensureRunRead(params.runId, req);
       if (denied) return denied;
+      const limit = boundedQueryLimit(url, "limit", 100, 1000);
+      const offset = boundedQueryOffset(url);
       return {
-        items: all("SELECT * FROM review_artifacts WHERE review_run_id = $1 ORDER BY created_at", [params.runId])
+        items: all(`
+          SELECT *
+          FROM (
+            SELECT *
+            FROM review_artifacts
+            WHERE review_run_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2 OFFSET $3
+          ) recent_artifacts
+          ORDER BY created_at
+        `, [params.runId, limit, offset]),
+        page: { limit, offset }
       };
     }),
-    route("GET", "/api/mr-review/merge-requests/:mrId/review-runs/compare", ({ params, req }) => {
+    route("GET", "/api/mr-review/merge-requests/:mrId/review-runs/compare", ({ params, req, url }) => {
       const denied = ensureMrRead(params.mrId, req);
       if (denied) return denied;
-      return compareRunsForMr(params.mrId);
+      return compareRunsForMr(params.mrId, boundedQueryLimit(url, "limit", 200, 1000));
     }),
     route("POST", "/api/mr-review/merge-requests/:mrId/external-reports", ({ params, body, req }) => {
       const actorId = currentUserId(req);

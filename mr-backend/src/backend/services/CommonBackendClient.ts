@@ -57,6 +57,7 @@ function applyVcsPolicy(config: AppConfig, vcsPolicy: Record<string, unknown>) {
 export class CommonBackendClient {
   private readonly requestAuth = new WeakMap<IncomingMessage, CommonAuthSnapshot>();
   private readonly authByUserId = new Map<string, CommonAuthSnapshot>();
+  private readonly authByToken = new Map<string, { expiresAt: number; snapshot: CommonAuthSnapshot }>();
   private readonly effectiveConfigCache = new Map<string, { expiresAt: number; value: AppConfig }>();
 
   constructor(private readonly config: AppConfig) {}
@@ -86,6 +87,11 @@ export class CommonBackendClient {
       this.requestAuth.set(req, snapshot);
       return snapshot;
     }
+    const cached = this.authByToken.get(token);
+    if (cached && cached.expiresAt > Date.now()) {
+      this.requestAuth.set(req, cached.snapshot);
+      return cached.snapshot;
+    }
     const response = await fetch(`${this.commonBaseUrl()}/internal/auth/introspect`, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -100,6 +106,7 @@ export class CommonBackendClient {
     if (snapshot.active && snapshot.user?.id) {
       this.authByUserId.set(snapshot.user.id, snapshot);
     }
+    this.authByToken.set(token, { expiresAt: Date.now() + 30000, snapshot });
     return snapshot;
   }
 

@@ -185,36 +185,37 @@ export class MergeRequestRepository {
     const run = (sql: string, value: string) => {
       changes += Number(this.db.prepare(sql).run(value).changes);
     };
-    const runEach = (sql: string, values: string[]) => {
-      for (const value of values) run(sql, value);
+    const runMany = (sql: string, values: string[]) => {
+      if (!values.length) return;
+      changes += Number(this.db.prepare(sql).run(values).changes);
     };
 
     this.db.exec("BEGIN");
     try {
-      runEach("DELETE FROM vcs_publish_records WHERE finding_id = $1", findingIds);
-      runEach("DELETE FROM user_feedback WHERE finding_id = $1", findingIds);
-      runEach("DELETE FROM evaluation_gold_set WHERE finding_id = $1", findingIds);
+      runMany("DELETE FROM vcs_publish_records WHERE finding_id = ANY($1::text[])", findingIds);
+      runMany("DELETE FROM user_feedback WHERE finding_id = ANY($1::text[])", findingIds);
+      runMany("DELETE FROM evaluation_gold_set WHERE finding_id = ANY($1::text[])", findingIds);
       run("DELETE FROM mr_finding_history WHERE merge_request_id = $1", id);
-      runEach("DELETE FROM review_findings WHERE id = $1", findingIds);
+      runMany("DELETE FROM review_findings WHERE id = ANY($1::text[])", findingIds);
 
-      runEach("DELETE FROM agent_trace_events WHERE span_id = $1", spanIds);
-      runEach("DELETE FROM agent_messages WHERE span_id = $1", spanIds);
-      runEach("DELETE FROM llm_call_records WHERE span_id = $1", spanIds);
-      runEach("DELETE FROM tool_call_records WHERE span_id = $1", spanIds);
-      runEach("DELETE FROM mcp_call_records WHERE span_id = $1", spanIds);
-      runEach("DELETE FROM agent_trace_spans WHERE id = $1", spanIds);
+      runMany("DELETE FROM agent_trace_events WHERE span_id = ANY($1::text[])", spanIds);
+      runMany("DELETE FROM agent_messages WHERE span_id = ANY($1::text[])", spanIds);
+      runMany("DELETE FROM llm_call_records WHERE span_id = ANY($1::text[])", spanIds);
+      runMany("DELETE FROM tool_call_records WHERE span_id = ANY($1::text[])", spanIds);
+      runMany("DELETE FROM mcp_call_records WHERE span_id = ANY($1::text[])", spanIds);
+      runMany("DELETE FROM agent_trace_spans WHERE id = ANY($1::text[])", spanIds);
 
-      runEach("DELETE FROM tool_observations WHERE review_run_id = $1", runIds);
-      runEach("DELETE FROM review_artifacts WHERE review_run_id = $1", runIds);
-      runEach("DELETE FROM code_index_snapshots WHERE review_run_id = $1", runIds);
-      runEach("DELETE FROM candidate_findings WHERE review_run_id = $1", runIds);
-      runEach("DELETE FROM token_usage_reports WHERE review_run_id = $1", runIds);
-      runEach("DELETE FROM review_runs WHERE id = $1", runIds);
+      runMany("DELETE FROM tool_observations WHERE review_run_id = ANY($1::text[])", runIds);
+      runMany("DELETE FROM review_artifacts WHERE review_run_id = ANY($1::text[])", runIds);
+      runMany("DELETE FROM code_index_snapshots WHERE review_run_id = ANY($1::text[])", runIds);
+      runMany("DELETE FROM candidate_findings WHERE review_run_id = ANY($1::text[])", runIds);
+      runMany("DELETE FROM token_usage_reports WHERE review_run_id = ANY($1::text[])", runIds);
+      runMany("DELETE FROM review_runs WHERE id = ANY($1::text[])", runIds);
 
-      runEach("DELETE FROM review_jobs_dead_letter WHERE review_job_id = $1", jobIds);
-      runEach("DELETE FROM token_usage_reports WHERE review_job_id = $1", jobIds);
+      runMany("DELETE FROM review_jobs_dead_letter WHERE review_job_id = ANY($1::text[])", jobIds);
+      runMany("DELETE FROM token_usage_reports WHERE review_job_id = ANY($1::text[])", jobIds);
       run("DELETE FROM token_usage_reports WHERE merge_request_id = $1", id);
-      runEach("DELETE FROM review_jobs WHERE id = $1", jobIds);
+      runMany("DELETE FROM review_jobs WHERE id = ANY($1::text[])", jobIds);
       run("DELETE FROM external_review_reports WHERE merge_request_id = $1", id);
       const deletedMr = Number(this.db.prepare("DELETE FROM merge_requests WHERE id = $1").run(id).changes);
       changes += deletedMr;

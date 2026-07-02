@@ -205,6 +205,84 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     }, {});
   }
 
+  function parseRecord(value: unknown): Record<string, any> {
+    if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, any>;
+    if (typeof value !== "string" || !value.trim()) return {};
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function stringList(value: unknown): string[] {
+    return Array.isArray(value)
+      ? value.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+  }
+
+  function skillStage(eventType: string): string {
+    if (eventType === "skill_context_loaded" || eventType === "agent_profile_loaded") return "loaded";
+    if (eventType === "skill_deepagents_invoked" || eventType === "deepagents_bounded_node") return "deepagents";
+    if (eventType === "skill_llm_context_used") return "llm";
+    return "recorded";
+  }
+
+  function normalizeSkillCalls(events: Array<Record<string, any>>): Array<Record<string, any>> {
+    const skillEventTypes = new Set([
+      "agent_profile_loaded",
+      "deepagents_bounded_node",
+      "skill_context_loaded",
+      "skill_deepagents_invoked",
+      "skill_llm_context_used"
+    ]);
+    const rows: Array<Record<string, any>> = [];
+    for (const event of events) {
+      const eventType = String(event.event_type || "");
+      if (!skillEventTypes.has(eventType)) continue;
+      const payload = parseRecord(event.payload_json);
+      const assets = Array.isArray(payload.skill_assets) ? payload.skill_assets.filter((item: unknown) => item && typeof item === "object") as Array<Record<string, any>> : [];
+      const skills = Array.from(new Set([
+        ...stringList(payload.skills),
+        ...stringList(payload.custom_skills),
+        ...assets.map((asset) => String(asset.skill_key || "").trim()).filter(Boolean)
+      ]));
+      if (!skills.length && !assets.length) continue;
+      const assetPathsBySkill = assets.reduce<Record<string, string[]>>((acc, asset) => {
+        const key = String(asset.skill_key || "").trim();
+        const path = String(asset.asset_path || "").trim();
+        if (!key || !path) return acc;
+        acc[key] = [...(acc[key] || []), path];
+        return acc;
+      }, {});
+      const skillKeys = skills.length ? skills : ["skill_bundle"];
+      for (const skillKey of skillKeys) {
+        const assetPaths = assetPathsBySkill[skillKey] || [];
+        rows.push({
+          id: `${String(event.id || event.event_id || event.created_at || event.timestamp || eventType)}:${skillKey}:${rows.length}`,
+          created_at: event.created_at || event.timestamp,
+          span_id: event.span_id,
+          span_key: event.span_key,
+          agent_id: event.agent_id,
+          event_type: eventType,
+          stage: skillStage(eventType),
+          status: eventType === "skill_deepagents_invoked" || eventType === "skill_llm_context_used" ? "called" : "loaded",
+          skill_key: skillKey,
+          custom: stringList(payload.custom_skills).includes(skillKey),
+          asset_count: assetPaths.length,
+          asset_paths: assetPaths,
+          tools: stringList(payload.tools),
+          batch_label: payload.batch_label || "",
+          rule_id: payload.rule_id || "",
+          skill_context_chars: Number(payload.skill_context_chars || 0),
+          summary: event.summary
+        });
+      }
+    }
+    return rows;
+  }
+
   function unifiedReviewLogs(mrId: string, runId?: string | null) {
     const runs = all<Record<string, any>>(`
       SELECT rr.* FROM review_runs rr
@@ -286,6 +364,15 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
           agent_id: row.agent_id,
           event_type: row.event_type,
           payload_json: row.payload_json
+        });
+      }
+
+      for (const row of normalizeSkillCalls(items.filter((item) => item.kind === "trace_event"))) {
+        items.push({
+          ...row,
+          kind: "skill_call",
+          timestamp: row.created_at,
+          summary: `${row.agent_id || row.span_key || "agent"} ${row.status} ${row.skill_key}`
         });
       }
 
@@ -527,9 +614,9 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const toolObservations = latestRun
         ? all("SELECT * FROM tool_observations WHERE review_run_id = $1 ORDER BY created_at", [latestRun.id])
         : [];
-      const trace = latestRun
-        ? all(`
-            SELECT s.span_key, s.agent_id, s.status, e.event_type, e.summary, e.payload_json, e.created_at
+      const trace: Array<Record<string, any>> = latestRun
+        ? all<Record<string, any>>(`
+            SELECT s.id AS span_id, s.span_key, s.agent_id, s.status, e.id AS event_id, e.event_type, e.summary, e.payload_json, e.created_at
             FROM agent_trace_spans s
             LEFT JOIN agent_trace_events e ON e.span_id = s.id
             WHERE s.review_run_id = $1
@@ -566,9 +653,10 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
               WHERE s.review_run_id = $1
               ORDER BY m.created_at
             `, [latestRun.id]),
+            skill_calls: normalizeSkillCalls(trace),
             artifacts: all("SELECT * FROM review_artifacts WHERE review_run_id = $1 ORDER BY created_at", [latestRun.id])
           }
-        : { messages: [], tool_calls: [], llm_calls: [], mcp_calls: [], artifacts: [] };
+        : { messages: [], tool_calls: [], llm_calls: [], mcp_calls: [], skill_calls: [], artifacts: [] };
       return { mr, jobs, runs, findings, tool_observations: toolObservations, trace, session_logs: sessionLogs, compare: compareRunsForMr(params.mrId) };
     }),
     route("DELETE", "/api/mr-review/merge-requests/:mrId", ({ params, req }) => {
@@ -774,7 +862,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const denied = ensureRunRead(params.runId, req);
       if (denied) return denied;
       const spans = all("SELECT * FROM agent_trace_spans WHERE review_run_id = $1 ORDER BY started_at", [params.runId]);
-      const events = all(`
+      const events = all<Record<string, any>>(`
         SELECT e.*, s.span_key, s.agent_id
         FROM agent_trace_events e
         JOIN agent_trace_spans s ON s.id = e.span_id
@@ -809,7 +897,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         WHERE s.review_run_id = $1
         ORDER BY msg.created_at
       `, [params.runId]);
-      return { spans, events, messages, llm_calls: llmCalls, tool_calls: toolCalls, mcp_calls: mcpCalls };
+      return { spans, events, messages, llm_calls: llmCalls, tool_calls: toolCalls, mcp_calls: mcpCalls, skill_calls: normalizeSkillCalls(events) };
     }),
     route("GET", "/api/mr-review/review-runs/:runId/artifacts", ({ params, req }) => {
       const denied = ensureRunRead(params.runId, req);

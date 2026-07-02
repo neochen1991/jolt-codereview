@@ -294,7 +294,29 @@ def make_run_experts_node(
                     "tool_calling": "platform_wrapper",
                 },
             )
-            skill_summary = "\n\n".join(load_skill_summary(skill, files) for skill in agent.get("skills", []))
+            agent_skills = [str(skill) for skill in (agent.get("skills") or []) if str(skill).strip()]
+            custom_skills = [str(skill) for skill in (agent.get("custom_skills") or []) if str(skill).strip()]
+            skill_assets = [item for item in (agent.get("skill_assets") or []) if isinstance(item, dict)]
+            skill_summary = "\n\n".join(load_skill_summary(skill, files) for skill in agent_skills)
+            if agent_skills or skill_assets:
+                recorder.event(
+                    span,
+                    "skill_context_loaded",
+                    f"{agent_id} 加载 {len(agent_skills)} 个 Skill 作为检视上下文",
+                    {
+                        "skills": agent_skills,
+                        "custom_skills": custom_skills,
+                        "skill_assets": [
+                            {
+                                "skill_key": item.get("skill_key"),
+                                "asset_path": item.get("asset_path"),
+                                "asset_type": item.get("asset_type"),
+                            }
+                            for item in skill_assets
+                        ],
+                        "skill_context_chars": len(skill_summary),
+                    },
+                )
             agent_context = {
                 **agent,
                 "tool_observations": tool_observations,
@@ -386,6 +408,18 @@ def make_run_experts_node(
                     max_tool_calls = int(agent.get("max_tool_calls") or 12)
                     if has_skill_bundle:
                         max_tool_calls = max(max_tool_calls, 14)
+                    if agent_skills or skill_assets:
+                        recorder.event(
+                            span,
+                            "skill_deepagents_invoked",
+                            f"{agent_id} 调用 Skill Bundle 受控工具链",
+                            {
+                                "skills": agent_skills,
+                                "custom_skills": custom_skills,
+                                "asset_count": len(skill_assets),
+                                "max_tool_calls": max_tool_calls,
+                            },
+                        )
                     deep_result = run_bounded_deepagent(
                         agent=agent_context,
                         files=llm_files,
@@ -439,6 +473,19 @@ def make_run_experts_node(
                         recorder.event(span, "llm_skipped_by_budget", f"预算已触发熔断：{budget_tracker.truncated_reason}", budget_tracker.snapshot())
                         break
                     batch_agent = batch["agent"]
+                    if agent_skills or skill_assets:
+                        recorder.event(
+                            span,
+                            "skill_llm_context_used",
+                            f"{agent_id} 使用 Skill 上下文检视 {batch['label']}",
+                            {
+                                "skills": agent_skills,
+                                "custom_skills": custom_skills,
+                                "asset_count": len(skill_assets),
+                                "batch_label": batch["label"],
+                                "rule_id": batch["rule_id"],
+                            },
+                        )
                     recorder.event(
                         span,
                         "bound_rule_batch_started" if batch["rule_id"] else "expert_free_review_started",

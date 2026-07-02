@@ -211,6 +211,7 @@ export type Detail = {
     tool_calls: Array<Record<string, unknown>>;
     llm_calls: Array<Record<string, unknown>>;
     mcp_calls: Array<Record<string, unknown>>;
+    skill_calls?: Array<Record<string, unknown>>;
     artifacts: Array<Record<string, unknown>>;
   };
 };

@@ -76,6 +76,36 @@ function llmCallStats(rows: Array<Record<string, unknown>> | undefined) {
   return { total, succeeded, successRate };
 }
 
+function arrayStrings(value: unknown) {
+  return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
+}
+
+function skillCallRows(detail: Detail) {
+  return detail.session_logs?.skill_calls || [];
+}
+
+function skillStageText(stage: unknown) {
+  const value = String(stage || "");
+  if (value === "loaded") return "加载";
+  if (value === "deepagents") return "DeepAgents";
+  if (value === "llm") return "LLM 检视";
+  return value || "记录";
+}
+
+function skillStatusText(status: unknown) {
+  const value = String(status || "");
+  if (value === "called") return "已调用";
+  if (value === "loaded") return "已加载";
+  return value || "已记录";
+}
+
+function skillAssetSummary(row: Record<string, unknown>) {
+  const paths = arrayStrings(row.asset_paths);
+  if (paths.length) return paths.slice(0, 3).join(", ");
+  const count = Number(row.asset_count || 0);
+  return count ? `${count} 个资源文件` : "--";
+}
+
 export function MrQueue({
   items,
   activeMrId,
@@ -601,6 +631,7 @@ export function ReviewProgressPanel({ detail, status }: { detail: Detail; status
   const sessionLogs = detail.session_logs;
   const toolCount = sessionLogs?.tool_calls?.length || detail.tool_observations?.length || 0;
   const llmStats = llmCallStats(sessionLogs?.llm_calls);
+  const skillCalls = skillCallRows(detail);
   const agentMessages = sessionLogs?.messages?.length || 0;
   const percent = Math.round((index / (REVIEW_STEPS.length - 1)) * 100);
   return (
@@ -630,6 +661,7 @@ export function ReviewProgressPanel({ detail, status }: { detail: Detail; status
         <p><strong>工具调用</strong><span>{toolCount}</span></p>
         <p><strong>LLM 调用</strong><span>{llmStats.total}</span></p>
         <p><strong>LLM 成功率</strong><span>{llmStats.successRate === null ? "--" : `${llmStats.succeeded}/${llmStats.total} · ${llmStats.successRate}%`}</span></p>
+        <p><strong>Skill 调用</strong><span>{skillCalls.length}</span></p>
         <p><strong>Agent 消息</strong><span>{agentMessages}</span></p>
       </div>
     </section>
@@ -707,6 +739,7 @@ export function ProcessTimeline({ detail }: { detail: Detail }) {
   const staticToolCalls = toolCalls.filter((row) => String(row.tool_name || "").startsWith("static."));
   const llmCalls = (sessionLogs?.llm_calls || []).filter((row) => !isSummaryNoise(row));
   const llmStats = llmCallStats(llmCalls);
+  const skillCalls = skillCallRows(detail).filter((row) => !isSummaryNoise(row));
   const latestJob = detail.jobs?.[0] || {};
   const latestRun = detail.runs?.[0] || {};
   const status = effectiveReviewStatus(detail);
@@ -730,6 +763,7 @@ export function ProcessTimeline({ detail }: { detail: Detail }) {
         <p><strong>Trace</strong><span>{trace.length} 条</span></p>
         <p><strong>Tool</strong><span>{sessionLogs?.tool_calls?.length || detail.tool_observations?.length || 0} 次</span></p>
         <p><strong>LLM</strong><span>{llmStats.total} 次 · 成功率 {llmStats.successRate === null ? "--" : `${llmStats.successRate}%`}</span></p>
+        <p><strong>Skill</strong><span>{skillCalls.length} 次</span></p>
       </section>
       <div className="process-list">
         {trace.slice(0, 80).map((item, index) => (
@@ -773,6 +807,24 @@ export function ProcessTimeline({ detail }: { detail: Detail }) {
             );
           })}
           {!staticToolCalls.length && <div className="static-tool-empty">本次还没有静态工具调用记录</div>}
+        </div>
+      </section>
+      <section className="skill-call-detail">
+        <h4>Agent Skill 调用记录<strong>{skillCalls.length}</strong></h4>
+        <div className="skill-call-list">
+          {skillCalls.slice(0, 12).map((row, index) => (
+            <article key={`${String(row.id || row.skill_key || "skill")}-${index}`}>
+              <div>
+                <strong>{agentLabel(String(row.agent_id || row.span_key || "agent"))}</strong>
+                <span>{String(row.skill_key || "--")}</span>
+              </div>
+              <em className={`skill-stage ${String(row.stage || "recorded").replace(/[^a-z0-9_-]/gi, "_")}`}>{skillStageText(row.stage)}</em>
+              <time>{formatDateTime(recordTimestamp(row))}</time>
+              <p>{String(row.batch_label || row.summary || skillStatusText(row.status))}</p>
+              <small title={skillAssetSummary(row)}>{skillAssetSummary(row)}</small>
+            </article>
+          ))}
+          {!skillCalls.length && <div className="skill-call-empty">本次还没有 Agent 调用 Skill 的记录</div>}
         </div>
       </section>
       <div className="session-grid">

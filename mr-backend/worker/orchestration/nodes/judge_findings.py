@@ -3143,6 +3143,7 @@ def build_evidence_contract(finding: dict[str, Any], source_observations: list[d
     has_recommendation = _has_text(finding.get("recommendation"))
     suggested_code = str(finding.get("suggested_code") or "").strip()
     has_suggested_code = bool(suggested_code and "未提供明确代码片段" not in suggested_code)
+    has_agent_source = _has_text(finding.get("agent_id"))
     checks = {
         "has_rule": has_rule,
         "has_location": has_location,
@@ -3153,13 +3154,20 @@ def build_evidence_contract(finding: dict[str, Any], source_observations: list[d
     }
     missing = [name for name, passed in checks.items() if not passed]
     score = round(sum(1 for passed in checks.values() if passed) / len(checks), 4)
-    if score >= 0.84 and has_location and has_source_context and has_recommendation:
+    has_publishable_agent_contract = (
+        has_agent_source
+        and has_rule
+        and has_location
+        and has_source_context
+        and has_recommendation
+        and has_suggested_code
+    )
+    if (score >= 0.84 and has_location and has_source_context and has_recommendation) or has_publishable_agent_contract:
         status = "satisfied"
     elif score >= 0.5 and has_location:
         status = "partial"
     else:
         status = "weak"
-    has_agent_source = _has_text(finding.get("agent_id"))
     source_type = "hybrid" if has_agent_source and has_tool_evidence else "tool" if has_tool_evidence else "agent" if has_agent_source else "unknown"
     decision_hint = "final_candidate" if status == "satisfied" else "needs_review" if status == "weak" else "advisory_candidate"
     return {

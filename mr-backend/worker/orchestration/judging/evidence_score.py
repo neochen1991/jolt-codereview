@@ -107,6 +107,25 @@ def _snippet_quote_score(finding: dict[str, Any], line_index: dict[str, dict[int
     return 0.15 if any(chunk in source for chunk in evidence_chunks if len(chunk) >= 30) else 0.0
 
 
+def _source_location_score(finding: dict[str, Any], line_index: dict[str, dict[int, str]]) -> float:
+    file_path = str(finding.get("file_path") or "")
+    start = line_value(finding.get("line_start"))
+    end = line_value(finding.get("line_end")) or start
+    if not file_path or start <= 0 or end <= 0:
+        return 0.0
+    lines = line_index.get(file_path) or {}
+    if not lines:
+        return 0.0
+    span = max(1, end - start + 1)
+    if span > 20:
+        return 0.0
+    if any(line_no in lines for line_no in range(start, end + 1)):
+        return 0.25
+    if any(start - 2 <= line_no <= end + 2 for line_no in lines):
+        return 0.18
+    return 0.0
+
+
 def _tool_backing_score(finding: dict[str, Any], tool_observations: list[dict[str, Any]]) -> tuple[float, list[dict[str, Any]]]:
     file_path = str(finding.get("file_path") or "")
     line = line_value(finding.get("line_start"))
@@ -245,6 +264,7 @@ def score(
     consensus_score, consensus_agents = _consensus_score(finding, peer_findings or [finding])
     components = {
         "tool_backing": round(tool_score, 4),
+        "source_location": round(_source_location_score(finding, index), 4),
         "snippet_quote": round(_snippet_quote_score(finding, index), 4),
         "line_precision": round(_line_precision_score(finding), 4),
         "rule_alignment": round(_rule_alignment_score(finding, source_observations or []), 4),

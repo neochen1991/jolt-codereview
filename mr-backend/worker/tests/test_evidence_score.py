@@ -88,6 +88,20 @@ def test_evidence_score_uses_line_span_not_rule_specific_branch() -> None:
     assert result["score"] <= 0.15, result
 
 
+def test_evidence_score_counts_changed_source_location_for_paraphrased_evidence() -> None:
+    files = [SimpleNamespace(filename="src/main/java/demo/PaymentRepository.java", patch=PATCH)]
+    result = score(
+        finding(evidence="这里直接把外部输入拼接进 SQL 并执行，存在注入风险。"),
+        files=files,
+        tool_observations=[],
+        source_observations=[],
+        peer_findings=[finding(evidence="这里直接把外部输入拼接进 SQL 并执行，存在注入风险。")],
+    )
+    assert result["components"]["source_location"] > 0, result
+    assert result["components"]["snippet_quote"] == 0, result
+    assert result["score"] >= 0.35, result
+
+
 def test_suppression_hint_reduces_evidence_score_without_rule_branch() -> None:
     files = [SimpleNamespace(filename="src/main/java/demo/PaymentRepository.java", patch=PATCH)]
     base = score(finding(), files=files, peer_findings=[finding()])
@@ -119,4 +133,5 @@ def test_suppression_hint_reduces_evidence_score_without_rule_branch() -> None:
 if __name__ == "__main__":
     test_evidence_score_components_are_structural()
     test_evidence_score_uses_line_span_not_rule_specific_branch()
+    test_evidence_score_counts_changed_source_location_for_paraphrased_evidence()
     test_suppression_hint_reduces_evidence_score_without_rule_branch()

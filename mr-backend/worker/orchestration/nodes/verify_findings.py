@@ -91,8 +91,29 @@ def _source_has_rule_signal(finding: dict[str, Any], source_snippet: str) -> boo
     source = str(source_snippet or "").lower()
     rules = set(_rule_ids_for(finding))
     categories = {normalized_rule_category(rule, finding.get("title")) for rule in rules}
+    text = " ".join(
+        str(part or "")
+        for part in (finding.get("title"), finding.get("problem_description"), finding.get("evidence"))
+    ).lower()
+    compact = re.sub(r"\s+", " ", source)
+    if "SQL_INJECTION" in categories:
+        has_sql_execution = any(marker in compact for marker in ["executequery", "executeupdate", "createstatement", "statement.execute"])
+        has_concat = bool(re.search(r'["\'][^"\']*\b(select|update|delete|insert)\b[^"\']*["\']\s*\+', compact)) or bool(
+            re.search(r"\+\s*[a-zA-Z_][\w.]*", compact)
+        )
+        mentions_sql_risk = any(marker in text for marker in ["sql", "注入", "injection", "拼接"])
+        if has_sql_execution and has_concat and mentions_sql_risk:
+            return True
+    if "MYBATIS_SQL_INJECTION" in categories:
+        if "${" in compact and any(marker in text for marker in ["mybatis", "sql", "注入", "injection", "${"]):
+            return True
+    if "SECRET_LEAK" in categories:
+        if re.search(r"(password|passwd|secret|token|apikey|api_key|accesskey)\s*[:=]", compact):
+            return True
+    if "REDIS_KEYS_COMMAND" in categories or "REDIS-CMD-003" in rules:
+        if re.search(r"\bkeys\s*\(", compact) or ".keys(" in compact:
+            return True
     if "SPRING_ACTUATOR_EXPOSED" in categories or "SEC-CONFIG-007" in rules:
-        compact = re.sub(r"\s+", " ", source)
         return "management" in compact and "endpoints" in compact and "exposure" in compact and re.search(r"include\s*:\s*['\"]?\*", compact) is not None
     return False
 
@@ -216,12 +237,18 @@ def verify_candidate_findings(
             )
             evidence_match = _evidence_matches_source(evidence_signal, source_snippet)
             evidence_score = float(evidence_match["score"])
-            if evidence_score < 0.1 and not _source_has_rule_signal(finding, source_snippet):
+            source_rule_signal = _source_has_rule_signal(finding, source_snippet)
+            if evidence_score < 0.1 and not source_rule_signal:
                 reasons.append("evidence_not_in_source")
             elif evidence_score < min_evidence_jaccard:
                 penalty = 0.05 if evidence_score >= 0.2 else 0.08
+                flags = ["low_evidence_match"]
+                if source_rule_signal:
+                    flags.append("source_location_supported")
+                for flag in flags:
+                    finding = _with_flag(finding, flag)
                 finding = {
-                    **_with_flag(finding, "low_evidence_match"),
+                    **finding,
                     "confidence": max(0.0, float(finding.get("confidence") or 0) - penalty),
                     "evidence_match_score": evidence_score,
                 }

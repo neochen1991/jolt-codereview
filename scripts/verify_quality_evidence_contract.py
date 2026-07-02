@@ -50,6 +50,19 @@ def main() -> None:
     assert trace["tools"][0]["tool_name"] == "tree_sitter_code_graph", trace
     assert is_publishable_evidence_contract(trace), trace
 
+    agent_only_trace = build_quality_trace(
+        {
+            **complete_finding,
+            "dedupe_hash": "hash_agent_only_sql_injection",
+            "evidence": "这里直接把外部输入拼接进 SQL 并执行，存在注入风险。",
+        },
+        [],
+    )
+    assert agent_only_trace["evidence_contract"]["status"] == "satisfied", agent_only_trace
+    assert agent_only_trace["evidence_contract"]["source_type"] == "agent", agent_only_trace
+    assert "has_tool_evidence" in agent_only_trace["evidence_contract"]["missing"], agent_only_trace
+    assert is_publishable_evidence_contract(agent_only_trace), agent_only_trace
+
     weak_finding = {
         "agent_id": "coding_agent",
         "severity": "medium",
@@ -100,7 +113,7 @@ def main() -> None:
     assert summary["weak_contract_count"] == 1, summary
     assert summary["quality_risk"] == "needs_attention", summary
 
-    frontend = (ROOT / "frontend" / "src" / "frontend" / "main.tsx").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "src" / "frontend" / "components" / "ReviewViews.tsx").read_text(encoding="utf-8")
     assert "formatEvidenceContractStatus" in frontend
     assert "qualityTrace.evidence_contract" in frontend
 

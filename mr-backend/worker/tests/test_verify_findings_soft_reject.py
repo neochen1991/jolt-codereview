@@ -53,9 +53,17 @@ class VerifyFindingsSoftRejectTest(unittest.TestCase):
         self.assertGreaterEqual(accepted[0]["evidence_match_score"], 0.2)
         self.assertLess(accepted[0]["evidence_match_score"], 0.5)
 
-    def test_evidence_score_low_rejects(self):
-        finding = self.base_finding("totally unrelated payment gateway timeout retry", confidence=0.91)
+    def test_paraphrased_evidence_on_source_location_is_flagged_not_rejected(self):
+        finding = self.base_finding("这里直接把外部输入拼接进 SQL 并执行，存在注入风险。", confidence=0.91)
         accepted, rejected = self.verify(finding, "ResultSet rs = statement.executeQuery(sql + userId);")
+        self.assertEqual(rejected, [])
+        self.assertEqual(len(accepted), 1)
+        self.assertIn("low_evidence_match", accepted[0]["verification_flags"])
+        self.assertIn("source_location_supported", accepted[0]["verification_flags"])
+
+    def test_evidence_score_low_rejects_without_source_rule_signal(self):
+        finding = self.base_finding("totally unrelated payment gateway timeout retry", confidence=0.91)
+        accepted, rejected = self.verify(finding, "return paymentGateway.retryLater(orderId);")
         self.assertEqual(accepted, [])
         self.assertEqual(rejected[0]["rejected_reasons"], ["evidence_not_in_source"])
 

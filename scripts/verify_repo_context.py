@@ -5,14 +5,14 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "worker"))
+sys.path.insert(0, str(ROOT / "mr-backend" / "worker"))
 
 from context.repo_index import build_repo_index, resolve_diff_symbols
 from orchestration.nodes.verify_findings import verify_candidate_findings
 from prompts.builder import build_prompt
-from review_runtime import ChangedFile
 
 
 def write(path: Path, content: str) -> None:
@@ -64,13 +64,13 @@ class OrderServiceTest {
 """.strip(),
         )
         changed = [
-            ChangedFile(
-                "src/main/java/com/acme/order/OrderService.java",
-                "modified",
-                2,
-                0,
-                2,
-                "@@ -4,6 +4,8 @@\n+  public void placeOrder(OrderRequest request) {\n+    repository.save(request.toEntity());\n",
+            SimpleNamespace(
+                filename="src/main/java/com/acme/order/OrderService.java",
+                status="modified",
+                additions=2,
+                deletions=0,
+                changes=2,
+                patch="@@ -4,6 +4,8 @@\n+  public void placeOrder(OrderRequest request) {\n+    repository.save(request.toEntity());\n",
             )
         ]
         index_info = build_repo_index(worktree, "repo_verify", "sha_verify", cache_root)

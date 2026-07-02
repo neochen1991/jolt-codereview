@@ -57,6 +57,7 @@ function applyVcsPolicy(config: AppConfig, vcsPolicy: Record<string, unknown>) {
 export class CommonBackendClient {
   private readonly requestAuth = new WeakMap<IncomingMessage, CommonAuthSnapshot>();
   private readonly authByUserId = new Map<string, CommonAuthSnapshot>();
+  private readonly effectiveConfigCache = new Map<string, { expiresAt: number; value: AppConfig }>();
 
   constructor(private readonly config: AppConfig) {}
 
@@ -124,6 +125,11 @@ export class CommonBackendClient {
   }
 
   async projectEffectiveConfig(projectId: string) {
+    const cacheKey = projectId || "project_default";
+    const cached = this.effectiveConfigCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
     const response = await this.effectiveConfig(projectId);
     const settings = response.source?.project_settings ?? {};
     let next: AppConfig = {
@@ -144,6 +150,7 @@ export class CommonBackendClient {
             : value;
       }
     }
+    this.effectiveConfigCache.set(cacheKey, { expiresAt: Date.now() + 30000, value: next });
     return next;
   }
 }

@@ -283,6 +283,16 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     return rows;
   }
 
+  function boundedQueryLimit(url: URL, key: string, defaultValue: number, maxValue: number) {
+    const value = Number(url.searchParams.get(key) || defaultValue);
+    if (!Number.isFinite(value) || value <= 0) return defaultValue;
+    return Math.min(Math.floor(value), maxValue);
+  }
+
+  function truthyQuery(value: string | null) {
+    return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
+  }
+
   function unifiedReviewLogs(mrId: string, runId?: string | null) {
     const runs = all<Record<string, any>>(`
       SELECT rr.* FROM review_runs rr
@@ -514,7 +524,11 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     route("GET", "/api/mr-review/projects/:projectId/merge-requests", async ({ params, req, url }) => {
       const denied = ensureProjectRead(params.projectId, req);
       if (denied) return denied;
-      const status = url.searchParams.get("status");
+      const requestedStatus = url.searchParams.get("status");
+      const normalizedStatus = requestedStatus && requestedStatus !== "all" ? requestedStatus : null;
+      const directDbStatuses = new Set(["queued", "paused", "waiting_confirmation", "submitted", "no_issue", "too_large", "cancelled", "merged", "closed"]);
+      const dbStatus = normalizedStatus && directDbStatuses.has(normalizedStatus) ? normalizedStatus : null;
+      const includeTerminal = truthyQuery(url.searchParams.get("include_terminal")) || normalizedStatus === "merged" || normalizedStatus === "closed";
       const activeJobStatuses = new Set(["fetching", "pre_scanning", "reviewing", "judging", "running"]);
       const activeProjectJobs = all<Record<string, any>>(`
         SELECT rj.id AS job_id, rj.status, mr.id AS merge_request_id, mr.number, mr.title
@@ -529,7 +543,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const projectEffectiveConfig = await effectiveConfig(params.projectId);
       const projectConcurrency = projectMrConcurrency(projectEffectiveConfig);
       const activeProjectJobIds = new Set(activeProjectJobs.map((job) => String(job.merge_request_id)));
-      const rows = mergeRequestRepository.listByProject(params.projectId, null).map((row: any) => {
+      const rows = mergeRequestRepository.listByProject(params.projectId, dbStatus, { includeTerminal }).map((row: any) => {
         const terminalStatus = ["merged", "closed"].includes(String(row.review_status));
         const effectiveStatus = !terminalStatus && activeJobStatuses.has(String(row.latest_job_status)) ? String(row.latest_job_status) : String(row.review_status);
         const blockedByProject = effectiveStatus === "queued" && activeProjectJobs.length >= projectConcurrency && !activeProjectJobIds.has(String(row.id));
@@ -545,7 +559,13 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
           active_project_review: blockedByProject ? activeProjectJobs[0] : null
         };
       });
-      const filtered = status ? rows.filter((row: any) => row.review_status === status) : rows;
+      const filtered = normalizedStatus
+        ? rows.filter((row: any) => {
+            if (normalizedStatus === "reviewing") return activeJobStatuses.has(String(row.review_status));
+            if (normalizedStatus === "high_risk") return Number(row.risk_score || 0) >= 70;
+            return row.review_status === normalizedStatus;
+          })
+        : rows;
       return { items: filtered };
     }),
     route("POST", "/api/mr-review/projects/:projectId/sync", async ({ params, req }) => {
@@ -595,9 +615,12 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       `, [params.projectId])
       };
     }),
-    route("GET", "/api/mr-review/merge-requests/:mrId", ({ params, req }) => {
+    route("GET", "/api/mr-review/merge-requests/:mrId", ({ params, req, url }) => {
       const denied = ensureMrRead(params.mrId, req);
       if (denied) return denied;
+      const logLimit = boundedQueryLimit(url, "log_limit", 240, 1000);
+      const observationLimit = boundedQueryLimit(url, "observation_limit", 500, 2000);
+      const artifactLimit = boundedQueryLimit(url, "artifact_limit", 80, 500);
       const mr = mergeRequestRepository.findDetailById(params.mrId);
       if (!mr) return notFound();
       const jobs = reviewJobRepository.listByMergeRequest(params.mrId);
@@ -612,49 +635,94 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         ? all("SELECT * FROM review_findings WHERE review_run_id = $1 ORDER BY severity DESC, confidence DESC", [latestRun.id])
         : [];
       const toolObservations = latestRun
-        ? all("SELECT * FROM tool_observations WHERE review_run_id = $1 ORDER BY created_at", [latestRun.id])
+        ? all(`
+            SELECT *
+            FROM (
+              SELECT *
+              FROM tool_observations
+              WHERE review_run_id = $1
+              ORDER BY created_at DESC
+              LIMIT $2
+            ) recent_tool_observations
+            ORDER BY created_at
+          `, [latestRun.id, observationLimit])
         : [];
       const trace: Array<Record<string, any>> = latestRun
         ? all<Record<string, any>>(`
-            SELECT s.id AS span_id, s.span_key, s.agent_id, s.status, e.id AS event_id, e.event_type, e.summary, e.payload_json, e.created_at
-            FROM agent_trace_spans s
-            LEFT JOIN agent_trace_events e ON e.span_id = s.id
-            WHERE s.review_run_id = $1
-            ORDER BY s.started_at, e.created_at
-          `, [latestRun.id])
+            SELECT *
+            FROM (
+              SELECT s.id AS span_id, s.span_key, s.agent_id, s.status, e.id AS event_id, e.event_type, e.summary, e.payload_json, e.created_at
+              FROM agent_trace_spans s
+              LEFT JOIN agent_trace_events e ON e.span_id = s.id
+              WHERE s.review_run_id = $1
+              ORDER BY e.created_at DESC NULLS LAST, s.started_at DESC
+              LIMIT $2
+            ) recent_trace
+            ORDER BY created_at, span_key
+          `, [latestRun.id, logLimit])
         : [];
       const sessionLogs = latestRun
         ? {
             messages: all(`
-              SELECT msg.*, s.span_key, s.agent_id
-              FROM agent_messages msg
-              JOIN agent_trace_spans s ON s.id = msg.span_id
-              WHERE s.review_run_id = $1
-              ORDER BY msg.created_at
-            `, [latestRun.id]),
+              SELECT *
+              FROM (
+                SELECT msg.*, s.span_key, s.agent_id
+                FROM agent_messages msg
+                JOIN agent_trace_spans s ON s.id = msg.span_id
+                WHERE s.review_run_id = $1
+                ORDER BY msg.created_at DESC
+                LIMIT $2
+              ) recent_messages
+              ORDER BY created_at
+            `, [latestRun.id, logLimit]),
             tool_calls: all(`
-              SELECT t.*, s.span_key, s.agent_id
-              FROM tool_call_records t
-              JOIN agent_trace_spans s ON s.id = t.span_id
-              WHERE s.review_run_id = $1
-              ORDER BY t.created_at
-            `, [latestRun.id]),
+              SELECT *
+              FROM (
+                SELECT t.*, s.span_key, s.agent_id
+                FROM tool_call_records t
+                JOIN agent_trace_spans s ON s.id = t.span_id
+                WHERE s.review_run_id = $1
+                ORDER BY t.created_at DESC
+                LIMIT $2
+              ) recent_tool_calls
+              ORDER BY created_at
+            `, [latestRun.id, logLimit]),
             llm_calls: all(`
-              SELECT l.*, s.span_key, s.agent_id
-              FROM llm_call_records l
-              JOIN agent_trace_spans s ON s.id = l.span_id
-              WHERE s.review_run_id = $1
-              ORDER BY l.created_at
-            `, [latestRun.id]),
+              SELECT *
+              FROM (
+                SELECT l.*, s.span_key, s.agent_id
+                FROM llm_call_records l
+                JOIN agent_trace_spans s ON s.id = l.span_id
+                WHERE s.review_run_id = $1
+                ORDER BY l.created_at DESC
+                LIMIT $2
+              ) recent_llm_calls
+              ORDER BY created_at
+            `, [latestRun.id, logLimit]),
             mcp_calls: all(`
-              SELECT m.*, s.span_key, s.agent_id
-              FROM mcp_call_records m
-              JOIN agent_trace_spans s ON s.id = m.span_id
-              WHERE s.review_run_id = $1
-              ORDER BY m.created_at
-            `, [latestRun.id]),
+              SELECT *
+              FROM (
+                SELECT m.*, s.span_key, s.agent_id
+                FROM mcp_call_records m
+                JOIN agent_trace_spans s ON s.id = m.span_id
+                WHERE s.review_run_id = $1
+                ORDER BY m.created_at DESC
+                LIMIT $2
+              ) recent_mcp_calls
+              ORDER BY created_at
+            `, [latestRun.id, logLimit]),
             skill_calls: normalizeSkillCalls(trace),
-            artifacts: all("SELECT * FROM review_artifacts WHERE review_run_id = $1 ORDER BY created_at", [latestRun.id])
+            artifacts: all(`
+              SELECT *
+              FROM (
+                SELECT *
+                FROM review_artifacts
+                WHERE review_run_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+              ) recent_artifacts
+              ORDER BY created_at
+            `, [latestRun.id, artifactLimit])
           }
         : { messages: [], tool_calls: [], llm_calls: [], mcp_calls: [], skill_calls: [], artifacts: [] };
       return { mr, jobs, runs, findings, tool_observations: toolObservations, trace, session_logs: sessionLogs, compare: compareRunsForMr(params.mrId) };

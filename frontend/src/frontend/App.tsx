@@ -50,6 +50,15 @@ import {
   canAccessProjectAdminView
 } from "./shared";
 
+const MR_LIST_POLL_MS = 15000;
+const MR_DETAIL_POLL_MS = 30000;
+const REMOTE_STATUS_POLL_MS = 300000;
+const MR_DETAIL_QUERY = "log_limit=160&observation_limit=300&artifact_limit=50";
+
+type MrListResponse = {
+  items: MergeRequest[];
+};
+
 export function App() {
   const initialRoute = useMemo(() => readWorkspaceRoute(), []);
   const [repos, setRepos] = useState<Repo[]>([]);
@@ -97,12 +106,28 @@ export function App() {
     }
   }
 
-  async function loadAll(nextActiveId?: string | null) {
+  async function loadMrDetail(id: string) {
+    return api<Detail>(`/api/mr-review/merge-requests/${id}?${MR_DETAIL_QUERY}`);
+  }
+
+  function mergeRequestListPath() {
+    const params = new URLSearchParams();
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    const queryString = params.toString();
+    return `/api/mr-review/projects/${activeProjectId}/merge-requests${queryString ? `?${queryString}` : ""}`;
+  }
+
+  async function loadAll(
+    nextActiveId?: string | null,
+    options: { refreshRepos?: boolean; refreshDetail?: boolean } = {}
+  ) {
+    const refreshRepos = options.refreshRepos ?? true;
+    const refreshDetail = options.refreshDetail ?? true;
     const [repoData, mrData] = await Promise.all([
-      api<Repo[]>(`/api/projects/${activeProjectId}/repositories`),
-      api<{ items: MergeRequest[] }>(`/api/mr-review/projects/${activeProjectId}/merge-requests`)
+      refreshRepos ? api<Repo[]>(`/api/projects/${activeProjectId}/repositories`) : Promise.resolve(null),
+      api<MrListResponse>(mergeRequestListPath())
     ]);
-    setRepos(repoData);
+    if (repoData) setRepos(repoData);
     setMrs(mrData.items);
     setSelectedMrIds((previous) => previous.filter((id) => mrData.items.some((mr) => mr.id === id)));
     const requestedId = nextActiveId ?? activeMrIdRef.current ?? activeMrId ?? null;
@@ -111,10 +136,10 @@ export function App() {
       : mrData.items[0]?.id ?? null;
     activeMrIdRef.current = selectedId;
     setActiveMrId(selectedId);
-    if (selectedId) {
-      setDetail(await api<Detail>(`/api/mr-review/merge-requests/${selectedId}`));
+    if (selectedId && refreshDetail) {
+      setDetail(await loadMrDetail(selectedId));
     } else {
-      setDetail(null);
+      if (!selectedId) setDetail(null);
     }
   }
 
@@ -161,13 +186,26 @@ export function App() {
   useEffect(() => {
     if (!ready || !projectChosen) return;
     loadAll(null).catch((error) => setMessage(error.message));
-    const timer = window.setInterval(() => loadAll().catch(() => undefined), 8000);
-    const statusTimer = window.setInterval(() => refreshMrRemoteStatuses().catch(() => undefined), 60000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      loadAll(activeMrIdRef.current, { refreshRepos: false, refreshDetail: false }).catch(() => undefined);
+    }, MR_LIST_POLL_MS);
+    const detailTimer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      const selectedId = activeMrIdRef.current;
+      if (!selectedId) return;
+      loadMrDetail(selectedId).then(setDetail).catch(() => undefined);
+    }, MR_DETAIL_POLL_MS);
+    const statusTimer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      refreshMrRemoteStatuses().catch(() => undefined);
+    }, REMOTE_STATUS_POLL_MS);
     return () => {
       window.clearInterval(timer);
+      window.clearInterval(detailTimer);
       window.clearInterval(statusTimer);
     };
-  }, [ready, projectChosen, activeProjectId]);
+  }, [ready, projectChosen, activeProjectId, statusFilter]);
 
   useEffect(() => {
     if (!ready) return;
@@ -266,7 +304,7 @@ export function App() {
   async function openMr(id: string, showPreview = false) {
     activeMrIdRef.current = id;
     setActiveMrId(id);
-    const nextDetail = await api<Detail>(`/api/mr-review/merge-requests/${id}`);
+    const nextDetail = await loadMrDetail(id);
     setDetail(nextDetail);
     if (showPreview) {
       setMrPreview(nextDetail);

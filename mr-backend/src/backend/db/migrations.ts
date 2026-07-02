@@ -612,6 +612,51 @@ export function migrate(db: Db) {
 
     CREATE INDEX IF NOT EXISTS idx_full_review_findings_snapshot
       ON full_review_findings(snapshot_id);
+
+    CREATE INDEX IF NOT EXISTS idx_repositories_project_status_created
+      ON repositories(project_id, status, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_merge_requests_repo_status_updated
+      ON merge_requests(repository_id, review_status, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_merge_requests_repo_risk_updated
+      ON merge_requests(repository_id, risk_score DESC, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_review_jobs_mr_updated_created
+      ON review_jobs(merge_request_id, updated_at DESC, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_review_jobs_status_heartbeat
+      ON review_jobs(status, heartbeat_at, locked_at, updated_at);
+
+    CREATE INDEX IF NOT EXISTS idx_review_runs_job_started
+      ON review_runs(review_job_id, started_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_review_findings_run_severity_confidence
+      ON review_findings(review_run_id, severity DESC, confidence DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_agent_trace_spans_run_started
+      ON agent_trace_spans(review_run_id, started_at);
+
+    CREATE INDEX IF NOT EXISTS idx_agent_trace_events_span_created
+      ON agent_trace_events(span_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_agent_messages_span_created
+      ON agent_messages(span_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_llm_call_records_span_created
+      ON llm_call_records(span_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_tool_call_records_span_created
+      ON tool_call_records(span_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_mcp_call_records_span_created
+      ON mcp_call_records(span_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_tool_observations_run_created
+      ON tool_observations(review_run_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_review_artifacts_run_created
+      ON review_artifacts(review_run_id, created_at);
   `);
   addColumnIfMissing(db, "review_findings", "covered_rules_json", "TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing(db, "review_findings", "skipped_rules_json", "TEXT NOT NULL DEFAULT '[]'");

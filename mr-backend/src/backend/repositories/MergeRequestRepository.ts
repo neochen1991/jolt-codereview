@@ -21,56 +21,62 @@ export class MergeRequestRepository {
     `).get(id);
   }
 
-  listByProject(projectId: string, status: string | null) {
-    const baseSql = `
+  listByProject(projectId: string, status: string | null, options: { includeTerminal?: boolean } = {}) {
+    const terminalSql = !status && !options.includeTerminal
+      ? "AND mr.review_status NOT IN ('merged', 'closed')"
+      : "";
+    const statusSql = status === null ? "" : "AND mr.review_status = $2";
+    const params = status === null ? [projectId] : [projectId, status];
+    return this.db.prepare(`
+      WITH project_mrs AS (
+        SELECT
+          mr.*,
+          r.name AS repository_name,
+          r.provider
+        FROM merge_requests mr
+        JOIN repositories r ON r.id = mr.repository_id
+        WHERE r.project_id = $1
+          AND r.status = 'active'
+          ${terminalSql}
+          ${statusSql}
+      ),
+      latest_runs AS (
+        SELECT DISTINCT ON (rj.merge_request_id)
+          rj.merge_request_id,
+          rr.id AS review_run_id,
+          rr.status AS latest_run_status,
+          rr.started_at AS review_started_at
+        FROM review_jobs rj
+        JOIN review_runs rr ON rr.review_job_id = rj.id
+        JOIN project_mrs pm ON pm.id = rj.merge_request_id
+        ORDER BY rj.merge_request_id, rr.started_at DESC
+      ),
+      latest_jobs AS (
+        SELECT DISTINCT ON (rj.merge_request_id)
+          rj.merge_request_id,
+          rj.status AS latest_job_status
+        FROM review_jobs rj
+        JOIN project_mrs pm ON pm.id = rj.merge_request_id
+        ORDER BY rj.merge_request_id, rj.updated_at DESC, rj.created_at DESC
+      ),
+      finding_counts AS (
+        SELECT rf.review_run_id, COUNT(*) AS finding_count
+        FROM review_findings rf
+        JOIN latest_runs lr ON lr.review_run_id = rf.review_run_id
+        GROUP BY rf.review_run_id
+      )
       SELECT
-        mr.*,
-        r.name AS repository_name,
-        r.provider,
-        (
-          SELECT COUNT(*)
-          FROM review_findings rf
-          WHERE rf.review_run_id = (
-            SELECT rr_latest.id
-            FROM review_runs rr_latest
-            JOIN review_jobs rj_latest ON rj_latest.id = rr_latest.review_job_id
-            WHERE rj_latest.merge_request_id = mr.id
-            ORDER BY rr_latest.started_at DESC
-            LIMIT 1
-          )
-        ) AS finding_count,
-        (
-          SELECT rr.status FROM review_runs rr
-          JOIN review_jobs rj ON rj.id = rr.review_job_id
-          WHERE rj.merge_request_id = mr.id
-          ORDER BY rr.started_at DESC
-          LIMIT 1
-        ) AS latest_run_status,
-        (
-          SELECT rr.started_at FROM review_runs rr
-          JOIN review_jobs rj ON rj.id = rr.review_job_id
-          WHERE rj.merge_request_id = mr.id
-          ORDER BY rr.started_at DESC
-          LIMIT 1
-        ) AS review_started_at,
-        (
-          SELECT rj.status FROM review_jobs rj
-          WHERE rj.merge_request_id = mr.id
-          ORDER BY rj.updated_at DESC, rj.created_at DESC
-          LIMIT 1
-        ) AS latest_job_status
-      FROM merge_requests mr
-      JOIN repositories r ON r.id = mr.repository_id
-      WHERE r.project_id = $1
-        AND r.status = 'active'
-    `;
-    const orderSql = `
-      ORDER BY mr.risk_score DESC, mr.updated_at DESC
-    `;
-    if (status === null) {
-      return this.db.prepare(`${baseSql}${orderSql}`).all(projectId);
-    }
-    return this.db.prepare(`${baseSql} AND mr.review_status = $2 ${orderSql}`).all(projectId, status);
+        pm.*,
+        COALESCE(fc.finding_count, 0)::integer AS finding_count,
+        lr.latest_run_status,
+        lr.review_started_at,
+        lj.latest_job_status
+      FROM project_mrs pm
+      LEFT JOIN latest_runs lr ON lr.merge_request_id = pm.id
+      LEFT JOIN latest_jobs lj ON lj.merge_request_id = pm.id
+      LEFT JOIN finding_counts fc ON fc.review_run_id = lr.review_run_id
+      ORDER BY pm.risk_score DESC, pm.updated_at DESC
+    `).all(...params);
   }
 
   listRemoteStatusCandidates(projectId: string) {

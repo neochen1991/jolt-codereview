@@ -4418,7 +4418,7 @@ def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
             JOIN repositories queued_repo ON queued_repo.id = queued_mr.repository_id
             WHERE queued.status = 'queued'
               AND queued.attempt < %s
-            ORDER BY queued.priority DESC, queued.created_at ASC
+            ORDER BY queued_mr.created_at ASC, queued.created_at ASC
             LIMIT 100
             """,
             (MAX_ATTEMPTS,),

@@ -238,13 +238,14 @@ def verify_candidate_findings(
             evidence_match = _evidence_matches_source(evidence_signal, source_snippet)
             evidence_score = float(evidence_match["score"])
             source_rule_signal = _source_has_rule_signal(finding, source_snippet)
-            if evidence_score < 0.1 and not source_rule_signal:
-                reasons.append("evidence_not_in_source")
-            elif evidence_score < min_evidence_jaccard:
+            source_location_supported = bool(str(source_snippet or "").strip()) or source_rule_signal
+            if evidence_score < min_evidence_jaccard:
                 penalty = 0.05 if evidence_score >= 0.2 else 0.08
                 flags = ["low_evidence_match"]
-                if source_rule_signal:
+                if source_location_supported:
                     flags.append("source_location_supported")
+                else:
+                    flags.append("source_window_missing")
                 for flag in flags:
                     finding = _with_flag(finding, flag)
                 finding = {

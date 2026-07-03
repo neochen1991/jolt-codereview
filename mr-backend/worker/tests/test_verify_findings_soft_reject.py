@@ -61,11 +61,26 @@ class VerifyFindingsSoftRejectTest(unittest.TestCase):
         self.assertIn("low_evidence_match", accepted[0]["verification_flags"])
         self.assertIn("source_location_supported", accepted[0]["verification_flags"])
 
-    def test_evidence_score_low_rejects_without_source_rule_signal(self):
+    def test_paraphrased_evidence_on_generic_source_location_is_flagged_not_rejected(self):
+        finding = {
+            **self.base_finding("这里直接复用客户端传入的状态覆盖服务端状态，缺少业务上下文校验。", confidence=0.91),
+            "title": "客户端可控状态直接覆盖订单状态",
+            "problem_description": "外部请求字段直接驱动状态变更，缺少服务端策略约束。",
+            "covered_rules": ["CODE-STATE-004"],
+        }
+        accepted, rejected = self.verify(finding, "payment.setStatus(request.getStatus());")
+        self.assertEqual(rejected, [])
+        self.assertEqual(len(accepted), 1)
+        self.assertIn("low_evidence_match", accepted[0]["verification_flags"])
+        self.assertIn("source_location_supported", accepted[0]["verification_flags"])
+
+    def test_evidence_score_low_with_missing_source_window_is_flagged_not_rejected(self):
         finding = self.base_finding("totally unrelated payment gateway timeout retry", confidence=0.91)
-        accepted, rejected = self.verify(finding, "return paymentGateway.retryLater(orderId);")
-        self.assertEqual(accepted, [])
-        self.assertEqual(rejected[0]["rejected_reasons"], ["evidence_not_in_source"])
+        accepted, rejected = self.verify(finding, "")
+        self.assertEqual(rejected, [])
+        self.assertEqual(len(accepted), 1)
+        self.assertIn("low_evidence_match", accepted[0]["verification_flags"])
+        self.assertIn("source_window_missing", accepted[0]["verification_flags"])
 
     def test_bigdecimal_string_constructor_rejects_double_constructor_claim(self):
         finding = {

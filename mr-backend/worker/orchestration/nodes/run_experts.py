@@ -516,6 +516,65 @@ def _load_feedback_examples(conn: Any, project_id: str, agent_id: str) -> list[d
     return examples
 
 
+def _file_glob_matches(file_glob: str, file_path: str) -> bool:
+    glob = str(file_glob or "").replace("\\", "/")
+    path = str(file_path or "").replace("\\", "/")
+    if not glob or glob == "**/*":
+        return True
+    if glob.endswith("/**"):
+        return path.startswith(glob[:-3].rstrip("/") + "/")
+    return path == glob
+
+
+def _changed_filenames(files: list[Any]) -> list[str]:
+    names: list[str] = []
+    for item in files or []:
+        if isinstance(item, dict):
+            filename = str(item.get("filename") or item.get("file_path") or item.get("file") or "")
+        else:
+            filename = str(getattr(item, "filename", "") or "")
+        if filename:
+            names.append(filename)
+    return names
+
+
+def _load_suppression_hints_for_prompt(conn: Any, project_id: str, files: list[Any], *, limit: int = 5) -> list[dict[str, Any]]:
+    if not project_id:
+        return []
+    filenames = _changed_filenames(files)
+    try:
+        rows = conn.execute(
+            """
+            SELECT project_id, rule_id, file_glob, snippet_hash, snippet_excerpt, count, last_marked_at
+            FROM rule_suppression_hints
+            WHERE project_id = %s
+            ORDER BY count DESC, last_marked_at DESC
+            LIMIT 50
+            """,
+            (project_id,),
+        ).fetchall()
+    except Exception:
+        return []
+    hints: list[dict[str, Any]] = []
+    for row in rows:
+        item = {key: row[key] for key in row.keys()}
+        file_glob = str(item.get("file_glob") or "")
+        if filenames and not any(_file_glob_matches(file_glob, filename) for filename in filenames):
+            continue
+        hints.append(
+            {
+                "rule_id": str(item.get("rule_id") or ""),
+                "file_glob": file_glob,
+                "snippet_hash": str(item.get("snippet_hash") or ""),
+                "snippet_excerpt": str(item.get("snippet_excerpt") or "")[:240],
+                "count": int(item.get("count") or 1),
+            }
+        )
+        if len(hints) >= limit:
+            break
+    return hints
+
+
 def make_run_experts_node(
     *,
     conn: Any,
@@ -548,6 +607,7 @@ def make_run_experts_node(
         all_findings: list[dict[str, Any]] = []
         bound_review_coverage_records: list[dict[str, Any]] = []
         tool_observations = state.get("tool_observations") or load_tool_observations(conn, run_id)
+        suppression_hints = _load_suppression_hints_for_prompt(conn, project_id, llm_files or files)
         if effort == "trivial":
             trivial_span = recorder.span("trivial_short_circuit", "router_agent")
             recorder.event(trivial_span, "trivial_short_circuit", "trivial 检视强度跳过 LLM，仅保留静态摘要")
@@ -630,6 +690,18 @@ def make_run_experts_node(
                 "related_context": state.get("related_context") or {},
                 "budget_tracker": budget_tracker,
             }
+            if suppression_hints:
+                agent_context["suppression_hints"] = suppression_hints
+                recorder.event(
+                    span,
+                    "suppression_hints_loaded",
+                    f"{agent_id} 注入 {len(suppression_hints)} 条项目 FP 抑制提示",
+                    {
+                        "project_id": project_id,
+                        "count": len(suppression_hints),
+                        "rules": sorted({str(item.get("rule_id") or "") for item in suppression_hints if item.get("rule_id")}),
+                    },
+                )
             feedback_examples = _load_feedback_examples(conn, project_id, agent_id)
             learned_examples = retrieve_examples(agent_id, llm_files or files, feedback_rows=feedback_examples, k=3)
             if learned_examples:

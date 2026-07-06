@@ -16,6 +16,10 @@ Current scope:
 - `npm run verify:real-prs` gates current real-review quality and requires every
   finding to carry `evidence_score`, `consensus_agents`, and
   `quality_trace.critic_verdict`.
+- `npm run verify:real-prs:target` is the final target gate for this uplift. It
+  requires at least 4 MRs, at least 25 positive gold findings, at least 1
+  negative MR, precision >= 0.80, recall >= 0.65, high-severity accuracy >=
+  0.80, and zero negative false positives.
 
 The set is intentionally small at first so the gate is executable. The target
 state for the review-quality uplift is at least 4 real open-source PR fixtures,
@@ -64,3 +68,9 @@ to `evaluation/real_findings.jsonl`, then append manually reviewed labels to
 `evaluation/real_gold_set.jsonl`. Do not mark a fixture as negative by adding
 empty expected findings only; negative MRs must be represented in the gold set
 with `ground_truth: "negative"` and must produce zero final findings.
+
+Run the target gate when deciding whether the quality-uplift work is complete:
+
+```bash
+npm run verify:real-prs:target
+```

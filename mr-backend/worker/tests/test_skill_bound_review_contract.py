@@ -440,6 +440,28 @@ def test_bound_skill_skip_marker_is_audited_without_becoming_finding() -> None:
     assert summary["missed_count"] == 0, summary
 
 
+def test_bound_skill_rejects_lower_priority_skip_marker_rewrite() -> None:
+    kept, rejected = _enforce_bound_batch_findings(
+        {
+            "label": "bound_skill:secure-review-skill:SEC-CMD-001",
+            "rule_id": "",
+            "skill_key": "secure-review-skill",
+            "checkpoint_id": "SEC-CMD-001",
+            "agent": {"skill_checkpoints": [{"checkpoint_id": "SEC-CMD-001"}]},
+        },
+        [
+            {
+                "skipped_rules": ["SEC-INJECT-003"],
+                "skip_reason": "按通用注入规则检查后未命中。",
+            }
+        ],
+    )
+
+    assert kept == [], kept
+    assert len(rejected) == 1, rejected
+    assert rejected[0]["rejected_reasons"] == ["bound_skill_checkpoint_mismatch"], rejected
+
+
 def test_bound_review_coverage_summary_tracks_hits_and_misses() -> None:
     summary = _summarize_bound_review_coverage(
         [
@@ -534,5 +556,6 @@ if __name__ == "__main__":
     test_skill_checkpoint_batch_flags_missing_required_evidence_without_dropping()
     test_bound_rule_batch_filters_explicitly_mismatched_rule()
     test_bound_skill_skip_marker_is_audited_without_becoming_finding()
+    test_bound_skill_rejects_lower_priority_skip_marker_rewrite()
     test_bound_review_coverage_summary_tracks_hits_and_misses()
     test_coverage_retry_batch_focuses_prompt_on_missed_bound_rule()

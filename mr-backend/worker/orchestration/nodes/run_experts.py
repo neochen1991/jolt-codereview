@@ -275,6 +275,9 @@ def _enforce_bound_batch_findings(batch: dict[str, Any], items: list[dict[str, A
                 }
             )
             continue
+        if not covered_rules and skipped_rules and expected_id not in skipped_rules and not _has_finding_payload(finding):
+            rejected.append(_with_rejected_reason(finding, mismatch_reason))
+            continue
         if covered_rules and expected_id not in covered_rules:
             rejected.append(_with_rejected_reason(finding, mismatch_reason))
             continue

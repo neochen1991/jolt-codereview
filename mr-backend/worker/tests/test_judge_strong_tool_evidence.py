@@ -9,7 +9,9 @@ sys.path.insert(0, str(ROOT / "worker"))
 from orchestration.nodes.judge_findings import (
     _fill_missing_tool_coverage,
     _is_low_precision_unbacked_advisory,
+    _merge_finding_metadata,
     _prune_low_signal_final_findings,
+    build_quality_trace,
     judge_candidate_findings,
 )
 
@@ -206,6 +208,49 @@ def test_missing_tool_coverage_requires_high_confidence_and_precise_line() -> No
     assert filled == [], filled
 
 
+def test_merge_finding_metadata_weights_confidence_by_distinct_agent_consensus() -> None:
+    primary = {
+        "agent_id": "security_agent",
+        "confidence": 0.8,
+        "covered_rules": ["SEC-INJECT-003"],
+        "file_path": "src/main/java/App.java",
+        "line_start": 42,
+        "title": "SQL 注入",
+        "evidence": "executeQuery(sql + userId)",
+    }
+    second_agent = {
+        "agent_id": "backend_agent",
+        "confidence": 0.76,
+        "covered_rules": ["SEC-INJECT-003"],
+        "file_path": "src/main/java/App.java",
+        "line_start": 42,
+        "title": "SQL 注入",
+        "evidence": "executeQuery(sql + userId)",
+    }
+    merged_two = _merge_finding_metadata(dict(primary), second_agent)
+    assert merged_two["merged_agent_ids"] == ["backend_agent", "security_agent"], merged_two
+    assert merged_two["confidence"] == 0.84, merged_two
+    assert build_quality_trace(merged_two, [])["consensus_agents"] == ["backend_agent", "security_agent"]
+
+    third_agent_bundle = {
+        "agent_id": "backend_agent",
+        "merged_agent_ids": ["backend_agent", "performance_agent"],
+        "confidence": 0.78,
+        "covered_rules": ["SEC-INJECT-003"],
+        "file_path": "src/main/java/App.java",
+        "line_start": 42,
+        "title": "SQL 注入",
+        "evidence": "executeQuery(sql + userId)",
+    }
+    merged_three = _merge_finding_metadata(dict(primary), third_agent_bundle)
+    assert merged_three["merged_agent_ids"] == ["backend_agent", "performance_agent", "security_agent"], merged_three
+    assert merged_three["confidence"] == 0.88, merged_three
+
+    same_agent = _merge_finding_metadata(dict(primary), {**second_agent, "agent_id": "security_agent"})
+    assert same_agent["merged_agent_ids"] == ["security_agent"], same_agent
+    assert same_agent["confidence"] == 0.8, same_agent
+
+
 if __name__ == "__main__":
     test_strong_tool_findings_keep_distinct_root_causes_on_same_line()
     test_strong_ddd_tool_finding_is_not_pruned_as_weak_advisory()
@@ -214,3 +259,4 @@ if __name__ == "__main__":
     test_missing_tool_coverage_fills_rule_when_existing_finding_is_multi_rule_bundle()
     test_missing_tool_coverage_uses_registry_promotable_rules_beyond_legacy_fill_list()
     test_missing_tool_coverage_requires_high_confidence_and_precise_line()
+    test_merge_finding_metadata_weights_confidence_by_distinct_agent_consensus()

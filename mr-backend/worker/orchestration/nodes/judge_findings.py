@@ -716,7 +716,9 @@ def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) 
     primary["covered_rules"] = sorted(str(item) for item in covered if item)
     primary["skipped_rules"] = sorted(str(item) for item in skipped if item)
     primary["merged_agent_ids"] = sorted(agents)
-    primary["confidence"] = min(0.99, max(float(primary.get("confidence") or 0), float(secondary.get("confidence") or 0)) + 0.03)
+    base_confidence = max(float(primary.get("confidence") or 0), float(secondary.get("confidence") or 0))
+    consensus_bonus = 1 + 0.05 * min(3, max(0, len(agents) - 1))
+    primary["confidence"] = round(min(0.99, base_confidence * consensus_bonus), 4)
     secondary_location = ":".join(
         part
         for part in [
@@ -3251,6 +3253,11 @@ def build_evidence_contract(finding: dict[str, Any], source_observations: list[d
 
 
 def build_quality_trace(finding: dict[str, Any], source_observations: list[dict[str, Any]]) -> dict[str, Any]:
+    merged_agent_ids = [
+        str(agent_id)
+        for agent_id in (finding.get("merged_agent_ids") or [finding.get("agent_id")])
+        if str(agent_id or "").strip()
+    ]
     return {
         "agent_id": finding.get("agent_id"),
         "agent_display_name": finding.get("agent_display_name") or finding.get("agent_id"),
@@ -3262,7 +3269,8 @@ def build_quality_trace(finding: dict[str, Any], source_observations: list[dict[
             "line_end": finding.get("line_end"),
         },
         "dedupe_hash": finding.get("dedupe_hash"),
-        "merged_agent_ids": finding.get("merged_agent_ids") or [finding.get("agent_id")],
+        "merged_agent_ids": merged_agent_ids,
+        "consensus_agents": merged_agent_ids,
         "covered_rules": finding.get("covered_rules") or [],
         "skipped_rules": finding.get("skipped_rules") or [],
         "rule_reconciliation": finding.get("rule_reconciliation"),

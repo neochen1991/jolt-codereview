@@ -61,9 +61,34 @@ class VerifyFindingsSoftRejectTest(unittest.TestCase):
         self.assertLess(auth_false_positive, 0.35)
         self.assertLess(state_false_positive, 0.35)
 
+    def test_chinese_sql_injection_evidence_matches_code_semantics(self):
+        result = _evidence_matches_source(
+            "这里直接把外部输入拼接进 SQL 并执行，存在注入风险。",
+            'String sql = "select * from payment where user_id = " + userId;\nResultSet rs = statement.executeQuery(sql);',
+        )
+        self.assertGreaterEqual(result["score"], 0.5, result)
+
+    def test_sql_execution_without_concat_does_not_match_injection_semantics(self):
+        result = _evidence_matches_source(
+            "这里直接把外部输入拼接进 SQL 并执行，存在注入风险。",
+            "ResultSet rs = statement.executeQuery(sql);",
+        )
+        self.assertLess(result["score"], 0.5, result)
+
+    def test_chinese_state_update_evidence_matches_code_semantics(self):
+        result = _evidence_matches_source(
+            "客户端传入状态直接覆盖订单状态，缺少服务端状态流转校验。",
+            "payment.setStatus(request.getStatus());",
+        )
+        self.assertGreaterEqual(result["score"], 0.5, result)
+
     def test_evidence_score_middle_lowers_confidence_and_flags(self):
-        finding = self.base_finding("executeQuery SQL userId injection", confidence=0.8)
-        accepted, rejected = self.verify(finding, "ResultSet rs = statement.executeQuery(sql + userId);")
+        finding = {
+            **self.base_finding("executeQuery SQL userId injection", confidence=0.8),
+            "title": "SQL 查询风险待确认",
+            "problem_description": "SQL 执行上下文证据不足。",
+        }
+        accepted, rejected = self.verify(finding, "ResultSet rs = statement.executeQuery(sql);")
         self.assertEqual(rejected, [])
         self.assertEqual(len(accepted), 1)
         self.assertIn("low_evidence_match", accepted[0]["verification_flags"])
@@ -76,8 +101,7 @@ class VerifyFindingsSoftRejectTest(unittest.TestCase):
         accepted, rejected = self.verify(finding, "ResultSet rs = statement.executeQuery(sql + userId);")
         self.assertEqual(rejected, [])
         self.assertEqual(len(accepted), 1)
-        self.assertIn("low_evidence_match", accepted[0]["verification_flags"])
-        self.assertIn("source_location_supported", accepted[0]["verification_flags"])
+        self.assertNotIn("low_evidence_match", accepted[0].get("verification_flags") or [])
 
     def test_paraphrased_evidence_on_generic_source_location_is_flagged_not_rejected(self):
         finding = {
@@ -89,8 +113,7 @@ class VerifyFindingsSoftRejectTest(unittest.TestCase):
         accepted, rejected = self.verify(finding, "payment.setStatus(request.getStatus());")
         self.assertEqual(rejected, [])
         self.assertEqual(len(accepted), 1)
-        self.assertIn("low_evidence_match", accepted[0]["verification_flags"])
-        self.assertIn("source_location_supported", accepted[0]["verification_flags"])
+        self.assertNotIn("low_evidence_match", accepted[0].get("verification_flags") or [])
 
     def test_evidence_score_low_with_missing_source_window_is_flagged_not_rejected(self):
         finding = self.base_finding("totally unrelated payment gateway timeout retry", confidence=0.91)

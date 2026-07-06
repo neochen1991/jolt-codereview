@@ -21,10 +21,11 @@ def _token_jaccard(a: str, b: str) -> float:
     left = _similarity_tokens(a, include_cjk=include_cjk)
     right = _similarity_tokens(b, include_cjk=include_cjk)
     if not left or not right:
-        return 0.0
-    score = len(left & right) / len(left | right)
-    if include_cjk:
-        score = max(score, _cjk_semantic_similarity(a, b))
+        score = 0.0
+    else:
+        score = len(left & right) / len(left | right)
+    if _has_cjk(a) or _has_cjk(b):
+        score = max(score, _semantic_similarity(a, b))
     return score
 
 
@@ -81,9 +82,53 @@ def _cjk_semantic_tokens(value: str) -> set[str]:
     return tokens
 
 
-def _cjk_semantic_similarity(a: str, b: str) -> float:
-    left = _cjk_semantic_tokens(a)
-    right = _cjk_semantic_tokens(b)
+def _code_semantic_tokens(value: str) -> set[str]:
+    text = str(value or "")
+    compact = re.sub(r"\s+", "", text).lower()
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
+    words = {
+        part.lower()
+        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", spaced)
+        for part in re.split(r"[_\W]+", token)
+        if part
+    }
+    tokens: set[str] = set()
+
+    has_sql_name = "sql" in words or "sql" in compact
+    has_sql_execute = bool(re.search(r"\bexecute(query|update|largeupdate|)\s*\(", compact)) or "createstatement" in compact
+    has_concat = "+" in text or ".concat(" in compact or "${" in text
+    if has_sql_name and has_sql_execute and has_concat:
+        tokens.add("SQL注入")
+    if has_sql_name and has_concat:
+        tokens.add("字符串拼接")
+    if has_sql_execute:
+        tokens.add("SQL执行")
+
+    request_words = {"request", "req", "param", "params", "body", "dto", "input", "payload"}
+    if words & request_words:
+        tokens.add("客户端可控")
+    has_status_word = "status" in words or "state" in words or "setstatus" in compact or "getstatus" in compact
+    if has_status_word:
+        tokens.add("订单状态")
+    if "setstatus" in compact or re.search(r"\b(status|state)\s*=", compact) or re.search(r"\.set[A-Za-z0-9_]*(status|state)\s*\(", compact):
+        tokens.add("状态变更")
+
+    has_sensitive_word = bool(words & {"password", "passwd", "secret", "token", "apikey", "api", "key", "credential", "accesskey"})
+    if has_sensitive_word:
+        tokens.add("敏感信息")
+    if has_sensitive_word and bool(words & {"log", "logger", "print", "println", "info", "debug", "warn", "error"}):
+        tokens.add("日志泄露")
+
+    return tokens
+
+
+def _semantic_tokens(value: str) -> set[str]:
+    return _cjk_semantic_tokens(value) | _code_semantic_tokens(value)
+
+
+def _semantic_similarity(a: str, b: str) -> float:
+    left = _semantic_tokens(a)
+    right = _semantic_tokens(b)
     if not left or not right:
         return 0.0
     overlap = left & right
@@ -97,14 +142,14 @@ def _cjk_semantic_similarity(a: str, b: str) -> float:
 
 
 def _cjk_semantic_overlap_is_actionable(overlap: set[str]) -> bool:
-    if "权限校验" in overlap:
-        return "缺少" in overlap
-    if "客户端可控" in overlap or "订单状态" in overlap or "状态变更" in overlap:
-        return "客户端可控" in overlap and "状态变更" in overlap
     if "SQL注入" in overlap:
         return True
     if "字符串拼接" in overlap:
         return "SQL注入" in overlap or "客户端可控" in overlap
+    if "权限校验" in overlap:
+        return "缺少" in overlap
+    if "客户端可控" in overlap or "订单状态" in overlap or "状态变更" in overlap:
+        return "客户端可控" in overlap and "状态变更" in overlap
     if "资源关闭" in overlap:
         return "缺少" in overlap
     if "敏感信息" in overlap:

@@ -16,6 +16,7 @@ from prompts.system import REVIEW_SYSTEM_PROMPT
 LLM_REVIEW_SEED = 13
 LLM_REVIEW_SCHEMA_NAME = "review_findings_v1"
 LLM_REVIEW_FALLBACK_SCHEMA_NAME = "review_findings_v1_unstructured"
+_SCHEMA_UNSUPPORTED_PROVIDERS: set[tuple[str, str]] = set()
 
 
 def sha1(value: str) -> str:
@@ -255,6 +256,25 @@ def review_findings_response_format() -> dict[str, Any]:
             },
         },
     }
+
+
+def _schema_provider_key(provider: str, model: str) -> tuple[str, str]:
+    return (str(provider or ""), str(model or ""))
+
+
+def _schema_error_is_unsupported(exc: Exception) -> bool:
+    if isinstance(exc, urllib.error.HTTPError) and 400 <= int(getattr(exc, "code", 0) or 0) < 500:
+        return True
+    message = str(exc).lower()
+    return "response_format" in message or "json_schema" in message or "schema" in message
+
+
+def schema_strict_disabled(provider: str, model: str) -> bool:
+    return _schema_provider_key(provider, model) in _SCHEMA_UNSUPPORTED_PROVIDERS
+
+
+def mark_schema_strict_disabled(provider: str, model: str) -> None:
+    _SCHEMA_UNSUPPORTED_PROVIDERS.add(_schema_provider_key(provider, model))
 
 
 def llm_cache_key(provider: str, model: str, prompt: str, *, seed: int, schema_name: str, project_id: str) -> str:
@@ -759,7 +779,15 @@ def call_llm(
             "seed": LLM_REVIEW_SEED,
             "response_format": review_findings_response_format(),
         }
-        schema_name = LLM_REVIEW_SCHEMA_NAME
+        schema_name = LLM_REVIEW_SCHEMA_NAME if not schema_strict_disabled(provider, model) else LLM_REVIEW_FALLBACK_SCHEMA_NAME
+        if schema_name == LLM_REVIEW_FALLBACK_SCHEMA_NAME:
+            payload = {key: value for key, value in payload.items() if key != "response_format"}
+            recorder.event(
+                span_id,
+                "schema_strict_disabled",
+                "provider/model 已标记为不支持 strict JSON schema，本次直接使用无 schema JSON 输出",
+                {"provider": provider, "model": model},
+            )
         cache_key = llm_cache_key(provider, model, prompt, seed=LLM_REVIEW_SEED, schema_name=schema_name, project_id=project_id)
         cached = _read_cached_llm_response(config, cache_key, project_id)
         if cached is not None:
@@ -798,11 +826,14 @@ def call_llm(
                     )
                 )
             except (urllib.error.HTTPError, json.JSONDecodeError) as schema_exc:
+                if schema_name == LLM_REVIEW_FALLBACK_SCHEMA_NAME or not _schema_error_is_unsupported(schema_exc):
+                    raise
                 fallback_payload = {key: value for key, value in payload.items() if key != "response_format"}
                 fallback_schema_name = LLM_REVIEW_FALLBACK_SCHEMA_NAME
                 fallback_cache_key = llm_cache_key(provider, model, prompt, seed=LLM_REVIEW_SEED, schema_name=fallback_schema_name, project_id=project_id)
                 cached_fallback = _read_cached_llm_response(config, fallback_cache_key, project_id)
                 if cached_fallback is not None:
+                    mark_schema_strict_disabled(provider, model)
                     response = cached_fallback
                     schema_name = fallback_schema_name
                     cache_key = fallback_cache_key
@@ -813,9 +844,10 @@ def call_llm(
                         {"provider": provider, "model": model, "error": type(schema_exc).__name__},
                     )
                 else:
+                    mark_schema_strict_disabled(provider, model)
                     recorder.event(
                         span_id,
-                        "llm_schema_downgraded",
+                        "schema_strict_disabled",
                         "provider 不支持 strict JSON schema，本次调用降级为普通 JSON 输出",
                         {"provider": provider, "model": model, "error": str(schema_exc)[:300]},
                     )

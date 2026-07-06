@@ -7,8 +7,8 @@ from typing import Any, Iterable
 
 from rules.registry import agent_owners_for_rule, categories_for_agent, category_for_rule
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_GOLD_PATHS = (ROOT / "evaluation" / "real_gold_set.jsonl", ROOT / "evaluation" / "gold_set.jsonl")
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_GOLD_PATHS = (REPO_ROOT / "evaluation" / "real_gold_set.jsonl", REPO_ROOT / "evaluation" / "gold_set.jsonl")
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,8 @@ class Example:
             "evidence_keywords": self.evidence_keywords[:8],
             "usage_policy": (
                 "expected_finding 表示相似结构应重点核验并给出精确证据；"
-                "skip_false_positive 表示历史相似问题被人工判为误报，只有新增源码证据时才输出。"
+                "skip_false_positive 表示历史相似问题被人工判为误报，只有新增源码证据时才输出；"
+                "boundary_other_expert 表示问题真实存在但属于其他专家职责，当前专家遇到相似结构时应跳过。"
             ),
         }
 
@@ -125,13 +126,13 @@ def _gold_examples(paths: Iterable[Path]) -> list[dict[str, Any]]:
     return items
 
 
-def _from_gold_item(item: dict[str, Any], score: float) -> Example:
+def _from_gold_item(item: dict[str, Any], score: float, *, label: str = "expected_finding") -> Example:
     rule_id = str(item.get("rule_id") or "")
     evidence_keywords = [str(keyword) for keyword in item.get("evidence_keywords") or []]
     snippet = " / ".join(evidence_keywords) if evidence_keywords else str(item.get("id") or "")
     return Example(
         source="gold",
-        label="expected_finding",
+        label=label,
         rule_id=rule_id,
         category=category_for_rule(rule_id),
         severity=str(item.get("severity") or ""),
@@ -179,12 +180,22 @@ def retrieve_examples(
     languages = _file_languages(files)
     agent_categories = categories_for_agent(agent_id)
     examples: list[Example] = []
+    boundary_examples: list[Example] = []
 
     for item in _gold_examples(gold_paths):
         score = _score_example(agent_id=agent_id, languages=languages, agent_categories=agent_categories, item=item)
-        if score <= 0:
+        rule_id = str(item.get("rule_id") or "")
+        file_path = str(item.get("file") or item.get("file_path") or "")
+        owned_by_agent = agent_id in agent_owners_for_rule(rule_id)
+        owned_category = bool(category_for_rule(rule_id) and category_for_rule(rule_id) in agent_categories)
+        same_language = _language_for_path(file_path) in languages
+        if owned_by_agent or owned_category:
+            if score > 0:
+                examples.append(_from_gold_item(item, score))
             continue
-        examples.append(_from_gold_item(item, score))
+        if same_language:
+            boundary_score = 2.0 + (0.5 if str(item.get("severity") or "").lower() in {"critical", "high"} else 0.0)
+            boundary_examples.append(_from_gold_item(item, boundary_score, label="boundary_other_expert"))
 
     for item in feedback_rows or []:
         if str(item.get("label") or item.get("feedback_type") or "").lower() not in {"skip_false_positive", "false_positive", "judge_rejected"}:
@@ -196,8 +207,17 @@ def retrieve_examples(
 
     positives = [item for item in examples if item.label == "expected_finding"]
     negatives = [item for item in examples if item.label == "skip_false_positive"]
+    boundaries = boundary_examples
     positives.sort(key=lambda item: (-item.score, item.file_path, item.line or 0, item.last_seen))
     negatives.sort(key=lambda item: (-item.score, item.file_path, item.line or 0, item.last_seen), reverse=False)
-    selected = [*positives[: max(0, k - 1)], *negatives[:1]]
-    selected.sort(key=lambda item: (-item.score, item.label, item.file_path, item.line or 0))
+    boundaries.sort(key=lambda item: (-item.score, item.file_path, item.line or 0, item.last_seen))
+    selected: list[Example] = []
+    for bucket in [positives[:1], negatives[:1], boundaries[:1]]:
+        for item in bucket:
+            if len(selected) < k:
+                selected.append(item)
+    for item in [*positives[1:], *negatives[1:], *boundaries[1:]]:
+        if len(selected) >= k:
+            break
+        selected.append(item)
     return [item.as_prompt_item() for item in selected[:k]]

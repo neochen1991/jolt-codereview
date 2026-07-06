@@ -15,7 +15,7 @@
     "sync:modules": "node scripts/export-three-repos.mjs --force",
     "export:repos": "node scripts/export-three-repos.mjs --force --out=/private/tmp/jolt-three-service-export",
     "build": "npm --prefix common-backend run build && npm --prefix mr-backend run build && npm --prefix frontend run build",
-    "verify": "npm run build && npm run verify:worker-quality && npm run verify:gold-eval && npm run verify:runtime-cleanup && npm run verify:frontend-api-routing && npm run verify:skill-upload-paths && npm run verify:bound-rule-skill-full-read && npm run verify:mr-queue-created-order && npm run verify:common-llm-base-url && npm run verify:postgres-only-runtime",
+    "verify": "npm run build && npm run verify:worker-quality && npm run verify:learned-examples && npm run verify:gold-eval && npm run verify:runtime-cleanup && npm run verify:frontend-api-routing && npm run verify:skill-upload-paths && npm run verify:bound-rule-skill-full-read && npm run verify:mr-queue-created-order && npm run verify:common-llm-base-url && npm run verify:postgres-only-runtime",
     "verify:split-full-regression": "node scripts/verify-split-full-regression.mjs",
     "verify:frontend-api-routing": "node scripts/verify-frontend-api-routing.mjs",
     "verify:skill-upload-paths": "node scripts/verify-skill-upload-paths.mjs",
@@ -23,6 +23,7 @@
     "verify:mr-queue-created-order": "node scripts/verify-mr-queue-created-order.mjs",
     "verify:common-llm-base-url": "node scripts/verify-common-llm-base-url.mjs",
     "verify:runtime-cleanup": "node scripts/verify-runtime-cleanup.mjs",
+    "verify:learned-examples": "python3 scripts/verify_learned_examples.py",
     "verify:worker-quality": "python3 mr-backend/worker/tests/test_verify_findings_soft_reject.py && python3 mr-backend/worker/tests/test_evidence_score.py && python3 mr-backend/worker/tests/test_candidate_store_reason_sanitizer.py && python3 mr-backend/worker/tests/test_skill_bound_review_contract.py && python3 mr-backend/worker/tests/test_judge_retains_needs_review.py && python3 mr-backend/worker/tests/test_judge_strong_tool_evidence.py",
     "verify:gold-eval": "node scripts/verify-gold-eval.mjs",
     "verify:postgres-only-runtime": "node scripts/verify-postgres-only-runtime.mjs"

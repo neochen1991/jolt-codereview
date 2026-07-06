@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "worker"))
+sys.path.insert(0, str(ROOT / "mr-backend" / "worker"))
 
 from prompts.builder import build_prompt
 from prompts.example_retriever import retrieve_examples
@@ -70,6 +70,30 @@ def assert_feedback_false_positive_is_included_as_negative_example() -> None:
     assert negative[0]["source"] == "feedback", negative
 
 
+def assert_boundary_example_is_included_to_protect_expert_scope() -> None:
+    examples = retrieve_examples(
+        "security_agent",
+        [ChangedFile("src/main/java/com/acme/payment/PaymentController.java")],
+        k=3,
+        feedback_rows=[
+            {
+                "feedback_type": "false_positive",
+                "rule_id": "SEC-INJECT-003",
+                "file_path": "src/main/java/com/acme/payment/PaymentController.java",
+                "line_start": 42,
+                "severity": "high",
+                "evidence": "历史用户确认该 SQL 片段并非注入风险。",
+                "created_at": "2026-06-17T00:00:00Z",
+            }
+        ],
+    )
+    labels = {item["label"] for item in examples}
+    assert {"expected_finding", "skip_false_positive", "boundary_other_expert"}.issubset(labels), examples
+    boundary = next(item for item in examples if item["label"] == "boundary_other_expert")
+    assert boundary["source"] == "gold", boundary
+    assert not str(boundary["rule_id"]).startswith("SEC-"), boundary
+
+
 def assert_prompt_injects_learned_examples_only_when_available() -> None:
     file = ChangedFile("src/main/java/com/acme/payment/PaymentController.java")
     empty_prompt, _ = build_prompt({"agent_id": "security_agent"}, [file], "")
@@ -91,6 +115,17 @@ def assert_prompt_injects_learned_examples_only_when_available() -> None:
                     "line": 42,
                     "snippet": "executeQuery / userId",
                     "evidence_keywords": ["executeQuery", "userId"],
+                },
+                {
+                    "source": "gold",
+                    "label": "boundary_other_expert",
+                    "rule_id": "PERF-QUERY-001",
+                    "category": "UNBOUNDED_QUERY",
+                    "severity": "medium",
+                    "file_path": file.filename,
+                    "line": 44,
+                    "snippet": "repository.findAll()",
+                    "evidence_keywords": ["findAll"],
                 }
             ],
         },
@@ -101,6 +136,8 @@ def assert_prompt_injects_learned_examples_only_when_available() -> None:
     assert "learned_examples" in payload, payload.keys()
     assert "learned_examples" in payload["input_contract"]["sections"]
     assert payload["learned_examples"]["items"][0]["label"] == "expected_finding"
+    assert payload["learned_examples"]["items"][1]["label"] == "boundary_other_expert"
+    assert "boundary_other_expert 样例用于明确专家职责边界" in payload["task"], payload["task"]
 
 
 def assert_no_manual_prompt_example_files() -> None:
@@ -119,6 +156,7 @@ def main() -> None:
     assert_empty_gold_returns_no_examples()
     assert_gold_examples_are_retrieved_by_agent_language_and_category()
     assert_feedback_false_positive_is_included_as_negative_example()
+    assert_boundary_example_is_included_to_protect_expert_scope()
     assert_prompt_injects_learned_examples_only_when_available()
     assert_no_manual_prompt_example_files()
     print(json.dumps({"ok": True, "verified": "learned_examples"}, ensure_ascii=False))

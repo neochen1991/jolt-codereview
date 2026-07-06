@@ -10,6 +10,7 @@ from orchestration.judging.evidence_score import apply_evidence_score_policy
 from orchestration.nodes.judge_findings import (
     _critic_rejected,
     build_quality_trace,
+    reconcile_rules_with_tool_observations,
     retain_as_needs_review,
     should_retain_low_precision_without_tool_support,
 )
@@ -73,6 +74,31 @@ def test_quality_trace_preserves_bound_evidence_contract() -> None:
     assert trace["bound_evidence_contract"] == bound_contract
 
 
+def test_skill_checkpoint_rule_is_not_reconciled_to_tool_rule() -> None:
+    finding = agent_finding(
+        covered_rules=["SEC-CMD-001"],
+        rule_id="SEC-CMD-001",
+        skill_key="secure-review-skill",
+        checkpoint_id="SEC-CMD-001",
+        title="命令注入检查",
+        source_observations=[
+            {
+                "tool_name": "java_web_static",
+                "rule_id": "SEC-INJECT-003",
+                "file_path": "src/main/java/com/acme/payment/api/AdminController.java",
+                "line_start": 42,
+                "message": "Runtime.exec receives request parameter",
+            }
+        ],
+    )
+
+    reconciled = reconcile_rules_with_tool_observations(finding, finding["source_observations"])
+
+    assert reconciled["covered_rules"] == ["SEC-CMD-001"], reconciled
+    assert reconciled["rule_id"] == "SEC-CMD-001", reconciled
+    assert "rule_reconciliation" not in reconciled, reconciled
+
+
 def test_low_evidence_score_downgrades_to_needs_review_instead_of_drop() -> None:
     finding = agent_finding()
     scored = apply_evidence_score_policy(finding, {"score": 0.2, "components": {}}, {"drop_below": 0.35, "downgrade_below": 0.5})
@@ -102,5 +128,6 @@ if __name__ == "__main__":
     test_agent_only_complete_finding_is_retained_without_tool_support()
     test_partial_evidence_contract_is_retained_as_needs_review()
     test_quality_trace_preserves_bound_evidence_contract()
+    test_skill_checkpoint_rule_is_not_reconciled_to_tool_rule()
     test_low_evidence_score_downgrades_to_needs_review_instead_of_drop()
     test_critic_rejected_still_allows_hard_drop()

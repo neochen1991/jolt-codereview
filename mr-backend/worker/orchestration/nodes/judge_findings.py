@@ -2950,11 +2950,25 @@ def match_tool_observations_for_finding(
     return [item for _, item in matched[:8]]
 
 
+def _has_bound_authoritative_rule(finding: dict[str, Any]) -> bool:
+    covered_rules = {str(rule) for rule in (finding.get("covered_rules") or []) if rule}
+    bound_ids = {
+        str(finding.get("checkpoint_id") or "").strip(),
+        str(finding.get("bound_rule_id") or "").strip(),
+    }
+    if any(bound_id and bound_id in covered_rules for bound_id in bound_ids):
+        return True
+    label = str(finding.get("review_batch_label") or "")
+    return bool(label.startswith("bound_skill:") or label.startswith("bound_rule:"))
+
+
 def reconcile_rules_with_tool_observations(
     finding: dict[str, Any],
     source_observations: list[dict[str, Any]],
 ) -> dict[str, Any]:
     if not source_observations:
+        return finding
+    if _has_bound_authoritative_rule(finding):
         return finding
     source_categories = {
         normalized_rule_category(str(item.get("rule_id") or ""), item.get("message"))

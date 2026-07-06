@@ -89,13 +89,15 @@ def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], t
     recall = tp / max(1, tp + fn)
     high_gold = [item for item in positive_gold if norm(item.get("severity")).lower() in {"critical", "high"}]
     high_matched = [item for item in high_gold if norm(item.get("id")) in matched_gold_ids]
+    high_severity_accuracy = round(len(high_matched) / max(1, len(high_gold)), 4)
     return {
         "tp": tp,
         "fp": fp,
         "fn": fn,
         "precision": round(precision, 4),
         "recall": round(recall, 4),
-        "high_recall": round(len(high_matched) / max(1, len(high_gold)), 4),
+        "high_recall": high_severity_accuracy,
+        "high_severity_accuracy": high_severity_accuracy,
         "gold_count": len(positive_gold),
         "finding_count": len(findings),
         "negative_mr_count": len(negative_mr_ids),

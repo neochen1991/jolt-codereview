@@ -137,6 +137,7 @@ export function ConfigWorkspace({
   const [toolSave, setToolSave] = useState<FormActionState>({ status: "idle", message: "" });
   const [successNotice, setSuccessNotice] = useState<SuccessNotice | null>(null);
   const [agentQuality, setAgentQuality] = useState<Record<string, unknown>[]>([]);
+  const [reviewQualityMetrics, setReviewQualityMetrics] = useState<Record<string, unknown>>({});
   const [ruleDocs, setRuleDocs] = useState<Record<string, unknown>[]>([]);
   const [ruleBindings, setRuleBindings] = useState<Record<string, unknown>[]>([]);
   const [customSkills, setCustomSkills] = useState<Record<string, unknown>[]>([]);
@@ -205,7 +206,7 @@ export function ConfigWorkspace({
     try {
       if (view === "rules") setRows(await api<Record<string, unknown>[]>(`/api/projects/${projectId}/rule-sets`));
       else if (view === "agents") {
-        const [profiles, rules, bindings, expertRuleBindings, skills, assets, expertSkillBindings, qualityData] = await Promise.all([
+        const [profiles, rules, bindings, expertRuleBindings, skills, assets, expertSkillBindings, qualityData, qualityMetrics] = await Promise.all([
           api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-profiles`),
           api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/rule-documents`),
           api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-tool-bindings`),
@@ -213,7 +214,8 @@ export function ConfigWorkspace({
           api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/custom-skills`),
           api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/custom-skill-assets`),
           api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-skill-bindings`),
-          api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/agents/quality`)
+          api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/agents/quality`),
+          api<Record<string, unknown>>(`/api/projects/${projectId}/review-quality/metrics`)
         ]);
         setRows(listItems(profiles));
         setRuleDocs(listItems(rules));
@@ -223,6 +225,7 @@ export function ConfigWorkspace({
         setSkillAssets(listItems(assets));
         setSkillBindings(listItems(expertSkillBindings));
         setAgentQuality(listItems(qualityData));
+        setReviewQualityMetrics(qualityMetrics || {});
       }
       else if (view === "users") {
         const [members, requests, invitationData] = await Promise.all([
@@ -966,6 +969,16 @@ export function ConfigWorkspace({
     return agentQuality.find((item) => String(item.agent_id) === agentKey) ?? {};
   }
 
+  function projectBoundRuleCoverage() {
+    const coverage = reviewQualityMetrics.bound_rule_coverage;
+    return typeof coverage === "object" && coverage ? coverage as Record<string, unknown> : {};
+  }
+
+  function metricPercent(value: unknown) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? `${Math.round(parsed * 100)}%` : "--";
+  }
+
   if (view === "full" || view === "issues") {
     return (
       <section className="config-workspace">
@@ -1132,6 +1145,8 @@ export function ConfigWorkspace({
                 <span>规范文档 <strong>{ruleDocs.length}</strong></span>
                 <span>自定义 Skill <strong>{customSkills.length}</strong></span>
                 <span>Skill 资源 <strong>{skillAssets.length}</strong></span>
+                <span>项目规则闭环 <strong>{metricPercent(projectBoundRuleCoverage().resolution_rate)}</strong></span>
+                <span>未闭环 <strong>{String(projectBoundRuleCoverage().unresolved_count ?? 0)}</strong></span>
               </div>
               <div className="agent-config-list">
                 {rows.map((row) => (

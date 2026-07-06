@@ -648,10 +648,7 @@ def _typed_issue_signature(finding: dict[str, Any]) -> str:
 def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
     covered = set(primary.get("covered_rules") or [])
     if _has_bound_authoritative_rule(primary):
-        bound_ids = {
-            str(primary.get("checkpoint_id") or "").strip(),
-            str(primary.get("bound_rule_id") or "").strip(),
-        }
+        bound_ids = _bound_authoritative_ids(primary)
         covered = {rule for rule in covered if rule in bound_ids} or covered
     else:
         covered.update(secondary.get("covered_rules") or [])
@@ -2959,14 +2956,26 @@ def match_tool_observations_for_finding(
 
 def _has_bound_authoritative_rule(finding: dict[str, Any]) -> bool:
     covered_rules = {str(rule) for rule in (finding.get("covered_rules") or []) if rule}
-    bound_ids = {
-        str(finding.get("checkpoint_id") or "").strip(),
-        str(finding.get("bound_rule_id") or "").strip(),
-    }
+    bound_ids = _bound_authoritative_ids(finding)
     if any(bound_id and bound_id in covered_rules for bound_id in bound_ids):
         return True
     label = str(finding.get("review_batch_label") or "")
     return bool(label.startswith("bound_skill:") or label.startswith("bound_rule:"))
+
+
+def _bound_authoritative_ids(finding: dict[str, Any]) -> set[str]:
+    ids = {
+        str(finding.get("checkpoint_id") or "").strip(),
+        str(finding.get("bound_rule_id") or "").strip(),
+    }
+    label = str(finding.get("review_batch_label") or "").strip()
+    if label.startswith("bound_rule:"):
+        ids.add(label.removeprefix("bound_rule:").split(":", 1)[0].strip())
+    elif label.startswith("bound_skill:"):
+        parts = label.split(":")
+        if len(parts) >= 3:
+            ids.add(parts[-1].strip())
+    return {item for item in ids if item}
 
 
 def reconcile_rules_with_tool_observations(

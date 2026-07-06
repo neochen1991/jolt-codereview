@@ -113,10 +113,12 @@ const checks = [
       "bound_skill_batch = agent.get(\"bound_skill_batch\") if isinstance(agent.get(\"bound_skill_batch\"), dict) else {}",
       "\"bound_rule_batch\": _compact_json_value(bound_rule_batch, text_limit=None, list_limit=None)",
       "\"bound_skill_batch\": _compact_json_value(bound_skill_batch, text_limit=None, list_limit=None)",
+      "\"canonical_rule_id_policy\": {",
       "\"coverage_retry\": coverage_retry",
       "\"skill_checkpoints\": _compact_json_value(agent.get(\"skill_checkpoints\") or [], text_limit=None, list_limit=None)",
       "\"bound_skill_review_contract\": {",
       "禁止执行专家自由检视",
+      "covered_rules/skipped_rules 必须保留 Skill 原始 ID",
       "必须只检查当前 checkpoint",
       "如果 coverage_retry.enabled=true"
     ]
@@ -136,7 +138,9 @@ const checks = [
     ],
     required: [
       "return skill_summary or \"no bound markdown rules\"",
-      "return item[\"content\"]"
+      "return item[\"content\"]",
+      "Skill > 绑定规范 > 专家画像",
+      "保留 Skill 中定义的原始 rule_id/checkpoint_id"
     ]
   }
 ];

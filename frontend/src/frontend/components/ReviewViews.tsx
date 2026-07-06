@@ -696,6 +696,7 @@ export function CoverageCard({ run }: { run?: Record<string, unknown> }) {
   const requiredBoundRules = coverageCount(boundReviewCoverage?.required_count);
   const resolvedBoundRules = coverageCount(boundReviewCoverage?.resolved_count);
   const unresolvedBoundRules = coverageCount(boundReviewCoverage?.unresolved_count ?? boundReviewCoverage?.missed_count);
+  const boundReviewAlerts = Array.isArray(boundReviewCoverage?.alerts) ? boundReviewCoverage.alerts as Array<Record<string, unknown>> : [];
   const hasBoundCoverage = requiredBoundRules > 0;
   return (
     <div className="coverage-card">
@@ -727,6 +728,14 @@ export function CoverageCard({ run }: { run?: Record<string, unknown> }) {
             <em>命中 {String(boundReviewCoverage?.hit_count || 0)} · 跳过 {String(boundReviewCoverage?.skipped_count || 0)}</em>
             <strong>{unresolvedBoundRules}</strong>
           </p>
+          {boundReviewAlerts.length > 0 && (
+            <p>
+              <AlertTriangle size={15} />
+              <span>质量告警</span>
+              <em>{String(boundReviewAlerts[0]?.type || "bound_rule_resolution_unresolved")}</em>
+              <strong>{boundReviewAlerts.length}</strong>
+            </p>
+          )}
         </>
       )}
       {agents.length > 0 && (

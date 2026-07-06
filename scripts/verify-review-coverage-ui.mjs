@@ -12,8 +12,10 @@ const reviewSnippets = [
   "resolution_rate",
   "unresolved_count",
   "required_count",
+  "alerts",
   "绑定规则闭环",
   "未闭环规则",
+  "质量告警",
   "formatCoveragePercent"
 ];
 const configSnippets = [

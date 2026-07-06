@@ -13,6 +13,8 @@ Current scope:
   split-service review flow before scoring exported findings.
 - `scripts/score_real_pr_reviews.py` scores precision, recall, and false
   positives against the gold labels.
+- `npm run report:real-prs` renders a Markdown quality report with summary
+  metrics, rule/MR gaps, weak evidence findings, and concrete action items.
 - `npm run export:real-findings` exports the latest completed review findings
   for seeded real PR fixtures into `evaluation/real_findings.jsonl`.
 - `npm run verify:real-pr-dataset` audits manifest/gold/finding structure and
@@ -88,3 +90,15 @@ Run the target gate when deciding whether the quality-uplift work is complete:
 ```bash
 npm run verify:real-prs:target
 ```
+
+Generate a reviewer-friendly report after exporting findings:
+
+```bash
+npm run report:real-prs
+```
+
+Read `docs/reports/real-pr-quality-report.md` before changing prompts or judge
+thresholds. Fix `recall_gap` items by adding or improving detectors/examples;
+fix `precision_gap` items by tightening required evidence or adding negative
+examples; fix `weak_evidence` items by improving source quotes, tool backing, or
+critic evidence.

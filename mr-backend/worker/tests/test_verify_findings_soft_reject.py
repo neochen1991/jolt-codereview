@@ -82,6 +82,69 @@ class VerifyFindingsSoftRejectTest(unittest.TestCase):
         )
         self.assertGreaterEqual(result["score"], 0.5, result)
 
+    def test_chinese_command_injection_evidence_matches_code_semantics(self):
+        result = _evidence_matches_source(
+            "用户输入被拼接进系统命令后直接执行，存在命令注入风险。",
+            'Runtime.getRuntime().exec("sh -c " + request.getParameter("cmd"));',
+        )
+        self.assertGreaterEqual(result["score"], 0.5, result)
+
+    def test_constant_command_execution_does_not_match_injection_semantics(self):
+        result = _evidence_matches_source(
+            "用户输入被拼接进系统命令后直接执行，存在命令注入风险。",
+            'Runtime.getRuntime().exec("uptime");',
+        )
+        self.assertLess(result["score"], 0.5, result)
+
+    def test_chinese_path_traversal_evidence_matches_code_semantics(self):
+        result = _evidence_matches_source(
+            "请求参数直接参与文件路径读取，缺少路径规范化和目录限制。",
+            "return Files.readString(Paths.get(baseDir, request.getParameter(\"name\")));",
+        )
+        self.assertGreaterEqual(result["score"], 0.5, result)
+
+    def test_constant_file_read_does_not_match_path_traversal_semantics(self):
+        result = _evidence_matches_source(
+            "请求参数直接参与文件路径读取，缺少路径规范化和目录限制。",
+            'return Files.readString(Paths.get(baseDir, "README.md"));',
+        )
+        self.assertLess(result["score"], 0.5, result)
+
+    def test_chinese_log_leak_evidence_matches_code_semantics(self):
+        result = _evidence_matches_source(
+            "敏感 token 被直接打印到日志，可能泄露凭证。",
+            'logger.info("login token={}", accessToken);',
+        )
+        self.assertGreaterEqual(result["score"], 0.5, result)
+
+    def test_non_sensitive_log_does_not_match_secret_leak_semantics(self):
+        result = _evidence_matches_source(
+            "敏感 token 被直接打印到日志，可能泄露凭证。",
+            'logger.info("login success for user {}", userId);',
+        )
+        self.assertLess(result["score"], 0.5, result)
+
+    def test_chinese_resource_leak_evidence_matches_code_semantics(self):
+        result = _evidence_matches_source(
+            "打开输入流后没有关闭资源，可能导致文件句柄泄露。",
+            "InputStream in = new FileInputStream(path); return in.read();",
+        )
+        self.assertGreaterEqual(result["score"], 0.5, result)
+
+    def test_closed_resource_does_not_match_resource_leak_semantics(self):
+        result = _evidence_matches_source(
+            "打开输入流后没有关闭资源，可能导致文件句柄泄露。",
+            "try (InputStream in = new FileInputStream(path)) { return in.read(); }",
+        )
+        self.assertLess(result["score"], 0.5, result)
+
+    def test_chinese_bigdecimal_precision_evidence_matches_code_semantics(self):
+        result = _evidence_matches_source(
+            "金额使用 double 构造 BigDecimal，可能产生精度问题。",
+            "BigDecimal total = new BigDecimal(amount.doubleValue());",
+        )
+        self.assertGreaterEqual(result["score"], 0.5, result)
+
     def test_evidence_score_middle_lowers_confidence_and_flags(self):
         finding = {
             **self.base_finding("executeQuery SQL userId injection", confidence=0.8),

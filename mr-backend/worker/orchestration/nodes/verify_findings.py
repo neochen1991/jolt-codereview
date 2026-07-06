@@ -55,21 +55,67 @@ CJK_SEMANTIC_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("权限校验", ("权限校验", "鉴权", "授权校验", "权限检查", "权限控制", "认证授权")),
     ("服务端", ("服务端", "后端", "服务器端")),
     ("客户端", ("客户端", "前端", "请求方")),
-    ("客户端可控", ("客户端可控", "客户端传入", "外部传入", "外部输入", "用户输入", "请求传入")),
+    ("客户端可控", ("客户端可控", "客户端传入", "外部传入", "外部输入", "用户输入", "请求传入", "请求参数", "外部参数")),
     ("状态变更", ("状态变更", "状态覆盖", "覆盖状态", "覆盖订单状态", "更新状态", "更新订单状态", "状态更新", "变更订单状态")),
     ("订单状态", ("订单状态", "支付状态", "业务状态")),
-    ("缺少", ("缺少", "没有进行", "没有做", "未进行", "未做", "未校验", "未检查", "无校验")),
+    ("缺少", ("缺少", "没有", "未", "无", "没有进行", "没有做", "未进行", "未做", "未校验", "未检查", "无校验")),
     ("校验", ("校验", "验证", "检查", "约束", "策略约束")),
     ("接口", ("接口", "入口", "端点", "endpoint")),
     ("管理操作", ("管理操作", "管理员操作", "管理接口", "admin")),
-    ("SQL注入", ("sql注入", "注入风险", "sql injection", "拼接sql", "sql拼接")),
+    ("SQL注入", ("sql注入", "sql injection", "拼接sql", "sql拼接")),
+    ("注入风险", ("注入风险", "注入漏洞", "injection")),
     ("字符串拼接", ("字符串拼接", "直接拼接", "拼接", "concat")),
-    ("敏感信息", ("敏感信息", "敏感数据", "密钥", "密码", "token", "secret")),
-    ("日志泄露", ("日志泄露", "日志输出", "打印日志", "写入日志")),
-    ("资源关闭", ("资源关闭", "资源释放", "未关闭", "没有关闭", "try-with-resources")),
+    ("命令执行", ("命令执行", "系统命令", "执行命令", "runtime.exec", "processbuilder")),
+    ("命令注入", ("命令注入", "command injection")),
+    ("文件路径", ("文件路径", "路径", "目录", "文件名", "path")),
+    ("文件读取", ("文件读取", "路径读取", "读取文件", "读文件", "读取", "read file")),
+    ("路径穿越", ("路径穿越", "目录穿越", "path traversal", "../")),
+    ("路径规范化", ("路径规范化", "目录限制", "限制目录", "normalize", "canonical")),
+    ("敏感信息", ("敏感信息", "敏感数据", "密钥", "密码", "口令", "令牌", "凭证", "token", "secret", "accesskey", "apikey", "api key")),
+    ("日志输出", ("日志输出", "打印日志", "写入日志", "记录日志", "logger", "log")),
+    ("日志泄露", ("日志泄露", "泄露凭证", "泄露敏感", "敏感日志")),
+    ("资源关闭", ("资源关闭", "资源释放", "未关闭", "没有关闭", "try-with-resources", "文件句柄")),
+    ("BigDecimal", ("bigdecimal",)),
+    ("浮点数", ("double", "float", "浮点")),
+    ("金额", ("金额", "价格", "费用", "total", "amount", "price")),
+    ("精度问题", ("精度问题", "精度丢失", "精度风险", "精度")),
+    ("返回NULL", ("return null", "返回 null", "返回null")),
+    ("集合索引", ("get(0)", "首元素", "第一个", "first element", "索引访问")),
+    ("空集合校验", ("isEmpty", "空集合", "集合为空")),
 )
 
 GENERIC_CJK_SEMANTIC_TOKENS = {"缺少", "校验", "服务端", "客户端", "接口"}
+SEMANTIC_ACTION_TOKENS = {
+    "状态变更",
+    "字符串拼接",
+    "SQL执行",
+    "命令执行",
+    "文件读取",
+    "日志输出",
+    "资源打开",
+    "BigDecimal构造",
+    "集合索引",
+    "返回NULL",
+}
+SEMANTIC_RISK_TOKENS = {
+    "SQL注入",
+    "命令注入",
+    "注入风险",
+    "路径穿越",
+    "日志泄露",
+    "资源关闭",
+    "精度问题",
+}
+SEMANTIC_OBJECT_TOKENS = {
+    "客户端可控",
+    "订单状态",
+    "管理操作",
+    "文件路径",
+    "敏感信息",
+    "BigDecimal",
+    "浮点数",
+    "金额",
+}
 
 
 def _cjk_semantic_tokens(value: str) -> set[str]:
@@ -82,42 +128,122 @@ def _cjk_semantic_tokens(value: str) -> set[str]:
     return tokens
 
 
-def _code_semantic_tokens(value: str) -> set[str]:
-    text = str(value or "")
-    compact = re.sub(r"\s+", "", text).lower()
-    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
-    words = {
+def _code_words(value: str) -> set[str]:
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(value or ""))
+    return {
         part.lower()
         for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", spaced)
         for part in re.split(r"[_\W]+", token)
         if part
     }
+
+
+def _has_any_code_word(words: set[str], compact: str, variants: set[str]) -> bool:
+    return bool(words & variants) or any(variant in compact for variant in variants if len(variant) >= 6)
+
+
+def _code_semantic_tokens(value: str) -> set[str]:
+    text = str(value or "")
+    compact = re.sub(r"\s+", "", text).lower()
+    words = _code_words(text)
     tokens: set[str] = set()
+
+    request_words = {
+        "request",
+        "req",
+        "param",
+        "params",
+        "parameter",
+        "body",
+        "dto",
+        "input",
+        "payload",
+        "header",
+        "cookie",
+        "form",
+        "pathvariable",
+    }
+    if _has_any_code_word(words, compact, request_words | {"getparameter", "getheader", "getcookie"}):
+        tokens.add("客户端可控")
 
     has_sql_name = "sql" in words or "sql" in compact
     has_sql_execute = bool(re.search(r"\bexecute(query|update|largeupdate|)\s*\(", compact)) or "createstatement" in compact
     has_concat = "+" in text or ".concat(" in compact or "${" in text
     if has_sql_name and has_sql_execute and has_concat:
         tokens.add("SQL注入")
+        tokens.add("注入风险")
     if has_sql_name and has_concat:
         tokens.add("字符串拼接")
     if has_sql_execute:
         tokens.add("SQL执行")
 
-    request_words = {"request", "req", "param", "params", "body", "dto", "input", "payload"}
-    if words & request_words:
-        tokens.add("客户端可控")
+    has_command_sink = _has_any_code_word(words, compact, {"runtime", "exec", "processbuilder", "process", "command", "bash", "sh", "cmd"})
+    if has_command_sink:
+        tokens.add("命令执行")
+    if has_command_sink and "客户端可控" in tokens and has_concat:
+        tokens.add("命令注入")
+        tokens.add("注入风险")
+
+    has_file_path = _has_any_code_word(words, compact, {"path", "paths", "file", "files", "filename", "dirname", "basedir", "directory", "dir"})
+    has_file_read = _has_any_code_word(words, compact, {"read", "readstring", "readallbytes", "inputstream", "fileinputstream", "reader", "bufferedreader"})
+    if has_file_path:
+        tokens.add("文件路径")
+    if has_file_read:
+        tokens.add("文件读取")
+    if has_file_path and has_file_read and "客户端可控" in tokens:
+        tokens.add("路径穿越")
+
+    has_log_sink = _has_any_code_word(words, compact, {"log", "logger", "slf4j", "info", "debug", "warn", "error", "trace", "print", "println"})
+    has_sensitive = _has_any_code_word(
+        words,
+        compact,
+        {"password", "passwd", "secret", "token", "apikey", "api", "key", "credential", "accesskey", "auth", "authorization"},
+    )
+    if has_sensitive:
+        tokens.add("敏感信息")
+    if has_log_sink:
+        tokens.add("日志输出")
+    if has_sensitive and has_log_sink:
+        tokens.add("日志泄露")
+
+    has_resource_open = _has_any_code_word(
+        words,
+        compact,
+        {"inputstream", "outputstream", "fileinputstream", "fileoutputstream", "reader", "writer", "connection"},
+    ) or "createstatement" in compact
+    if has_resource_open:
+        tokens.add("资源打开")
+    if has_resource_open and "try(" not in compact and ".close(" not in compact:
+        tokens.add("资源关闭")
+        tokens.add("缺少")
+
+    if "bigdecimal" in words or "newbigdecimal" in compact:
+        tokens.add("BigDecimal")
+    if bool(words & {"double", "float"}) or ".doublevalue(" in compact or ".floatvalue(" in compact:
+        tokens.add("浮点数")
+    if bool(words & {"amount", "price", "money", "total", "fee", "cost"}):
+        tokens.add("金额")
+    if "BigDecimal" in tokens and "浮点数" in tokens:
+        tokens.add("BigDecimal构造")
+        tokens.add("精度问题")
+
     has_status_word = "status" in words or "state" in words or "setstatus" in compact or "getstatus" in compact
     if has_status_word:
         tokens.add("订单状态")
     if "setstatus" in compact or re.search(r"\b(status|state)\s*=", compact) or re.search(r"\.set[A-Za-z0-9_]*(status|state)\s*\(", compact):
         tokens.add("状态变更")
 
-    has_sensitive_word = bool(words & {"password", "passwd", "secret", "token", "apikey", "api", "key", "credential", "accesskey"})
-    if has_sensitive_word:
-        tokens.add("敏感信息")
-    if has_sensitive_word and bool(words & {"log", "logger", "print", "println", "info", "debug", "warn", "error"}):
-        tokens.add("日志泄露")
+    if "returnnull" in compact:
+        tokens.add("返回NULL")
+    if ".get(0)" in compact or ".findfirst(" in compact or re.search(r"\[[0-9]+]", compact):
+        tokens.add("集合索引")
+    if ".isempty(" in compact or ".isnotempty(" in compact or ".size()>0" in compact or ".size()!=0" in compact:
+        tokens.add("空集合校验")
+
+    if _has_any_code_word(words, compact, {"admin", "manager", "management", "delete", "remove", "update"}):
+        tokens.add("管理操作")
+    if _has_any_code_word(words, compact, {"preauthorize", "secured", "hasrole", "hasauthority", "permission", "authorize", "authenticate"}):
+        tokens.add("权限校验")
 
     return tokens
 
@@ -134,27 +260,42 @@ def _semantic_similarity(a: str, b: str) -> float:
     overlap = left & right
     if len(overlap) < 2:
         return 0.0
-    if not (overlap - GENERIC_CJK_SEMANTIC_TOKENS):
-        return 0.0
     if not _cjk_semantic_overlap_is_actionable(overlap):
         return 0.0
-    return (2 * len(overlap)) / (len(left) + len(right))
+    specific_overlap = overlap - GENERIC_CJK_SEMANTIC_TOKENS
+    if not specific_overlap:
+        return 0.0
+    if "客户端可控" in left and "客户端可控" not in overlap and not (right & {"SQL注入", "命令注入", "路径穿越"}):
+        return 0.0
+    dice = (2 * len(overlap)) / (len(left) + len(right))
+    left_specific = left - GENERIC_CJK_SEMANTIC_TOKENS
+    evidence_coverage = len(specific_overlap) / len(left_specific) if left_specific else 0.0
+    return max(dice, min(1.0, evidence_coverage))
 
 
 def _cjk_semantic_overlap_is_actionable(overlap: set[str]) -> bool:
-    if "SQL注入" in overlap:
+    specific = overlap - GENERIC_CJK_SEMANTIC_TOKENS
+    if "权限校验" in overlap and "缺少" in overlap:
         return True
-    if "字符串拼接" in overlap:
-        return "SQL注入" in overlap or "客户端可控" in overlap
+    if "资源关闭" in overlap and "缺少" in overlap:
+        return True
+    if len(specific) < 2:
+        return False
+    if overlap & SEMANTIC_RISK_TOKENS:
+        return bool(specific & (SEMANTIC_ACTION_TOKENS | SEMANTIC_OBJECT_TOKENS | {"注入风险"}))
     if "权限校验" in overlap:
-        return "缺少" in overlap
-    if "客户端可控" in overlap or "订单状态" in overlap or "状态变更" in overlap:
-        return "客户端可控" in overlap and "状态变更" in overlap
-    if "资源关闭" in overlap:
-        return "缺少" in overlap
-    if "敏感信息" in overlap:
-        return bool(overlap & {"日志泄露", "缺少"})
-    return len(overlap - GENERIC_CJK_SEMANTIC_TOKENS) >= 2 and "缺少" in overlap
+        return "缺少" in overlap and bool(overlap & {"管理操作", "客户端可控"})
+    if {"客户端可控", "状态变更"} <= overlap:
+        return True
+    if {"BigDecimal", "浮点数"} <= overlap:
+        return True
+    if {"资源关闭", "缺少"} <= overlap:
+        return True
+    if {"文件路径", "文件读取", "客户端可控"} <= overlap:
+        return True
+    if {"敏感信息", "日志输出"} <= overlap:
+        return True
+    return bool((specific & SEMANTIC_ACTION_TOKENS) and (specific & SEMANTIC_OBJECT_TOKENS))
 
 
 def _evidence_matches_source(evidence: str, source_snippet: str) -> dict[str, Any]:

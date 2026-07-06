@@ -153,9 +153,15 @@ def test_suppression_hint_reduces_evidence_score_without_rule_branch() -> None:
     assert suppressed["matched_suppression_hint"]["rule_id"] == "SEC-INJECT-003", suppressed
 
 
+def test_suppression_hash_matches_backend_feedback_learning_contract() -> None:
+    evidence = 'String sql = "select *" + userId;\nstatement.executeQuery(sql);'
+    assert snippet_hash(evidence) == "cc25f55b5af64b7437b4a8afeb3175a4bce74074"
+
+
 if __name__ == "__main__":
     test_evidence_score_components_are_structural()
     test_evidence_score_uses_line_span_not_rule_specific_branch()
     test_evidence_score_counts_changed_source_location_for_paraphrased_evidence()
     test_symbol_alignment_accepts_repo_index_definition_fields()
     test_suppression_hint_reduces_evidence_score_without_rule_branch()
+    test_suppression_hash_matches_backend_feedback_learning_contract()

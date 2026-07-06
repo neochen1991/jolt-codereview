@@ -13,6 +13,8 @@ Current scope:
   split-service review flow before scoring exported findings.
 - `scripts/score_real_pr_reviews.py` scores precision, recall, and false
   positives against the gold labels.
+- `npm run export:real-findings` exports the latest completed review findings
+  for seeded real PR fixtures into `evaluation/real_findings.jsonl`.
 - `npm run verify:real-prs` gates current real-review quality and requires every
   finding to carry `evidence_score`, `consensus_agents`, and
   `quality_trace.critic_verdict`.
@@ -64,10 +66,16 @@ node scripts/seed-real-prs.mjs --write-db
 ```
 
 After the worker completes those seeded review jobs, export the final findings
-to `evaluation/real_findings.jsonl`, then append manually reviewed labels to
-`evaluation/real_gold_set.jsonl`. Do not mark a fixture as negative by adding
-empty expected findings only; negative MRs must be represented in the gold set
-with `ground_truth: "negative"` and must produce zero final findings.
+to `evaluation/real_findings.jsonl`:
+
+```bash
+MR_CONFIG_PATH=$PWD/mr-backend/config.json npm run export:real-findings
+```
+
+Then append manually reviewed labels to `evaluation/real_gold_set.jsonl`. Do not
+mark a fixture as negative by adding empty expected findings only; negative MRs
+must be represented in the gold set with `ground_truth: "negative"` and must
+produce zero final findings.
 
 Run the target gate when deciding whether the quality-uplift work is complete:
 

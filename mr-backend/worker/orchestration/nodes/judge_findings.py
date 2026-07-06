@@ -650,6 +650,11 @@ def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) 
     if _has_bound_authoritative_rule(primary):
         bound_ids = _bound_authoritative_ids(primary)
         covered = {rule for rule in covered if rule in bound_ids} or bound_ids or covered
+        if len(covered) == 1:
+            canonical_bound_id = next(iter(covered))
+            primary["rule_id"] = canonical_bound_id
+            if str(primary.get("review_batch_label") or "").startswith("bound_rule:"):
+                primary["bound_rule_id"] = canonical_bound_id
     else:
         covered.update(secondary.get("covered_rules") or [])
     skipped = set(primary.get("skipped_rules") or [])

@@ -119,6 +119,7 @@ def test_bound_skill_merge_does_not_add_lower_priority_tool_rule() -> None:
     merged = _merge_finding_metadata(primary, secondary)
 
     assert merged["covered_rules"] == ["SEC-CMD-001"], merged
+    assert merged["rule_id"] == "SEC-CMD-001", merged
     assert "SEC-INJECT-003" not in merged["covered_rules"], merged
     assert set(merged["merged_agent_ids"]) == {"security_agent"}, merged
 
@@ -140,6 +141,7 @@ def test_bound_skill_merge_uses_batch_label_when_checkpoint_field_missing() -> N
     merged = _merge_finding_metadata(primary, secondary)
 
     assert merged["covered_rules"] == ["SEC-CMD-001"], merged
+    assert merged["rule_id"] == "SEC-CMD-001", merged
     assert "SEC-INJECT-003" not in merged["covered_rules"], merged
 
 
@@ -181,6 +183,7 @@ def test_bound_skill_merge_restores_authoritative_id_when_current_rules_are_dirt
     merged = _merge_finding_metadata(primary, secondary)
 
     assert merged["covered_rules"] == ["SEC-CMD-001"], merged
+    assert merged["rule_id"] == "SEC-CMD-001", merged
     assert "SEC-INJECT-003" not in merged["covered_rules"], merged
 
 

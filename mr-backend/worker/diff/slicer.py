@@ -47,9 +47,26 @@ def source_snippet_loader_for_files(files: list[Any]):
     lines_by_file: dict[str, dict[int, str]] = {}
     for changed in files:
         line_map: dict[int, str] = {}
-        for line_no, text in extract_added_lines(changed.patch):
-            if line_no is not None:
-                line_map[int(line_no)] = text
+        new_line: int | None = None
+        for raw_line in str(changed.patch or "").splitlines():
+            if raw_line.startswith("@@"):
+                marker = raw_line.split("+", 1)[1].split(" ", 1)[0]
+                try:
+                    new_line = int(marker.split(",", 1)[0])
+                except ValueError:
+                    new_line = None
+                continue
+            if new_line is None:
+                continue
+            if raw_line.startswith("-") and not raw_line.startswith("---"):
+                continue
+            if raw_line.startswith("+") and not raw_line.startswith("+++"):
+                line_map[int(new_line)] = raw_line[1:]
+                new_line += 1
+                continue
+            text = raw_line[1:] if raw_line.startswith(" ") else raw_line
+            line_map[int(new_line)] = text
+            new_line += 1
         lines_by_file[changed.filename] = line_map
 
     def load(file_path: str, line_no: int, window: int = 5) -> str:

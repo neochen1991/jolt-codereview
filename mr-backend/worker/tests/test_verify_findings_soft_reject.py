@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "worker"))
 
+from diff.slicer import source_snippet_loader_for_files
 from orchestration.nodes.verify_findings import _evidence_matches_source, _token_jaccard, verify_candidate_findings
 
 
@@ -35,6 +36,55 @@ class VerifyFindingsSoftRejectTest(unittest.TestCase):
             {"SEC-INJECT-003"},
             lambda _file, _line, window=5: source,
         )
+
+    def test_source_context_window_includes_nearby_diff_context(self):
+        class ChangedFile:
+            filename = "src/PaymentController.java"
+            patch = """@@ -20,21 +20,21 @@ public List<Order> listOrders() {
+     public List<Order> listOrders() {
+         validateTenant();
+         if (!currentUser.canReadOrders()) {
+             throw new ForbiddenException();
+         }
+         String tenantId = currentTenant();
+         audit("listOrders", tenantId);
+         OrderFilter filter = OrderFilter.forTenant(tenantId);
+         List<Order> orders = repository.findAll(filter);
+         enrichOrders(orders);
+         redactInternalNotes(orders);
+         attachTags(orders);
+         attachRiskFlags(orders);
+         attachOwnerInfo(orders);
+         attachPaymentState(orders);
+         attachShipmentState(orders);
+         attachRefundState(orders);
+         attachInvoiceState(orders);
+         attachPromotionState(orders);
++        metrics.record("orders.list");
+         return orders;
+     }"""
+
+        finding = {
+            **self.base_finding("List<Order> orders = repository.findAll(filter);", confidence=0.91),
+            "agent_id": "performance_agent",
+            "file_path": "src/PaymentController.java",
+            "line_start": 39,
+            "title": "查询缺少分页或结果上限",
+            "problem_description": "同一方法内调用 repository.findAll(filter) 取全量订单，新增路径没有分页边界。",
+            "covered_rules": ["PERF-QUERY-001"],
+        }
+        accepted, rejected = verify_candidate_findings(
+            [finding],
+            {"src/PaymentController.java"},
+            {"performance_agent": {"min_confidence": 0.75}},
+            set(),
+            {"src/PaymentController.java": [(39, 39)]},
+            {"PERF-QUERY-001"},
+            source_snippet_loader_for_files([ChangedFile()]),
+        )
+        self.assertEqual(rejected, [])
+        self.assertEqual(len(accepted), 1)
+        self.assertNotIn("low_evidence_match", accepted[0].get("verification_flags") or [])
 
     def test_evidence_score_high_accepts(self):
         finding = self.base_finding("ResultSet rs = statement.executeQuery(sql)")

@@ -7,6 +7,8 @@ from typing import Any
 from tools.candidate_store import upsert_candidate_finding
 from tools.tool_normalizer import normalized_rule_category
 
+SOURCE_CONTEXT_WINDOW = 20
+
 
 def _line_value(finding: dict[str, Any]) -> int:
     raw = finding.get("line_start") or finding.get("line_number") or finding.get("line")
@@ -398,6 +400,18 @@ def _evidence_matches_source(evidence: str, source_snippet: str) -> dict[str, An
     containment_score = 0.0
     if evidence_lower in source_lower or source_lower in evidence_lower:
         containment_score = 1.0
+    compact_source = re.sub(r"\s+", " ", source_text).lower()
+    for raw_line in evidence_text.splitlines():
+        line = re.sub(r"(?i)^\s*evidence\s*:\s*", "", str(raw_line or "").strip())
+        line = re.sub(r"^\s*\d+\s*:\s*", "", line).strip()
+        if len(line) < 12:
+            continue
+        codeish = bool(re.search(r"[();={}\[\]<>._+]|[A-Za-z_][A-Za-z0-9_]*\s*\(", line))
+        if not codeish:
+            continue
+        compact_line = re.sub(r"\s+", " ", line).lower()
+        if compact_line and compact_line in compact_source:
+            containment_score = max(containment_score, 0.8)
     score = max(_token_jaccard(evidence_text, source_text), containment_score)
     return {"matched": score >= 0.5, "score": round(score, 4)}
 
@@ -581,7 +595,7 @@ def verify_candidate_findings(
             and source_snippet_loader is not None
             and _requires_source_evidence(finding)
         ):
-            source_snippet = source_snippet_loader(file_path, line_no, window=5)
+            source_snippet = source_snippet_loader(file_path, line_no, window=SOURCE_CONTEXT_WINDOW)
             contradiction_reasons = _source_contradiction_reasons(finding, source_snippet)
             reasons.extend(contradiction_reasons)
         if (
@@ -593,7 +607,7 @@ def verify_candidate_findings(
             and not reasons
             and not _has_tool_observation_support(finding, tool_observations, line_tolerance=line_tolerance)
         ):
-            source_snippet = source_snippet_loader(file_path, line_no, window=5)
+            source_snippet = source_snippet_loader(file_path, line_no, window=SOURCE_CONTEXT_WINDOW)
             evidence_signal = "\n".join(
                 str(part or "").strip()
                 for part in (evidence, finding.get("title"), finding.get("problem_description"))

@@ -8,7 +8,7 @@ from calibration.precision_history import calibrate_findings_with_history, load_
 from diff.slicer import extract_added_lines
 from orchestration.judging.evidence_score import apply_evidence_score_policy, changed_line_index, score as score_evidence
 from orchestration.nodes.critic_pass import run_critic_pass
-from rules.registry import load_registry
+from rules.registry import load_registry, rule_for_tool_observation
 from tools.candidate_store import upsert_candidate_finding, upsert_candidate_findings
 from tools.tool_normalizer import DDD_RULE_IDS, CATEGORY_PRIMARY_RULE, canonical_rule_id, line_bucket, normalize_tool_finding, normalized_rule_category, sha1
 
@@ -1850,7 +1850,7 @@ def _represents_tool_rule(finding: dict[str, Any], rule_id: str, observation: di
 
 def _finding_is_rule_specific(finding: dict[str, Any], rule_id: str) -> bool:
     covered = [str(rule) for rule in (finding.get("covered_rules") or []) if str(rule or "").strip()]
-    if len(covered) <= 1 or rule_id not in TOOL_COVERAGE_FILL_RULES:
+    if len(covered) <= 1 or rule_id not in _tool_coverage_fill_rule_ids():
         return True
     observation = finding.get("source_tool_observation") if isinstance(finding.get("source_tool_observation"), dict) else {}
     if observation and _canonical_tool_rule_id(observation) == rule_id:
@@ -1864,6 +1864,40 @@ def _finding_is_rule_specific(finding: dict[str, Any], rule_id: str) -> bool:
     return category != "GENERAL" and category == title_category and rule_id == _primary_rule_key(finding)
 
 
+def _tool_coverage_fill_rule_ids() -> set[str]:
+    registry = load_registry()
+    rules = {
+        str(rule.get("id") or "")
+        for rule in registry.get("rules", [])
+        if isinstance(rule, dict) and rule.get("promote_from_tool")
+    }
+    return {rule for rule in rules if rule} or set(TOOL_COVERAGE_FILL_RULES)
+
+
+def _tool_coverage_fill_threshold(rule_id: str, observation: dict[str, Any]) -> float:
+    registry_rule = rule_for_tool_observation(observation)
+    min_confidences: list[float] = []
+    if isinstance(registry_rule, dict) and str(registry_rule.get("id") or "") == rule_id:
+        for source in registry_rule.get("tool_sources") or []:
+            if not isinstance(source, dict):
+                continue
+            tool_rule_id = str(source.get("tool_rule_id") or "")
+            tool = str(source.get("tool") or "*").lower()
+            observation_tool_rule = str(observation.get("rule_id") or observation.get("tool_rule_id") or "")
+            observation_tool = str(observation.get("tool_name") or "").lower()
+            if tool_rule_id != observation_tool_rule or (tool != "*" and tool != observation_tool):
+                continue
+            try:
+                min_confidences.append(float(source.get("min_confidence") or 0))
+            except (TypeError, ValueError):
+                continue
+    return max([0.85, *min_confidences])
+
+
+def _has_precise_tool_location(observation: dict[str, Any]) -> bool:
+    return bool(observation.get("file_path")) and _as_int(observation.get("line_start")) is not None
+
+
 def _fill_missing_tool_coverage(
     selected: list[dict[str, Any]],
     tool_observations: list[dict[str, Any]],
@@ -1872,9 +1906,12 @@ def _fill_missing_tool_coverage(
     allowed_agent_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     fill_observations: list[dict[str, Any]] = []
+    fill_rule_ids = _tool_coverage_fill_rule_ids()
     for observation in tool_observations:
         rule_id = _canonical_tool_rule_id(observation)
-        if rule_id not in TOOL_COVERAGE_FILL_RULES:
+        if rule_id not in fill_rule_ids:
+            continue
+        if not _has_precise_tool_location(observation):
             continue
         if any(_represents_tool_rule(item, rule_id, observation) for item in selected):
             continue
@@ -1882,7 +1919,7 @@ def _fill_missing_tool_coverage(
             confidence = float(observation.get("confidence") or 0)
         except (TypeError, ValueError):
             confidence = 0.0
-        threshold = 0.8 if rule_id == "CODE-NULL-001" else 0.84
+        threshold = _tool_coverage_fill_threshold(rule_id, observation)
         if confidence < threshold:
             continue
         fill_observations.append(observation)
@@ -1896,7 +1933,7 @@ def _fill_missing_tool_coverage(
     for candidate in sorted(promoted, key=_priority_sort_key, reverse=True):
         if len(selected) >= max_findings:
             break
-        rules = [str(rule) for rule in (candidate.get("covered_rules") or []) if str(rule) in TOOL_COVERAGE_FILL_RULES]
+        rules = [str(rule) for rule in (candidate.get("covered_rules") or []) if str(rule) in fill_rule_ids]
         if not rules:
             continue
         observation = candidate.get("source_tool_observation") if isinstance(candidate.get("source_tool_observation"), dict) else {}
@@ -2344,6 +2381,9 @@ def _canonical_tool_rule_id(observation: dict[str, Any]) -> str:
         return raw_rule
     if raw_rule in PROMOTABLE_EXTERNAL_TOOL_RULES:
         return PROMOTABLE_EXTERNAL_TOOL_RULES[raw_rule]
+    registry_rule = rule_for_tool_observation(observation)
+    if isinstance(registry_rule, dict) and registry_rule.get("promote_from_tool"):
+        return str(registry_rule.get("id") or "")
     category = normalized_rule_category(raw_rule, observation.get("message"))
     primary = CATEGORY_PRIMARY_RULE.get(category, "")
     if primary in PROMOTABLE_TOOL_RULES:

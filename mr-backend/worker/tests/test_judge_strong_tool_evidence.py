@@ -161,9 +161,56 @@ def test_missing_tool_coverage_fills_rule_when_existing_finding_is_multi_rule_bu
     assert "String.valueOf" in code_null_findings[0]["evidence"], code_null_findings
 
 
+def test_missing_tool_coverage_uses_registry_promotable_rules_beyond_legacy_fill_list() -> None:
+    observations = [
+        {
+            "tool_name": "java_web_static",
+            "rule_id": "CODE-RESOURCE-005",
+            "severity": "medium",
+            "confidence": 0.91,
+            "file_path": "src/main/java/com/acme/export/ExportService.java",
+            "line_start": 42,
+            "line_end": 42,
+            "message": "Connection autoCommit is changed without restoring it before returning the pooled connection.",
+        }
+    ]
+
+    filled = _fill_missing_tool_coverage([], observations, max_findings=5)
+
+    assert any(item.get("covered_rules") == ["CODE-RESOURCE-005"] for item in filled), filled
+
+
+def test_missing_tool_coverage_requires_high_confidence_and_precise_line() -> None:
+    observations = [
+        {
+            "tool_name": "java_web_static",
+            "rule_id": "CODE-RESOURCE-005",
+            "severity": "medium",
+            "confidence": 0.84,
+            "file_path": "src/main/java/com/acme/export/ExportService.java",
+            "line_start": 42,
+            "message": "Connection autoCommit is changed without restoring it.",
+        },
+        {
+            "tool_name": "java_web_static",
+            "rule_id": "SEC-DEBUG-011",
+            "severity": "high",
+            "confidence": 0.95,
+            "file_path": "src/main/java/com/acme/debug/DebugController.java",
+            "message": "Debug endpoint is exposed.",
+        },
+    ]
+
+    filled = _fill_missing_tool_coverage([], observations, max_findings=5)
+
+    assert filled == [], filled
+
+
 if __name__ == "__main__":
     test_strong_tool_findings_keep_distinct_root_causes_on_same_line()
     test_strong_ddd_tool_finding_is_not_pruned_as_weak_advisory()
     test_strong_tool_finding_with_secondary_ddd_rule_is_not_pruned()
     test_soft_audit_state_claim_without_exact_tool_support_is_dropped()
     test_missing_tool_coverage_fills_rule_when_existing_finding_is_multi_rule_bundle()
+    test_missing_tool_coverage_uses_registry_promotable_rules_beyond_legacy_fill_list()
+    test_missing_tool_coverage_requires_high_confidence_and_precise_line()

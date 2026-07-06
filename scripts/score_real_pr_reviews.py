@@ -55,15 +55,25 @@ def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], t
 
     matched_finding_ids: set[int] = set()
     matched_gold_ids: set[str] = set()
+    matched_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
     missed: list[dict[str, Any]] = []
     for gold in positive_gold:
         candidates = findings_by_mr.get(norm(gold.get("mr_id")), [])
-        match_index = next((index for index, finding in enumerate(candidates) if matches(gold, finding, tolerance)), None)
+        match_index = next(
+            (
+                index
+                for index, finding in enumerate(candidates)
+                if id(finding) not in matched_finding_ids and matches(gold, finding, tolerance)
+            ),
+            None,
+        )
         if match_index is None:
             missed.append(gold)
             continue
-        matched_finding_ids.add(id(candidates[match_index]))
+        matched_finding = candidates[match_index]
+        matched_finding_ids.add(id(matched_finding))
         matched_gold_ids.add(norm(gold.get("id")))
+        matched_pairs.append((gold, matched_finding))
 
     false_positives = [finding for finding in findings if id(finding) not in matched_finding_ids]
     negative_mr_ids = {
@@ -90,6 +100,7 @@ def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], t
         "finding_count": len(findings),
         "negative_mr_count": len(negative_mr_ids),
         "negative_false_positive_count": len(negative_false_positives),
+        "by_rule": by_rule_report(positive_gold, matched_pairs, missed, false_positives),
         "missed_gold_ids": [norm(item.get("id")) for item in missed],
         "false_positive_findings": [
             {
@@ -102,6 +113,49 @@ def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], t
             for finding in false_positives
         ],
     }
+
+
+def by_rule_report(
+    positive_gold: list[dict[str, Any]],
+    matched_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
+    missed: list[dict[str, Any]],
+    false_positives: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "gold_count": 0,
+            "finding_count": 0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "missed_gold_ids": [],
+        }
+    )
+    for gold in positive_gold:
+        rule = norm(gold.get("rule_id")) or "unclassified"
+        rows[rule]["gold_count"] += 1
+    for gold, _finding in matched_pairs:
+        rule = norm(gold.get("rule_id")) or "unclassified"
+        rows[rule]["tp"] += 1
+    for gold in missed:
+        rule = norm(gold.get("rule_id")) or "unclassified"
+        rows[rule]["fn"] += 1
+        rows[rule]["missed_gold_ids"].append(norm(gold.get("id")))
+    for finding in false_positives:
+        rules = sorted(rule_ids(finding)) or ["unclassified"]
+        for rule in rules:
+            rows[rule]["fp"] += 1
+            rows[rule]["finding_count"] += 1
+    for gold, _finding in matched_pairs:
+        rule = norm(gold.get("rule_id")) or "unclassified"
+        rows[rule]["finding_count"] += 1
+    for rule, row in rows.items():
+        row["precision"] = round(row["tp"] / max(1, row["tp"] + row["fp"]), 4)
+        row["recall"] = round(row["tp"] / max(1, row["tp"] + row["fn"]), 4)
+        row["missed_gold_ids"] = [item for item in row["missed_gold_ids"] if item]
+    return dict(sorted(rows.items()))
 
 
 def main() -> None:

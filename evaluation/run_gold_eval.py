@@ -52,7 +52,14 @@ def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], l
     by_rule: dict[str, dict[str, int]] = defaultdict(lambda: {"tp": 0, "fn": 0})
     for gold in gold_items:
         candidates = findings_by_mr.get(str(gold.get("mr_id") or ""), [])
-        match_index = next((index for index, finding in enumerate(candidates) if matches(gold, finding, line_tolerance)), None)
+        match_index = next(
+            (
+                index
+                for index, finding in enumerate(candidates)
+                if id(finding) not in matched_finding_ids and matches(gold, finding, line_tolerance)
+            ),
+            None,
+        )
         rule = str(gold.get("rule_id") or "unknown")
         if match_index is None:
             missed_gold.append(gold)

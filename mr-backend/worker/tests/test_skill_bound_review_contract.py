@@ -446,6 +446,9 @@ def test_bound_review_coverage_summary_tracks_hits_and_misses() -> None:
     assert summary["resolution_rate"] == round(2 / 3, 4), summary
     assert summary["unresolved_rate"] == round(1 / 3, 4), summary
     assert summary["hit_rate"] == round(2 / 3, 4), summary
+    assert summary["alerts"][0]["type"] == "bound_rule_resolution_unresolved", summary
+    assert summary["alerts"][0]["unresolved_count"] == 1, summary
+    assert summary["alerts"][0]["resolution_rate"] == round(2 / 3, 4), summary
     assert summary["rule_count"] == 1, summary
     assert summary["skill_checkpoint_count"] == 2, summary
     assert summary["rejected_count"] == 1, summary

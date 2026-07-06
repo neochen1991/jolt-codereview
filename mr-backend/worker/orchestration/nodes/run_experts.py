@@ -444,6 +444,21 @@ def _summarize_bound_review_coverage(records: list[dict[str, Any]]) -> dict[str,
         for record in required_records
         if record.get("checked") and int(record.get("finding_count") or 0) == 0 and not record.get("skipped")
     ]
+    resolution_rate = round(resolved_count / required_count, 4) if required_count else 1.0
+    unresolved_rate = round(len(missed) / required_count, 4) if required_count else 0.0
+    alerts: list[dict[str, Any]] = []
+    if missed:
+        alerts.append(
+            {
+                "type": "bound_rule_resolution_unresolved",
+                "severity": "warning" if resolution_rate >= 0.7 else "high",
+                "required_count": required_count,
+                "resolved_count": resolved_count,
+                "unresolved_count": len(missed),
+                "resolution_rate": resolution_rate,
+                "unresolved_rate": unresolved_rate,
+            }
+        )
     return {
         "required_count": required_count,
         "checked_count": checked_count,
@@ -453,13 +468,14 @@ def _summarize_bound_review_coverage(records: list[dict[str, Any]]) -> dict[str,
         "resolved_count": resolved_count,
         "unresolved_count": len(missed),
         "coverage_rate": round(checked_count / required_count, 4) if required_count else 1.0,
-        "resolution_rate": round(resolved_count / required_count, 4) if required_count else 1.0,
-        "unresolved_rate": round(len(missed) / required_count, 4) if required_count else 0.0,
+        "resolution_rate": resolution_rate,
+        "unresolved_rate": unresolved_rate,
         "hit_rate": round(hit_count / required_count, 4) if required_count else 1.0,
         "skip_rate": round(skipped_count / required_count, 4) if required_count else 0.0,
         "rule_count": sum(1 for record in required_records if record.get("type") == "rule"),
         "skill_checkpoint_count": sum(1 for record in required_records if record.get("type") == "skill_checkpoint"),
         "rejected_count": rejected_count,
+        "alerts": alerts,
         "missed": [
             {
                 "agent_id": record.get("agent_id") or "",
@@ -1045,10 +1061,20 @@ def make_run_experts_node(
                 (
                     f"绑定规则/Skill 覆盖审计：检查 {bound_review_coverage['checked_count']}/"
                     f"{bound_review_coverage['required_count']}，命中 {bound_review_coverage['hit_count']}，"
-                    f"未命中 {bound_review_coverage['missed_count']}"
+                    f"闭环 {bound_review_coverage['resolved_count']}，未闭环 {bound_review_coverage['unresolved_count']}"
                 ),
                 bound_review_coverage,
             )
+            if bound_review_coverage.get("alerts"):
+                recorder.event(
+                    coverage_span,
+                    "bound_rule_resolution_alert",
+                    (
+                        f"绑定规则/Skill 存在 {bound_review_coverage['unresolved_count']} 个未闭环，"
+                        f"闭环率 {bound_review_coverage['resolution_rate']}"
+                    ),
+                    {"alerts": bound_review_coverage.get("alerts"), "missed": bound_review_coverage.get("missed")},
+                )
             recorder.finish(coverage_span)
         return {
             **state,

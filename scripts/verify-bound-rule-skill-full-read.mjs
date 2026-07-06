@@ -88,6 +88,7 @@ const checks = [
       "bound_rule_coverage_low",
       "bound_rule_coverage_retry_completed",
       "bound_review_coverage_summarized",
+      "bound_rule_resolution_alert",
       "\"bound_review_coverage\": bound_review_coverage",
       "bound_batch_findings_rejected",
       "bound_skill_checkpoint_mismatch",

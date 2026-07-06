@@ -647,7 +647,14 @@ def _typed_issue_signature(finding: dict[str, Any]) -> str:
 
 def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
     covered = set(primary.get("covered_rules") or [])
-    covered.update(secondary.get("covered_rules") or [])
+    if _has_bound_authoritative_rule(primary):
+        bound_ids = {
+            str(primary.get("checkpoint_id") or "").strip(),
+            str(primary.get("bound_rule_id") or "").strip(),
+        }
+        covered = {rule for rule in covered if rule in bound_ids} or covered
+    else:
+        covered.update(secondary.get("covered_rules") or [])
     skipped = set(primary.get("skipped_rules") or [])
     skipped.update(secondary.get("skipped_rules") or [])
     agents = set(str(item) for item in (primary.get("merged_agent_ids") or []) if item)

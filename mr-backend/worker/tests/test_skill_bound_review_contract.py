@@ -440,7 +440,11 @@ def test_bound_review_coverage_summary_tracks_hits_and_misses() -> None:
     assert summary["hit_count"] == 2, summary
     assert summary["skipped_count"] == 0, summary
     assert summary["missed_count"] == 1, summary
+    assert summary["resolved_count"] == 2, summary
+    assert summary["unresolved_count"] == 1, summary
     assert summary["coverage_rate"] == 1.0, summary
+    assert summary["resolution_rate"] == round(2 / 3, 4), summary
+    assert summary["unresolved_rate"] == round(1 / 3, 4), summary
     assert summary["hit_rate"] == round(2 / 3, 4), summary
     assert summary["rule_count"] == 1, summary
     assert summary["skill_checkpoint_count"] == 2, summary

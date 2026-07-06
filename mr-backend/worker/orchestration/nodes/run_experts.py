@@ -437,6 +437,7 @@ def _summarize_bound_review_coverage(records: list[dict[str, Any]]) -> dict[str,
     checked_count = sum(1 for record in required_records if record.get("checked"))
     hit_count = sum(1 for record in required_records if int(record.get("finding_count") or 0) > 0)
     skipped_count = sum(1 for record in required_records if record.get("skipped"))
+    resolved_count = hit_count + skipped_count
     rejected_count = sum(int(record.get("rejected_count") or 0) for record in required_records)
     missed = [
         record
@@ -449,7 +450,11 @@ def _summarize_bound_review_coverage(records: list[dict[str, Any]]) -> dict[str,
         "hit_count": hit_count,
         "skipped_count": skipped_count,
         "missed_count": len(missed),
+        "resolved_count": resolved_count,
+        "unresolved_count": len(missed),
         "coverage_rate": round(checked_count / required_count, 4) if required_count else 1.0,
+        "resolution_rate": round(resolved_count / required_count, 4) if required_count else 1.0,
+        "unresolved_rate": round(len(missed) / required_count, 4) if required_count else 0.0,
         "hit_rate": round(hit_count / required_count, 4) if required_count else 1.0,
         "skip_rate": round(skipped_count / required_count, 4) if required_count else 0.0,
         "rule_count": sum(1 for record in required_records if record.get("type") == "rule"),

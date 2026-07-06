@@ -14,6 +14,11 @@ function numberValue(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function nullableNumberValue(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function coveragePayload(row: { coverage_json?: string | null }) {
   const coverage = parseJson(row.coverage_json);
   const candidateQuality = typeof coverage.candidate_quality === "object" && coverage.candidate_quality ? coverage.candidate_quality as Record<string, unknown> : {};
@@ -35,10 +40,16 @@ export function summarizeBoundRuleCoverage(rows: Array<{ coverage_json?: string 
       acc.hit_count += numberValue(payload.hit_count);
       acc.skipped_count += numberValue(payload.skipped_count);
       acc.missed_count += numberValue(payload.missed_count);
+      acc.resolved_count += numberValue(payload.resolved_count) || (numberValue(payload.hit_count) + numberValue(payload.skipped_count));
+      acc.unresolved_count += numberValue(payload.unresolved_count) || numberValue(payload.missed_count);
       acc.rule_count += numberValue(payload.rule_count);
       acc.skill_checkpoint_count += numberValue(payload.skill_checkpoint_count);
       acc.rejected_count += numberValue(payload.rejected_count);
       if (numberValue(payload.coverage_rate) < 0.7) acc.low_coverage_run_count += 1;
+      const resolutionRate = nullableNumberValue(payload.resolution_rate);
+      if ((resolutionRate ?? ((numberValue(payload.hit_count) + numberValue(payload.skipped_count)) / required)) < 0.7) {
+        acc.low_resolution_run_count += 1;
+      }
       const missedItems = Array.isArray(payload.missed) ? payload.missed : [];
       for (const item of missedItems) {
         if (missed.length >= 20 || typeof item !== "object" || !item) continue;
@@ -53,15 +64,20 @@ export function summarizeBoundRuleCoverage(rows: Array<{ coverage_json?: string 
       hit_count: 0,
       skipped_count: 0,
       missed_count: 0,
+      resolved_count: 0,
+      unresolved_count: 0,
       rule_count: 0,
       skill_checkpoint_count: 0,
       rejected_count: 0,
-      low_coverage_run_count: 0
+      low_coverage_run_count: 0,
+      low_resolution_run_count: 0
     }
   );
   return {
     ...totals,
     coverage_rate: totals.required_count ? Number((totals.checked_count / totals.required_count).toFixed(4)) : null,
+    resolution_rate: totals.required_count ? Number((totals.resolved_count / totals.required_count).toFixed(4)) : null,
+    unresolved_rate: totals.required_count ? Number((totals.unresolved_count / totals.required_count).toFixed(4)) : null,
     hit_rate: totals.required_count ? Number((totals.hit_count / totals.required_count).toFixed(4)) : null,
     skip_rate: totals.required_count ? Number((totals.skipped_count / totals.required_count).toFixed(4)) : null,
     missed

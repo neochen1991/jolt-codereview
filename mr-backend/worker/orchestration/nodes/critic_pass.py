@@ -8,6 +8,7 @@ from typing import Any, Callable
 from llm.client import chat_completions_url, estimate_tokens, http_json, llm_request_timeout_seconds, llm_stream_enabled
 from llm.retry import call_with_retry
 from llm_router import candidate_providers
+from rules.registry import rule as registry_rule
 
 SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 DOWNGRADE = {"critical": "high", "high": "medium", "medium": "low", "low": "info", "info": "info"}
@@ -48,7 +49,37 @@ def _source_window(source_file_contents: dict[str, str], file_path: str, line_st
     return "\n".join(f"{idx}: {lines[idx - 1][:240]}" for idx in range(start, end + 1))
 
 
+def _rule_ids_for(finding: dict[str, Any]) -> list[str]:
+    raw_rules = finding.get("covered_rules") or finding.get("rule_ids") or finding.get("rule_id") or []
+    if isinstance(raw_rules, str):
+        raw_rules = [raw_rules]
+    result: list[str] = []
+    for rule_id in raw_rules if isinstance(raw_rules, list) else []:
+        text = str(rule_id or "").strip()
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
+def _rule_context(rule_ids: list[str]) -> list[dict[str, Any]]:
+    context: list[dict[str, Any]] = []
+    for rule_id in rule_ids[:8]:
+        item = registry_rule(rule_id) or {}
+        context.append(
+            {
+                "rule_id": rule_id,
+                "category": str(item.get("category") or ""),
+                "severity_floor": str(item.get("severity_floor") or ""),
+                "agent_owners": [str(owner) for owner in item.get("agent_owners") or []],
+                "is_bound_document_rule": bool(item.get("is_bound_document_rule")),
+                "evidence_requirements": item.get("evidence_requirements") or {},
+            }
+        )
+    return context
+
+
 def _prompt(finding: dict[str, Any], source_snippet: str) -> str:
+    rule_ids = _rule_ids_for(finding)
     public_finding = {
         "severity": finding.get("severity"),
         "confidence": finding.get("confidence"),
@@ -61,6 +92,7 @@ def _prompt(finding: dict[str, Any], source_snippet: str) -> str:
         "evidence": finding.get("evidence"),
         "suggested_code": finding.get("suggested_code"),
         "evidence_score": finding.get("evidence_score"),
+        "covered_rules": rule_ids,
     }
     return json.dumps(
         {
@@ -70,9 +102,11 @@ def _prompt(finding: dict[str, Any], source_snippet: str) -> str:
                 "rejected 表示源码片段不支持该 finding；uncertain 表示证据不完整但无法否定。"
             ),
             "finding": public_finding,
+            "rule_context": _rule_context(rule_ids),
             "source_snippet": source_snippet,
             "decision_policy": [
                 "不要引入新问题，只裁决输入 finding。",
+                "必须结合 rule_context 的规则类别、最低严重级别和证据要求判断 finding 是否对齐。",
                 "如果证据行、源码片段和问题描述对不上，返回 rejected。",
                 "如果源码片段明确支持问题，返回 confirmed。",
                 "如果需要更多上下文，返回 uncertain。",

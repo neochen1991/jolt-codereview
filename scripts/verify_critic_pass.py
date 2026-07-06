@@ -84,9 +84,11 @@ def assert_rejects_or_confirms_target_findings() -> None:
     assert by_hash["b"]["quality_trace"]["critic_verdict"]["verdict"] == "confirmed"
     assert "critic_verdict" not in by_hash["c"].get("quality_trace", {}), by_hash["c"]
     assert len(prompts) == 2, prompts
-    assert "SEC-INJECT-003" not in "\n".join(prompts)
-    assert "covered_rules" not in "\n".join(prompts)
-    assert "rule_id" not in "\n".join(prompts)
+    parsed_prompt = json.loads(prompts[0])
+    assert parsed_prompt["finding"]["covered_rules"] == ["SEC-INJECT-003"], parsed_prompt
+    assert parsed_prompt["rule_context"][0]["rule_id"] == "SEC-INJECT-003", parsed_prompt
+    assert parsed_prompt["rule_context"][0]["category"] == "SQL_INJECTION", parsed_prompt
+    assert "evidence_requirements" in parsed_prompt["rule_context"][0], parsed_prompt
 
 
 def assert_critic_call_count_is_capped_at_eight() -> None:

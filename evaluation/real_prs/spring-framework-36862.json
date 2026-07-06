@@ -1,0 +1,22 @@
+{
+  "id": "spring-framework-36862",
+  "fixture_type": "real_open_source",
+  "repository": {
+    "owner": "spring-projects",
+    "repo": "spring-framework",
+    "default_branch": "main"
+  },
+  "pull_number": 36862,
+  "source_url": "https://github.com/spring-projects/spring-framework/pull/36862",
+  "description": "Closed Spring Framework PR: Apply auto-grow collection limit to direct field binding. Used as a curated real-open-source quality gate fixture for binding and resource-limit findings.",
+  "expected_gold_ids": [
+    "real-spring-36862-001",
+    "real-spring-36862-002",
+    "real-spring-36862-003",
+    "real-spring-36862-004",
+    "real-spring-36862-005",
+    "real-spring-36862-006",
+    "real-spring-36862-007"
+  ],
+  "tags": ["real-open-source", "java", "spring-binding", "curated-offline-labels"]
+}

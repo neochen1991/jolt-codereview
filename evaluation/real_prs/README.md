@@ -30,6 +30,10 @@ Current scope:
 The set is intentionally small at first so the gate is executable. The target
 state for the review-quality uplift is at least 4 real open-source PR fixtures,
 at least 1 negative MR, and at least 25 manually reviewed gold findings.
+Some target fixtures may start as curated offline labels with `source_url` and
+`curated-offline-labels` tags when GitHub API access is unavailable; refresh
+their cached PR payloads with `scripts/seed-real-prs.mjs` before treating the
+metrics as a live runtime benchmark.
 
 ## Adding a Real PR Fixture
 

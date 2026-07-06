@@ -1,0 +1,14 @@
+{
+  "id": "apache-dubbo-16306-negative",
+  "fixture_type": "real_open_source",
+  "repository": {
+    "owner": "apache",
+    "repo": "dubbo",
+    "default_branch": "3.3"
+  },
+  "pull_number": 16306,
+  "source_url": "https://github.com/apache/dubbo/pull/16306",
+  "description": "Closed Apache Dubbo PR: Improve type safety of CollectionUtils.toTreeSet. Curated as a negative quality gate fixture.",
+  "expected_gold_ids": ["real-dubbo-16306-negative"],
+  "tags": ["real-open-source", "java", "negative", "curated-offline-labels"]
+}

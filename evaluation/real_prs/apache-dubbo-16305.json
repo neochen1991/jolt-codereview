@@ -1,0 +1,23 @@
+{
+  "id": "apache-dubbo-16305",
+  "fixture_type": "real_open_source",
+  "repository": {
+    "owner": "apache",
+    "repo": "dubbo",
+    "default_branch": "3.3"
+  },
+  "pull_number": 16305,
+  "source_url": "https://github.com/apache/dubbo/pull/16305",
+  "description": "Closed Apache Dubbo PR: Fix CompositeInputStream close handling. Used as a curated real-open-source quality gate fixture for resource-lifecycle findings.",
+  "expected_gold_ids": [
+    "real-dubbo-16305-001",
+    "real-dubbo-16305-002",
+    "real-dubbo-16305-003",
+    "real-dubbo-16305-004",
+    "real-dubbo-16305-005",
+    "real-dubbo-16305-006",
+    "real-dubbo-16305-007",
+    "real-dubbo-16305-008"
+  ],
+  "tags": ["real-open-source", "java", "resource-lifecycle", "curated-offline-labels"]
+}

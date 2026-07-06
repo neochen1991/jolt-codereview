@@ -219,10 +219,13 @@ def _has_required_bound_review(agent_context: dict[str, Any]) -> bool:
 
 def _rule_checked_status(items: list[dict[str, Any]], rule_id: str) -> dict[str, Any]:
     if not rule_id:
-        return {"rule_id": "", "checked": True, "hit": False, "skipped": False, "finding_count": len(items)}
+        return {"rule_id": "", "checked": True, "hit": False, "skipped": False, "finding_count": _bound_finding_count(items)}
     hit_count = 0
     skipped_count = 0
     for item in items:
+        if _is_bound_skip_marker(item):
+            skipped_count += 1
+            continue
         covered = {str(rule) for rule in (item.get("covered_rules") or [])}
         skipped = {str(rule) for rule in (item.get("skipped_rules") or [])}
         if rule_id in covered:
@@ -234,7 +237,7 @@ def _rule_checked_status(items: list[dict[str, Any]], rule_id: str) -> dict[str,
         "checked": True,
         "hit": hit_count > 0,
         "skipped": skipped_count > 0,
-        "finding_count": len(items),
+        "finding_count": _bound_finding_count(items),
         "hit_count": hit_count,
         "skipped_count": skipped_count,
     }
@@ -256,6 +259,22 @@ def _enforce_bound_batch_findings(batch: dict[str, Any], items: list[dict[str, A
     for item in items:
         finding = dict(item)
         covered_rules = _string_list(finding.get("covered_rules"))
+        skipped_rules = _string_list(finding.get("skipped_rules"))
+        if not covered_rules and expected_id in skipped_rules and not _has_finding_payload(finding):
+            kept.append(
+                {
+                    **finding,
+                    "__bound_skip_marker": True,
+                    "covered_rules": [],
+                    "skipped_rules": [expected_id],
+                    "review_batch_label": str(batch.get("label") or ""),
+                    "bound_rule_id": expected_rule_id,
+                    "skill_key": str(batch.get("skill_key") or ""),
+                    "checkpoint_id": expected_checkpoint_id,
+                    "verification_flags": _unique_strings([*(_string_list(finding.get("verification_flags"))), "bound_rule_or_checkpoint_skipped"]),
+                }
+            )
+            continue
         if covered_rules and expected_id not in covered_rules:
             rejected.append(_with_rejected_reason(finding, mismatch_reason))
             continue
@@ -393,6 +412,8 @@ def _bound_review_coverage_record(
     checkpoint_id = str(batch.get("checkpoint_id") or "").strip()
     if not rule_id and not checkpoint_id:
         return None
+    skip_markers = [item for item in items if _is_bound_skip_marker(item)]
+    finding_count = _bound_finding_count(items)
     record = {
         "agent_id": agent_id,
         "batch_label": str(batch.get("label") or ""),
@@ -401,9 +422,11 @@ def _bound_review_coverage_record(
         "skill_key": str(batch.get("skill_key") or ""),
         "checkpoint_id": checkpoint_id,
         "checked": True,
-        "finding_count": len(items),
+        "finding_count": finding_count,
         "rejected_count": len(rejected_items),
-        "hit": len(items) > 0,
+        "hit": finding_count > 0,
+        "skipped": bool(skip_markers),
+        "skipped_count": len(skip_markers),
     }
     return record
 
@@ -413,15 +436,22 @@ def _summarize_bound_review_coverage(records: list[dict[str, Any]]) -> dict[str,
     required_count = len(required_records)
     checked_count = sum(1 for record in required_records if record.get("checked"))
     hit_count = sum(1 for record in required_records if int(record.get("finding_count") or 0) > 0)
+    skipped_count = sum(1 for record in required_records if record.get("skipped"))
     rejected_count = sum(int(record.get("rejected_count") or 0) for record in required_records)
-    missed = [record for record in required_records if record.get("checked") and int(record.get("finding_count") or 0) == 0]
+    missed = [
+        record
+        for record in required_records
+        if record.get("checked") and int(record.get("finding_count") or 0) == 0 and not record.get("skipped")
+    ]
     return {
         "required_count": required_count,
         "checked_count": checked_count,
         "hit_count": hit_count,
+        "skipped_count": skipped_count,
         "missed_count": len(missed),
         "coverage_rate": round(checked_count / required_count, 4) if required_count else 1.0,
         "hit_rate": round(hit_count / required_count, 4) if required_count else 1.0,
+        "skip_rate": round(skipped_count / required_count, 4) if required_count else 0.0,
         "rule_count": sum(1 for record in required_records if record.get("type") == "rule"),
         "skill_checkpoint_count": sum(1 for record in required_records if record.get("type") == "skill_checkpoint"),
         "rejected_count": rejected_count,
@@ -442,6 +472,21 @@ def _summarize_bound_review_coverage(records: list[dict[str, Any]]) -> dict[str,
 
 def _with_rejected_reason(item: dict[str, Any], reason: str) -> dict[str, Any]:
     return {**item, "rejected_reasons": _unique_strings([*(_string_list(item.get("rejected_reasons"))), reason])}
+
+
+def _is_bound_skip_marker(item: dict[str, Any]) -> bool:
+    return bool(item.get("__bound_skip_marker"))
+
+
+def _has_finding_payload(item: dict[str, Any]) -> bool:
+    payload_fields = ["title", "problem_description", "evidence", "recommendation", "suggested_code", "file_path"]
+    if any(str(item.get(field) or "").strip() for field in payload_fields):
+        return True
+    return bool(item.get("line_start") or item.get("line_end"))
+
+
+def _bound_finding_count(items: list[dict[str, Any]]) -> int:
+    return sum(1 for item in items if not _is_bound_skip_marker(item))
 
 
 def _string_list(raw: Any) -> list[str]:
@@ -975,10 +1020,11 @@ def make_run_experts_node(
                                 "skill_key": batch["skill_key"],
                                 "checkpoint_id": batch.get("checkpoint_id"),
                                 "checked": True,
-                                "finding_count": len(batch_items),
+                                "finding_count": _bound_finding_count(batch_items),
+                                "skipped_count": sum(1 for item in batch_items if _is_bound_skip_marker(item)),
                             },
                         )
-                    llm_items.extend(batch_items)
+                    llm_items.extend([item for item in batch_items if not _is_bound_skip_marker(item)])
             for item in llm_items:
                 item["head_sha"] = job["head_sha"]
             merged = dedupe(static_items + llm_items)

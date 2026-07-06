@@ -33,6 +33,7 @@ export function summarizeBoundRuleCoverage(rows: Array<{ coverage_json?: string 
       acc.required_count += required;
       acc.checked_count += numberValue(payload.checked_count);
       acc.hit_count += numberValue(payload.hit_count);
+      acc.skipped_count += numberValue(payload.skipped_count);
       acc.missed_count += numberValue(payload.missed_count);
       acc.rule_count += numberValue(payload.rule_count);
       acc.skill_checkpoint_count += numberValue(payload.skill_checkpoint_count);
@@ -50,6 +51,7 @@ export function summarizeBoundRuleCoverage(rows: Array<{ coverage_json?: string 
       required_count: 0,
       checked_count: 0,
       hit_count: 0,
+      skipped_count: 0,
       missed_count: 0,
       rule_count: 0,
       skill_checkpoint_count: 0,
@@ -61,6 +63,7 @@ export function summarizeBoundRuleCoverage(rows: Array<{ coverage_json?: string 
     ...totals,
     coverage_rate: totals.required_count ? Number((totals.checked_count / totals.required_count).toFixed(4)) : null,
     hit_rate: totals.required_count ? Number((totals.hit_count / totals.required_count).toFixed(4)) : null,
+    skip_rate: totals.required_count ? Number((totals.skipped_count / totals.required_count).toFixed(4)) : null,
     missed
   };
 }

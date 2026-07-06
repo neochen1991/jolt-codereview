@@ -13,7 +13,7 @@ fake_deepagents_runner.run_bounded_deepagent = lambda **_kwargs: {"tool_calls": 
 sys.modules.setdefault("orchestration.deepagents_runner", fake_deepagents_runner)
 
 from prompts.builder import build_prompt
-from orchestration.nodes.run_experts import _bound_rule_batches, _coverage_retry_batch, _enforce_bound_batch_findings, _summarize_bound_review_coverage
+from orchestration.nodes.run_experts import _bound_review_coverage_record, _bound_rule_batches, _coverage_retry_batch, _enforce_bound_batch_findings, _summarize_bound_review_coverage
 from rules.skill_checkpoint_parser import parse_skill_checkpoints
 
 
@@ -301,6 +301,42 @@ def test_bound_rule_batch_filters_explicitly_mismatched_rule() -> None:
     assert rejected[0]["rejected_reasons"] == ["bound_rule_mismatch"], rejected
 
 
+def test_bound_skill_skip_marker_is_audited_without_becoming_finding() -> None:
+    batch = {
+        "label": "bound_skill:secure-review-skill:SEC-PATH-002",
+        "rule_id": "",
+        "skill_key": "secure-review-skill",
+        "checkpoint_id": "SEC-PATH-002",
+        "agent": {"skill_checkpoints": [{"checkpoint_id": "SEC-PATH-002"}]},
+    }
+
+    kept, rejected = _enforce_bound_batch_findings(
+        batch,
+        [
+            {
+                "skipped_rules": ["SEC-PATH-002"],
+                "skip_reason": "当前 diff 没有文件读取入口。",
+            }
+        ],
+    )
+
+    assert rejected == [], rejected
+    assert len(kept) == 1, kept
+    assert kept[0]["__bound_skip_marker"] is True, kept
+    assert kept[0]["covered_rules"] == [], kept
+    assert kept[0]["skipped_rules"] == ["SEC-PATH-002"], kept
+    coverage = _bound_review_coverage_record("security_agent", batch, kept, rejected)
+    assert coverage is not None, coverage
+    assert coverage["finding_count"] == 0, coverage
+    assert coverage["skipped"] is True, coverage
+    assert coverage["skipped_count"] == 1, coverage
+    assert coverage["hit"] is False, coverage
+    summary = _summarize_bound_review_coverage([coverage])
+    assert summary["hit_count"] == 0, summary
+    assert summary["skipped_count"] == 1, summary
+    assert summary["missed_count"] == 0, summary
+
+
 def test_bound_review_coverage_summary_tracks_hits_and_misses() -> None:
     summary = _summarize_bound_review_coverage(
         [
@@ -331,6 +367,8 @@ def test_bound_review_coverage_summary_tracks_hits_and_misses() -> None:
                 "checkpoint_id": "SEC-PATH-002",
                 "checked": True,
                 "finding_count": 0,
+                "skipped": False,
+                "skipped_count": 0,
                 "rejected_count": 0,
             },
         ]
@@ -339,6 +377,7 @@ def test_bound_review_coverage_summary_tracks_hits_and_misses() -> None:
     assert summary["required_count"] == 3, summary
     assert summary["checked_count"] == 3, summary
     assert summary["hit_count"] == 2, summary
+    assert summary["skipped_count"] == 0, summary
     assert summary["missed_count"] == 1, summary
     assert summary["coverage_rate"] == 1.0, summary
     assert summary["hit_rate"] == round(2 / 3, 4), summary
@@ -382,5 +421,6 @@ if __name__ == "__main__":
     test_skill_checkpoint_batch_rejects_explicit_false_positive_pattern()
     test_skill_checkpoint_batch_flags_missing_required_evidence_without_dropping()
     test_bound_rule_batch_filters_explicitly_mismatched_rule()
+    test_bound_skill_skip_marker_is_audited_without_becoming_finding()
     test_bound_review_coverage_summary_tracks_hits_and_misses()
     test_coverage_retry_batch_focuses_prompt_on_missed_bound_rule()

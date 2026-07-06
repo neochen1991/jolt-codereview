@@ -60,6 +60,19 @@ def test_partial_evidence_contract_is_retained_as_needs_review() -> None:
     assert retained["quality_trace"]["evidence_contract"]["decision_hint"] in {"advisory_candidate", "needs_review"}
 
 
+def test_quality_trace_preserves_bound_evidence_contract() -> None:
+    bound_contract = {
+        "version": "bound_evidence_contract_v1",
+        "rule_id": "SEC-CMD-001",
+        "checkpoint_id": "SEC-CMD-001",
+        "status": "partial",
+        "missing_required_evidence": ["外部输入来源"],
+    }
+    trace = build_quality_trace(agent_finding(bound_evidence_contract=bound_contract), [])
+
+    assert trace["bound_evidence_contract"] == bound_contract
+
+
 def test_low_evidence_score_downgrades_to_needs_review_instead_of_drop() -> None:
     finding = agent_finding()
     scored = apply_evidence_score_policy(finding, {"score": 0.2, "components": {}}, {"drop_below": 0.35, "downgrade_below": 0.5})
@@ -88,5 +101,6 @@ def test_critic_rejected_still_allows_hard_drop() -> None:
 if __name__ == "__main__":
     test_agent_only_complete_finding_is_retained_without_tool_support()
     test_partial_evidence_contract_is_retained_as_needs_review()
+    test_quality_trace_preserves_bound_evidence_contract()
     test_low_evidence_score_downgrades_to_needs_review_instead_of_drop()
     test_critic_rejected_still_allows_hard_drop()

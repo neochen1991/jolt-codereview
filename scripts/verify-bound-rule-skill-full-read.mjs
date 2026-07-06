@@ -76,6 +76,10 @@ const checks = [
       "\"skill_checkpoints\": [checkpoint]",
       "parse_skill_checkpoints(",
       "def _enforce_bound_batch_findings(batch: dict[str, Any], items: list[dict[str, Any]])",
+      "def _audit_bound_evidence_contract(finding: dict[str, Any], contract_source: dict[str, Any], expected_id: str)",
+      "bound_evidence_contract",
+      "bound_false_positive_pattern_match",
+      "bound_required_evidence_incomplete",
       "def _summarize_bound_review_coverage(records: list[dict[str, Any]])",
       "bound_review_coverage_summarized",
       "\"bound_review_coverage\": bound_review_coverage",
@@ -104,6 +108,13 @@ const checks = [
       "\"bound_skill_review_contract\": {",
       "禁止执行专家自由检视",
       "必须只检查当前 checkpoint"
+    ]
+  },
+  {
+    file: "mr-backend/worker/orchestration/nodes/judge_findings.py",
+    forbidden: [],
+    required: [
+      "\"bound_evidence_contract\": finding.get(\"bound_evidence_contract\") or {}"
     ]
   },
   {

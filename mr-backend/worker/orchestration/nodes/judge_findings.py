@@ -3220,6 +3220,7 @@ def build_quality_trace(finding: dict[str, Any], source_observations: list[dict[
         "calibration": finding.get("calibration") or {},
         "debate": finding.get("debate_verdict") or {},
         "evidence_contract": build_evidence_contract(finding, source_observations),
+        "bound_evidence_contract": finding.get("bound_evidence_contract") or {},
         "tools": [
             {
                 "tool_name": item.get("tool_name"),

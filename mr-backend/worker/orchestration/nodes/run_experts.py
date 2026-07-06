@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable
 
 from orchestration.deepagents_runner import run_bounded_deepagent
@@ -208,6 +209,7 @@ def _enforce_bound_batch_findings(batch: dict[str, Any], items: list[dict[str, A
     if not expected_id:
         return items, []
 
+    contract_source = _bound_batch_contract_source(batch)
     is_skill_checkpoint = bool(expected_checkpoint_id)
     mismatch_reason = "bound_skill_checkpoint_mismatch" if is_skill_checkpoint else "bound_rule_mismatch"
     attribution_flag = "bound_skill_checkpoint_attributed" if is_skill_checkpoint else "bound_rule_attributed"
@@ -230,8 +232,117 @@ def _enforce_bound_batch_findings(batch: dict[str, Any], items: list[dict[str, A
         if is_skill_checkpoint:
             finding["skill_key"] = str(batch.get("skill_key") or "")
             finding["checkpoint_id"] = expected_checkpoint_id
+        contract = _audit_bound_evidence_contract(finding, contract_source, expected_id)
+        if contract:
+            finding["bound_evidence_contract"] = contract
+            if contract["status"] == "false_positive_pattern_matched":
+                rejected.append(_with_rejected_reason(finding, "bound_false_positive_pattern_match"))
+                continue
+            if contract["missing_required_evidence"]:
+                finding["verification_flags"] = _unique_strings([*(_string_list(finding.get("verification_flags"))), "bound_required_evidence_incomplete"])
         kept.append(finding)
     return kept, rejected
+
+
+def _bound_batch_contract_source(batch: dict[str, Any]) -> dict[str, Any]:
+    agent = batch.get("agent") if isinstance(batch.get("agent"), dict) else {}
+    checkpoint_id = str(batch.get("checkpoint_id") or "").strip()
+    if checkpoint_id:
+        for checkpoint in agent.get("skill_checkpoints") or []:
+            if isinstance(checkpoint, dict) and str(checkpoint.get("checkpoint_id") or "") == checkpoint_id:
+                return checkpoint
+        return {}
+    rule_id = str(batch.get("rule_id") or "").strip()
+    if rule_id:
+        for rule in agent.get("bound_rules") or []:
+            if isinstance(rule, dict) and str(rule.get("rule_id") or "") == rule_id:
+                return rule
+    return {}
+
+
+def _audit_bound_evidence_contract(finding: dict[str, Any], contract_source: dict[str, Any], expected_id: str) -> dict[str, Any]:
+    if not contract_source:
+        return {}
+    required = str(contract_source.get("required_evidence") or contract_source.get("evidence_required") or "").strip()
+    false_positive_patterns = str(contract_source.get("false_positive_patterns") or "").strip()
+    finding_text = _finding_contract_text(finding)
+    required_clauses = _contract_clauses(required)
+    false_positive_clauses = _contract_clauses(false_positive_patterns)
+    matched_required = [clause for clause in required_clauses if _contract_clause_matches(clause, finding_text, allow_concepts=True)]
+    missing_required = [clause for clause in required_clauses if clause not in matched_required]
+    false_positive_matches = [clause for clause in false_positive_clauses if _contract_clause_matches(clause, finding_text, allow_concepts=False)]
+    if false_positive_matches:
+        status = "false_positive_pattern_matched"
+    elif missing_required and matched_required:
+        status = "partial"
+    elif missing_required:
+        status = "weak"
+    else:
+        status = "satisfied"
+    return {
+        "version": "bound_evidence_contract_v1",
+        "rule_id": expected_id,
+        "checkpoint_id": str(finding.get("checkpoint_id") or "") or expected_id,
+        "required_evidence": required,
+        "false_positive_patterns": false_positive_patterns,
+        "matched_required_evidence": matched_required,
+        "missing_required_evidence": missing_required,
+        "false_positive_matches": false_positive_matches,
+        "status": status,
+    }
+
+
+def _finding_contract_text(finding: dict[str, Any]) -> str:
+    parts = [
+        finding.get("title"),
+        finding.get("problem_description"),
+        finding.get("evidence"),
+        finding.get("recommendation"),
+        finding.get("suggested_code"),
+    ]
+    return "\n".join(str(part or "") for part in parts)
+
+
+def _contract_clauses(text: str) -> list[str]:
+    clauses: list[str] = []
+    for raw in re.split(r"[\n;；。]", str(text or "")):
+        cleaned = re.sub(r"^\s*[-*]\s*", "", raw).strip()
+        cleaned = re.sub(r"^(?:证据要求|输出要求|required evidence)[:：]\s*", "", cleaned, flags=re.I).strip()
+        if len(cleaned) >= 2:
+            clauses.append(cleaned)
+    return _unique_strings(clauses)
+
+
+def _contract_clause_matches(clause: str, text: str, *, allow_concepts: bool) -> bool:
+    normalized_clause = _contract_normalize(clause)
+    normalized_text = _contract_normalize(text)
+    if normalized_clause and normalized_clause in normalized_text:
+        return True
+    if allow_concepts and _concept_clause_matches(clause, normalized_text):
+        return True
+    parts = [part for part in re.split(r"\s+|,|，|、|/|或|和|及", clause) if len(part.strip()) >= 2]
+    if not parts:
+        return False
+    matched = sum(1 for part in parts if _contract_normalize(part) in normalized_text)
+    return matched >= max(1, len(parts) - 1)
+
+
+def _concept_clause_matches(clause: str, normalized_text: str) -> bool:
+    lowered = clause.lower()
+    concepts = [
+        (("外部输入", "用户输入", "请求参数", "输入来源"), ("request.getparameter", "request", "payload", "body", "query", "param", "用户输入", "外部输入", "请求参数")),
+        (("命令执行", "command", "sink"), ("runtime.getruntime().exec", "runtime.exec", "processbuilder", ".exec(", "命令执行")),
+        (("白名单", "枚举", "allowlist", "whitelist"), ("白名单", "枚举", "allowlist", "whitelist", "未看到白名单", "缺少白名单")),
+        (("路径规范化", "normalize", "canonical"), ("normalize", "canonical", "torealpath", "路径规范化", "目录限制")),
+    ]
+    for markers, evidence_markers in concepts:
+        if any(marker.lower() in lowered for marker in markers):
+            return any(_contract_normalize(marker) in normalized_text for marker in evidence_markers)
+    return False
+
+
+def _contract_normalize(value: str) -> str:
+    return re.sub(r"\s+", "", str(value or "")).lower()
 
 
 def _bound_review_coverage_record(

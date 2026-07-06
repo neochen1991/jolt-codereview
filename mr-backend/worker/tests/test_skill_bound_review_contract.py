@@ -131,11 +131,21 @@ def test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_sc
             "rule_id": "",
             "skill_key": "secure-review-skill",
             "checkpoint_id": "SEC-CMD-001",
+            "agent": {
+                "skill_checkpoints": [
+                    {
+                        "checkpoint_id": "SEC-CMD-001",
+                        "required_evidence": "外部输入来源；命令执行 sink；缺少白名单或枚举映射",
+                        "false_positive_patterns": "固定常量命令；参数来自内部枚举",
+                    }
+                ]
+            },
         },
         [
             {
                 "title": "命令注入",
-                "problem_description": "用户输入进入 Runtime.exec。",
+                "problem_description": "外部输入来源 request.getParameter 进入命令执行 sink Runtime.exec，缺少白名单。",
+                "evidence": "request.getParameter(\"cmd\") 拼接后传给 Runtime.exec(cmd)，未看到白名单或枚举映射。",
                 "file_path": "src/App.java",
                 "line_start": 12,
             },
@@ -155,8 +165,85 @@ def test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_sc
     assert kept[0]["skill_key"] == "secure-review-skill", kept
     assert kept[0]["checkpoint_id"] == "SEC-CMD-001", kept
     assert "bound_skill_checkpoint_attributed" in kept[0]["verification_flags"], kept
+    assert kept[0]["bound_evidence_contract"]["status"] == "satisfied", kept
+    assert kept[0]["bound_evidence_contract"]["missing_required_evidence"] == [], kept
     assert len(rejected) == 1, rejected
     assert rejected[0]["rejected_reasons"] == ["bound_skill_checkpoint_mismatch"], rejected
+
+
+def test_skill_checkpoint_batch_rejects_explicit_false_positive_pattern() -> None:
+    kept, rejected = _enforce_bound_batch_findings(
+        {
+            "label": "bound_skill:secure-review-skill:SEC-CMD-001",
+            "rule_id": "",
+            "skill_key": "secure-review-skill",
+            "checkpoint_id": "SEC-CMD-001",
+            "agent": {
+                "skill_checkpoints": [
+                    {
+                        "checkpoint_id": "SEC-CMD-001",
+                        "required_evidence": "外部输入来源；命令执行 sink；缺少白名单或枚举映射",
+                        "false_positive_patterns": "固定常量命令；参数来自内部枚举",
+                    }
+                ]
+            },
+        },
+        [
+            {
+                "title": "命令注入",
+                "problem_description": "Runtime.exec 执行固定常量命令。",
+                "evidence": "Runtime.getRuntime().exec(\"uptime\") 是固定常量命令。",
+                "covered_rules": ["SEC-CMD-001"],
+            },
+            {
+                "title": "命令注入",
+                "problem_description": "外部输入来源进入命令执行 sink。",
+                "evidence": "request.getParameter(\"cmd\") 传给 Runtime.exec(cmd)，未看到白名单。",
+                "covered_rules": ["SEC-CMD-001"],
+            },
+        ],
+    )
+
+    assert len(kept) == 1, kept
+    assert kept[0]["bound_evidence_contract"]["status"] == "satisfied", kept
+    assert len(rejected) == 1, rejected
+    assert rejected[0]["rejected_reasons"] == ["bound_false_positive_pattern_match"], rejected
+    assert rejected[0]["bound_evidence_contract"]["false_positive_matches"] == ["固定常量命令"], rejected
+
+
+def test_skill_checkpoint_batch_flags_missing_required_evidence_without_dropping() -> None:
+    kept, rejected = _enforce_bound_batch_findings(
+        {
+            "label": "bound_skill:secure-review-skill:SEC-CMD-001",
+            "rule_id": "",
+            "skill_key": "secure-review-skill",
+            "checkpoint_id": "SEC-CMD-001",
+            "agent": {
+                "skill_checkpoints": [
+                    {
+                        "checkpoint_id": "SEC-CMD-001",
+                        "required_evidence": "外部输入来源；命令执行 sink；缺少白名单或枚举映射",
+                    }
+                ]
+            },
+        },
+        [
+            {
+                "title": "命令注入待确认",
+                "problem_description": "Runtime.exec 被调用。",
+                "evidence": "Runtime.exec(cmd)",
+                "covered_rules": ["SEC-CMD-001"],
+            }
+        ],
+    )
+
+    assert rejected == [], rejected
+    assert len(kept) == 1, kept
+    contract = kept[0]["bound_evidence_contract"]
+    assert contract["status"] == "partial", contract
+    assert "外部输入来源" in contract["missing_required_evidence"], contract
+    assert "缺少白名单或枚举映射" in contract["missing_required_evidence"], contract
+    assert "bound_required_evidence_incomplete" in kept[0]["verification_flags"], kept
 
 
 def test_bound_rule_batch_filters_explicitly_mismatched_rule() -> None:
@@ -231,5 +318,7 @@ if __name__ == "__main__":
     test_custom_skill_creates_skill_scoped_batch_without_free_review()
     test_skill_scoped_prompt_disables_expert_free_review()
     test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_scope()
+    test_skill_checkpoint_batch_rejects_explicit_false_positive_pattern()
+    test_skill_checkpoint_batch_flags_missing_required_evidence_without_dropping()
     test_bound_rule_batch_filters_explicitly_mismatched_rule()
     test_bound_review_coverage_summary_tracks_hits_and_misses()

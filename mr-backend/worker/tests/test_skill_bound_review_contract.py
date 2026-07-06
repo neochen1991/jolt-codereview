@@ -79,6 +79,41 @@ def test_custom_skill_creates_skill_scoped_batch_without_free_review() -> None:
     assert batch_agent["skill_assets"][0]["skill_key"] == "secure-review-skill", batch_agent
 
 
+def test_skill_reference_checkpoints_are_batched_even_when_skill_md_is_entrypoint_only() -> None:
+    batches = _bound_rule_batches(
+        {
+            "agent_id": "security_agent",
+            "custom_skills": ["secure-review-skill"],
+            "skill_assets": [
+                {
+                    "skill_key": "secure-review-skill",
+                    "asset_path": "SKILL.md",
+                    "asset_type": "skill",
+                    "content": "# Security Skill\n\n请完整读取 references/security-rules.md 后逐条检查。",
+                },
+                {
+                    "skill_key": "secure-review-skill",
+                    "asset_path": "references/security-rules.md",
+                    "asset_type": "reference",
+                    "content": SKILL_WITH_CHECKPOINTS,
+                },
+            ],
+            "bound_rules": [],
+        }
+    )
+
+    assert [batch["label"] for batch in batches] == [
+        "bound_skill:secure-review-skill:SEC-CMD-001",
+        "bound_skill:secure-review-skill:SEC-PATH-002",
+    ], batches
+    checkpoints = [batch["agent"]["skill_checkpoints"][0] for batch in batches]
+    assert [item["source_path"] for item in checkpoints] == [
+        "references/security-rules.md",
+        "references/security-rules.md",
+    ], checkpoints
+    assert all(item["parse_quality"] == "structured" for item in checkpoints), checkpoints
+
+
 def test_skill_scoped_prompt_disables_expert_free_review() -> None:
     prompt, _safety = build_prompt(
         {
@@ -341,6 +376,7 @@ def test_coverage_retry_batch_focuses_prompt_on_missed_bound_rule() -> None:
 if __name__ == "__main__":
     test_skill_markdown_is_parsed_into_auditable_checkpoints()
     test_custom_skill_creates_skill_scoped_batch_without_free_review()
+    test_skill_reference_checkpoints_are_batched_even_when_skill_md_is_entrypoint_only()
     test_skill_scoped_prompt_disables_expert_free_review()
     test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_scope()
     test_skill_checkpoint_batch_rejects_explicit_false_positive_pattern()

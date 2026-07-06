@@ -179,27 +179,38 @@ def _coverage_retry_batch(batch: dict[str, Any], *, reason: str) -> dict[str, An
 
 
 def _skill_checkpoints(skill_key: str, skill_assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    skill_docs = [
-        asset
-        for asset in skill_assets
-        if str(asset.get("asset_path") or "").lower() == "skill.md"
-    ]
-    source_assets = skill_docs or skill_assets
+    source_assets = [asset for asset in skill_assets if _is_checkpoint_source_asset(asset)]
     combined: list[dict[str, Any]] = []
+    fallback: list[dict[str, Any]] = []
     for asset in source_assets:
         content = str(asset.get("content") or "")
         if not content.strip():
             continue
-        combined.extend(
-            parse_skill_checkpoints(
-                skill_key,
-                content,
-                source_path=str(asset.get("asset_path") or "SKILL.md"),
-            )
+        parsed = parse_skill_checkpoints(
+            skill_key,
+            content,
+            source_path=str(asset.get("asset_path") or "SKILL.md"),
         )
+        structured = [item for item in parsed if str(item.get("parse_quality") or "") == "structured"]
+        if structured:
+            combined.extend(structured)
+        else:
+            fallback.extend(parsed)
     if combined:
         return combined
+    if fallback:
+        return fallback[:1]
     return parse_skill_checkpoints(skill_key, "", source_path="SKILL.md")
+
+
+def _is_checkpoint_source_asset(asset: dict[str, Any]) -> bool:
+    asset_path = str(asset.get("asset_path") or "").replace("\\", "/").lower()
+    asset_type = str(asset.get("asset_type") or "").lower()
+    if asset_path == "skill.md":
+        return True
+    if asset_path.startswith("references/") and asset_path.endswith((".md", ".mdx", ".txt")):
+        return True
+    return asset_type in {"skill", "reference"} and asset_path.endswith((".md", ".mdx", ".txt"))
 
 
 def _has_required_bound_review(agent_context: dict[str, Any]) -> bool:

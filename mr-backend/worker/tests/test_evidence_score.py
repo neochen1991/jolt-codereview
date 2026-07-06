@@ -102,6 +102,29 @@ def test_evidence_score_counts_changed_source_location_for_paraphrased_evidence(
     assert result["score"] >= 0.35, result
 
 
+def test_symbol_alignment_accepts_repo_index_definition_fields() -> None:
+    result = score(
+        finding(),
+        files=[SimpleNamespace(filename="src/main/java/demo/PaymentRepository.java", patch=PATCH)],
+        related_context={
+            "changed_symbols": [
+                {
+                    "name": "search",
+                    "definition_file": "src/main/java/demo/PaymentRepository.java",
+                    "definition_line": 42,
+                    "related_tests": ["src/test/java/demo/PaymentRepositoryTest.java"],
+                }
+            ],
+            "related_tests": ["src/test/java/demo/PaymentRepositoryTest.java"],
+        },
+        tool_observations=[],
+        source_observations=[],
+        peer_findings=[finding()],
+    )
+
+    assert result["components"]["symbol_alignment"] == 0.15, result
+
+
 def test_suppression_hint_reduces_evidence_score_without_rule_branch() -> None:
     files = [SimpleNamespace(filename="src/main/java/demo/PaymentRepository.java", patch=PATCH)]
     base = score(finding(), files=files, peer_findings=[finding()])
@@ -134,4 +157,5 @@ if __name__ == "__main__":
     test_evidence_score_components_are_structural()
     test_evidence_score_uses_line_span_not_rule_specific_branch()
     test_evidence_score_counts_changed_source_location_for_paraphrased_evidence()
+    test_symbol_alignment_accepts_repo_index_definition_fields()
     test_suppression_hint_reduces_evidence_score_without_rule_branch()

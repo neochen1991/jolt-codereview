@@ -186,10 +186,10 @@ def _symbol_alignment_score(finding: dict[str, Any], related_context: dict[str, 
         if isinstance(items, list):
             symbols.extend(item for item in items if isinstance(item, dict))
     for symbol in symbols:
-        symbol_file = str(symbol.get("file_path") or symbol.get("file") or symbol.get("path") or "")
+        symbol_file = str(symbol.get("file_path") or symbol.get("definition_file") or symbol.get("file") or symbol.get("path") or "")
         if symbol_file and symbol_file != file_path:
             continue
-        symbol_line = line_value(symbol.get("line_start") or symbol.get("start_line") or symbol.get("line"))
+        symbol_line = line_value(symbol.get("line_start") or symbol.get("definition_line") or symbol.get("start_line") or symbol.get("line"))
         if symbol_line and start - 2 <= symbol_line <= end + 2:
             return 0.15
     return 0.0

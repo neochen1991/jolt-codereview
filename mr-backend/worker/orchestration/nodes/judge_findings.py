@@ -1844,8 +1844,24 @@ def _represents_tool_rule(finding: dict[str, Any], rule_id: str, observation: di
     finding_line = _as_int(finding.get("line_start"))
     observation_line = _as_int(observation.get("line_start"))
     if finding_line is None or observation_line is None:
+        return _finding_is_rule_specific(finding, rule_id)
+    return abs(finding_line - observation_line) <= tolerance and _finding_is_rule_specific(finding, rule_id)
+
+
+def _finding_is_rule_specific(finding: dict[str, Any], rule_id: str) -> bool:
+    covered = [str(rule) for rule in (finding.get("covered_rules") or []) if str(rule or "").strip()]
+    if len(covered) <= 1 or rule_id not in TOOL_COVERAGE_FILL_RULES:
         return True
-    return abs(finding_line - observation_line) <= tolerance
+    observation = finding.get("source_tool_observation") if isinstance(finding.get("source_tool_observation"), dict) else {}
+    if observation and _canonical_tool_rule_id(observation) == rule_id:
+        return True
+    title = str(finding.get("title") or "")
+    remediation_title = str((RULE_REMEDIATION.get(rule_id) or {}).get("title") or "")
+    if remediation_title and remediation_title in title:
+        return True
+    category = normalized_rule_category(rule_id, title)
+    title_category = normalized_rule_category(str(finding.get("tool_rule_id") or finding.get("rule_id") or ""), title)
+    return category != "GENERAL" and category == title_category and rule_id == _primary_rule_key(finding)
 
 
 def _fill_missing_tool_coverage(
@@ -2559,6 +2575,7 @@ def promote_tool_observations(
             str(existing.get("file_path") or "") == str(candidate.get("file_path") or "")
             and abs((_as_int(existing.get("line_start")) or 0) - (line_start or 0)) <= 3
             and rule_id in {str(rule) for rule in (existing.get("covered_rules") or [])}
+            and _finding_is_rule_specific(existing, rule_id)
             for existing in existing_findings
         )
         if exact_existing:

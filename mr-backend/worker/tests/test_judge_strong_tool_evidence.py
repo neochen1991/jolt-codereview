@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "worker"))
 
 from orchestration.nodes.judge_findings import (
+    _fill_missing_tool_coverage,
     _is_low_precision_unbacked_advisory,
     _prune_low_signal_final_findings,
     judge_candidate_findings,
@@ -123,8 +124,46 @@ def test_soft_audit_state_claim_without_exact_tool_support_is_dropped() -> None:
     assert _is_low_precision_unbacked_advisory(item, [])
 
 
+def test_missing_tool_coverage_fills_rule_when_existing_finding_is_multi_rule_bundle() -> None:
+    selected = [
+        {
+            "severity": "high",
+            "confidence": 0.93,
+            "agent_id": "coding_agent",
+            "file_path": "src/main/java/com/acme/payment/api/PaymentAdminController.java",
+            "line_start": 23,
+            "line_end": 23,
+            "title": "POST 副作用接口缺少幂等保护",
+            "problem_description": "新增 POST 接口缺少幂等保护，合并证据里包含 String.valueOf(payload.get(\"userId\"))。",
+            "evidence": "String userId = String.valueOf(payload.get(\"userId\"));",
+            "recommendation": "使用 DTO + Bean Validation，或对 Map 字段做显式 required/type 校验后再进入业务逻辑。",
+            "covered_rules": ["CODE-NULL-001", "BE-API-001", "BE-IDEMP-004"],
+            "verification_flags": ["tool_promoted"],
+        }
+    ]
+    observations = [
+        {
+            "tool_name": "java_web_static",
+            "rule_id": "CODE-NULL-001",
+            "severity": "medium",
+            "confidence": 0.86,
+            "file_path": "src/main/java/com/acme/payment/api/PaymentAdminController.java",
+            "line_start": 23,
+            "line_end": 23,
+            "message": "Map payload field is converted with String.valueOf; missing fields become literal \"null\".\nEvidence: String userId = String.valueOf(payload.get(\"userId\"));",
+        }
+    ]
+
+    filled = _fill_missing_tool_coverage(selected, observations, max_findings=5)
+
+    code_null_findings = [item for item in filled if item.get("covered_rules") == ["CODE-NULL-001"]]
+    assert len(code_null_findings) == 1, filled
+    assert "String.valueOf" in code_null_findings[0]["evidence"], code_null_findings
+
+
 if __name__ == "__main__":
     test_strong_tool_findings_keep_distinct_root_causes_on_same_line()
     test_strong_ddd_tool_finding_is_not_pruned_as_weak_advisory()
     test_strong_tool_finding_with_secondary_ddd_rule_is_not_pruned()
     test_soft_audit_state_claim_without_exact_tool_support_is_dropped()
+    test_missing_tool_coverage_fills_rule_when_existing_finding_is_multi_rule_bundle()

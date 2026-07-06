@@ -109,6 +109,9 @@ def main() -> None:
     parser.add_argument("--min-recall", type=float, default=0.65)
     parser.add_argument("--min-high-severity-accuracy", type=float, default=0.80)
     parser.add_argument("--max-negative-fp", type=int, default=0)
+    parser.add_argument("--min-mrs", type=int, default=1)
+    parser.add_argument("--min-gold", type=int, default=10)
+    parser.add_argument("--min-negative-mrs", type=int, default=0)
     args = parser.parse_args()
 
     findings = read_jsonl(ROOT / args.findings)
@@ -120,6 +123,12 @@ def main() -> None:
     high_accuracy = float(report.get("high_severity_accuracy") or report.get("high_recall") or 0)
     if high_accuracy < args.min_high_severity_accuracy:
         failures.append(f"high_severity_accuracy {high_accuracy} < {args.min_high_severity_accuracy}")
+    if int(report.get("mr_count") or 0) < args.min_mrs:
+        failures.append(f"mr_count {report.get('mr_count')} < {args.min_mrs}")
+    if int(report.get("gold_count") or 0) < args.min_gold:
+        failures.append(f"gold_count {report.get('gold_count')} < {args.min_gold}")
+    if int(report.get("negative_mr_count") or 0) < args.min_negative_mrs:
+        failures.append(f"negative_mr_count {report.get('negative_mr_count')} < {args.min_negative_mrs}")
     if failures:
         raise SystemExit("real PR quality gate failed: " + "; ".join(failures))
 
@@ -132,6 +141,7 @@ def main() -> None:
                 "recall": report.get("recall"),
                 "high_severity_accuracy": high_accuracy,
                 "finding_count": report.get("finding_count"),
+                "mr_count": report.get("mr_count"),
                 "gold_count": report.get("gold_count"),
                 "negative_false_positive_count": report.get("negative_false_positive_count"),
                 "quality_fields_checked": len(findings),

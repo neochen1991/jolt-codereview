@@ -49,6 +49,7 @@ def matches(gold: dict[str, Any], finding: dict[str, Any], tolerance: int) -> bo
 
 def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], tolerance: int) -> dict[str, Any]:
     positive_gold = [item for item in gold_items if norm(item.get("ground_truth") or "true_positive") != "negative"]
+    positive_mr_ids = {norm(item.get("mr_id")) for item in positive_gold if norm(item.get("mr_id"))}
     findings_by_mr: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for finding in findings:
         findings_by_mr[norm(finding.get("mr_id") or finding.get("merge_request_id"))].append(finding)
@@ -99,6 +100,8 @@ def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], t
         "high_recall": high_severity_accuracy,
         "high_severity_accuracy": high_severity_accuracy,
         "gold_count": len(positive_gold),
+        "mr_count": len(positive_mr_ids | negative_mr_ids),
+        "positive_mr_count": len(positive_mr_ids),
         "finding_count": len(findings),
         "negative_mr_count": len(negative_mr_ids),
         "negative_false_positive_count": len(negative_false_positives),

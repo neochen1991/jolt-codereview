@@ -91,15 +91,55 @@ def _compact_text(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _evidence_fragments(value: str) -> list[str]:
+    fragments: list[str] = []
+    for raw in re.split(r"[\n\r]+|Evidence:", str(value or ""), flags=re.IGNORECASE):
+        fragment = _compact_text(re.sub(r"^(line\s+\d+\s*:|合并证据：)", "", raw.strip(), flags=re.IGNORECASE))
+        fragment = fragment.strip("`'\" ")
+        if len(fragment) >= 8 and fragment not in fragments:
+            fragments.append(fragment)
+    return fragments
+
+
+def _strong_tokens(value: str) -> set[str]:
+    result: set[str] = set()
+    for raw in re.findall(r"[A-Za-z0-9_.:-]+|[\u4e00-\u9fff]{2,}", str(value or "").lower()):
+        for token in re.split(r"[:/<>\"'=,()\[\]{};\s]+", raw):
+            token = token.strip("._-")
+            if len(token) >= 4:
+                result.add(token)
+        token = raw.strip("._-")
+        if len(token) >= 4:
+            result.add(token)
+    return result
+
+
+def _has_specific_token_overlap(evidence: str, source_line: str) -> bool:
+    evidence_tokens = _strong_tokens(evidence)
+    source_tokens = _strong_tokens(source_line)
+    overlap = evidence_tokens & source_tokens
+    if len(overlap) >= 2:
+        return True
+    return any(len(token) >= 6 and re.search(r"\d", token) for token in overlap)
+
+
 def _snippet_quote_score(finding: dict[str, Any], line_index: dict[str, dict[int, str]]) -> float:
     evidence = _compact_text(str(finding.get("evidence") or ""))
-    if len(evidence) < 30:
+    if len(evidence) < 8:
         return 0.0
-    source = _compact_text(_source_window(line_index, str(finding.get("file_path") or ""), line_value(finding.get("line_start"))))
-    if len(source) < 30:
+    source_window = _source_window(line_index, str(finding.get("file_path") or ""), line_value(finding.get("line_start")))
+    source = _compact_text(source_window)
+    if len(source) < 8:
         return 0.0
     if evidence in source or source in evidence:
         return 0.2
+    source_lines = [_compact_text(line) for line in source_window.splitlines() if len(_compact_text(line)) >= 8]
+    fragments = _evidence_fragments(evidence)
+    for line in source_lines:
+        if line in evidence or any(fragment in line or line in fragment for fragment in fragments):
+            return 0.2
+        if any(_has_specific_token_overlap(fragment, line) for fragment in fragments):
+            return 0.15
     source_chunks = [chunk.strip() for chunk in re.split(r"[;{}]\s*|\n", source) if len(chunk.strip()) >= 30]
     if any(chunk in evidence for chunk in source_chunks):
         return 0.2

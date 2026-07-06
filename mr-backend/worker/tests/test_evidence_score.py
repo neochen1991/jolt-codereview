@@ -17,6 +17,21 @@ PATCH = """@@ -0,0 +40,4 @@
 +}
 """
 
+PATCH_SECRET = """@@ -0,0 +5,4 @@
++spring:
++  datasource:
++    username: payment_app
++    password: paymentRoot123
+"""
+
+PATCH_POM = """@@ -0,0 +14,5 @@
++<dependency>
++  <groupId>com.alibaba</groupId>
++  <artifactId>fastjson</artifactId>
++  <version>1.2.47</version>
++</dependency>
+"""
+
 
 def finding(**overrides: object) -> dict:
     item = {
@@ -102,6 +117,44 @@ def test_evidence_score_counts_changed_source_location_for_paraphrased_evidence(
     assert result["score"] >= 0.35, result
 
 
+def test_short_secret_line_counts_as_snippet_quote() -> None:
+    result = score(
+        finding(
+            file_path="src/main/resources/application-prod.yml",
+            line_start=8,
+            line_end=8,
+            covered_rules=["SEC-SECRET-004"],
+            evidence="Evidence: password: paymentRoot123",
+        ),
+        files=[SimpleNamespace(filename="src/main/resources/application-prod.yml", patch=PATCH_SECRET)],
+        tool_observations=[],
+        source_observations=[],
+        peer_findings=[],
+    )
+
+    assert result["components"]["snippet_quote"] == 0.2, result
+    assert result["score"] >= 0.45, result
+
+
+def test_dependency_coordinate_tokens_count_as_snippet_quote() -> None:
+    result = score(
+        finding(
+            file_path="pom.xml",
+            line_start=17,
+            line_end=17,
+            covered_rules=["DEP-CVE-001"],
+            evidence="Evidence: com.alibaba:fastjson:1.2.47",
+        ),
+        files=[SimpleNamespace(filename="pom.xml", patch=PATCH_POM)],
+        tool_observations=[],
+        source_observations=[],
+        peer_findings=[],
+    )
+
+    assert result["components"]["snippet_quote"] == 0.15, result
+    assert result["score"] >= 0.4, result
+
+
 def test_symbol_alignment_accepts_repo_index_definition_fields() -> None:
     result = score(
         finding(),
@@ -162,6 +215,8 @@ if __name__ == "__main__":
     test_evidence_score_components_are_structural()
     test_evidence_score_uses_line_span_not_rule_specific_branch()
     test_evidence_score_counts_changed_source_location_for_paraphrased_evidence()
+    test_short_secret_line_counts_as_snippet_quote()
+    test_dependency_coordinate_tokens_count_as_snippet_quote()
     test_symbol_alignment_accepts_repo_index_definition_fields()
     test_suppression_hint_reduces_evidence_score_without_rule_branch()
     test_suppression_hash_matches_backend_feedback_learning_contract()

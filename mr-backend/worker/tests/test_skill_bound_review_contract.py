@@ -159,6 +159,67 @@ def test_skill_scoped_prompt_disables_expert_free_review() -> None:
     assert "禁止执行专家自由检视" in prompt, prompt
 
 
+def test_skill_scoped_prompt_requires_skill_rule_id_and_source_priority() -> None:
+    prompt, _safety = build_prompt(
+        {
+            "agent_id": "security_agent",
+            "display_name": "Security Agent",
+            "applies_to": {
+                "persona": "安全专家画像中也包含命令注入检查",
+                "exclusive_scope": "security",
+                "review_scope": "安全问题",
+                "custom_prompt": "如果发现命令执行风险，也可以归类为 SEC-INJECT-003。",
+            },
+            "bound_skill_batch": {
+                "skill_key": "secure-review-skill",
+                "checkpoint_id": "SEC-CMD-001",
+                "index": 1,
+                "total": 1,
+                "enforce_skill_scope": True,
+            },
+            "skill_checkpoints": [
+                {
+                    "skill_key": "secure-review-skill",
+                    "checkpoint_id": "SEC-CMD-001",
+                    "rule_id": "SEC-CMD-001",
+                    "title": "命令注入检查",
+                    "check": "用户输入不能拼接进 Runtime.exec 或 ProcessBuilder。",
+                    "required_evidence": "外部输入来源；命令执行 sink；缺少白名单或枚举映射",
+                }
+            ],
+            "bound_rules": [
+                {
+                    "rule_id": "SEC-INJECT-003",
+                    "title": "通用注入风险",
+                    "required_evidence": "外部输入；危险 sink",
+                }
+            ],
+            "tool_observations": [],
+        },
+        [
+            SimpleNamespace(
+                filename="src/App.java",
+                status="modified",
+                additions=1,
+                deletions=0,
+                patch="+Runtime.getRuntime().exec(cmd);",
+            )
+        ],
+        "# SKILL.md\n\n## SEC-CMD-001 命令注入检查",
+    )
+
+    parsed = __import__("json").loads(prompt)
+    assert parsed["review_rules"]["rule_source_priority"]["order"] == [
+        "skill",
+        "bound_markdown_standard",
+        "agent_profile",
+    ], parsed["review_rules"]
+    skill_contract = parsed["review_rules"]["bound_skill_review_contract"]
+    assert "必须使用 skill_checkpoints 中定义的 checkpoint_id/rule_id 原值" in skill_contract["traceability"], skill_contract
+    assert "禁止替换成规范、专家画像或通用规则中的其他 rule_id" in skill_contract["traceability"], skill_contract
+    assert "当 Skill、绑定规范、专家画像描述相同问题时，以 Skill 的 rule_id/checkpoint_id 为准" in parsed["task"], parsed["task"]
+
+
 def test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_scope() -> None:
     kept, rejected = _enforce_bound_batch_findings(
         {
@@ -417,6 +478,7 @@ if __name__ == "__main__":
     test_custom_skill_creates_skill_scoped_batch_without_free_review()
     test_skill_reference_checkpoints_are_batched_even_when_skill_md_is_entrypoint_only()
     test_skill_scoped_prompt_disables_expert_free_review()
+    test_skill_scoped_prompt_requires_skill_rule_id_and_source_priority()
     test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_scope()
     test_skill_checkpoint_batch_rejects_explicit_false_positive_pattern()
     test_skill_checkpoint_batch_flags_missing_required_evidence_without_dropping()

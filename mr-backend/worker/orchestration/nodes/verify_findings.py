@@ -22,7 +22,10 @@ def _token_jaccard(a: str, b: str) -> float:
     right = _similarity_tokens(b, include_cjk=include_cjk)
     if not left or not right:
         return 0.0
-    return len(left & right) / len(left | right)
+    score = len(left & right) / len(left | right)
+    if include_cjk:
+        score = max(score, _cjk_semantic_similarity(a, b))
+    return score
 
 
 def _has_cjk(value: str) -> bool:
@@ -45,6 +48,50 @@ def _similarity_tokens(value: str, *, include_cjk: bool) -> set[str]:
             continue
         tokens.add(match)
     return tokens
+
+
+CJK_SEMANTIC_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("权限校验", ("权限校验", "鉴权", "授权校验", "权限检查", "权限控制", "认证授权")),
+    ("服务端", ("服务端", "后端", "服务器端")),
+    ("客户端", ("客户端", "前端", "请求方")),
+    ("客户端可控", ("客户端可控", "客户端传入", "外部传入", "外部输入", "用户输入", "请求传入")),
+    ("状态变更", ("状态变更", "状态覆盖", "覆盖状态", "更新状态", "修改状态", "状态更新")),
+    ("订单状态", ("订单状态", "支付状态", "业务状态")),
+    ("缺少", ("缺少", "没有进行", "没有做", "未进行", "未做", "未校验", "未检查", "无校验")),
+    ("校验", ("校验", "验证", "检查", "约束", "策略约束")),
+    ("接口", ("接口", "入口", "端点", "endpoint")),
+    ("管理操作", ("管理操作", "管理员操作", "管理接口", "admin")),
+    ("SQL注入", ("sql注入", "注入风险", "sql injection", "拼接sql", "sql拼接")),
+    ("字符串拼接", ("字符串拼接", "直接拼接", "拼接", "concat")),
+    ("敏感信息", ("敏感信息", "敏感数据", "密钥", "密码", "token", "secret")),
+    ("日志泄露", ("日志泄露", "日志输出", "打印日志", "写入日志")),
+    ("资源关闭", ("资源关闭", "资源释放", "未关闭", "没有关闭", "try-with-resources")),
+)
+
+GENERIC_CJK_SEMANTIC_TOKENS = {"缺少", "校验", "服务端", "客户端", "接口"}
+
+
+def _cjk_semantic_tokens(value: str) -> set[str]:
+    text = str(value or "").lower()
+    compact = re.sub(r"\s+", "", text)
+    tokens: set[str] = set()
+    for canonical, variants in CJK_SEMANTIC_PHRASES:
+        if any(variant.lower().replace(" ", "") in compact or variant.lower() in text for variant in variants):
+            tokens.add(canonical)
+    return tokens
+
+
+def _cjk_semantic_similarity(a: str, b: str) -> float:
+    left = _cjk_semantic_tokens(a)
+    right = _cjk_semantic_tokens(b)
+    if not left or not right:
+        return 0.0
+    overlap = left & right
+    if len(overlap) < 2:
+        return 0.0
+    if not (overlap - GENERIC_CJK_SEMANTIC_TOKENS):
+        return 0.0
+    return (2 * len(overlap)) / (len(left) + len(right))
 
 
 def _evidence_matches_source(evidence: str, source_snippet: str) -> dict[str, Any]:

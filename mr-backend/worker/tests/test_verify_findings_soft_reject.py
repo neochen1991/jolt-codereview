@@ -47,6 +47,14 @@ class VerifyFindingsSoftRejectTest(unittest.TestCase):
         score = _token_jaccard("订单状态缺少校验", "订单状态没有进行服务端校验")
         self.assertGreaterEqual(score, 0.2)
 
+    def test_chinese_evidence_token_similarity_handles_synonyms(self):
+        auth_score = _token_jaccard("接口缺少鉴权", "接口没有进行权限校验直接执行管理员操作")
+        state_score = _token_jaccard("客户端可控状态直接覆盖订单状态，缺少服务端策略约束", "直接使用客户端传入状态更新订单状态，没有服务端校验")
+        unrelated_score = _token_jaccard("接口缺少权限校验", "金额使用浮点构造导致精度问题")
+        self.assertGreaterEqual(auth_score, 0.35)
+        self.assertGreaterEqual(state_score, 0.35)
+        self.assertLess(unrelated_score, 0.2)
+
     def test_evidence_score_middle_lowers_confidence_and_flags(self):
         finding = self.base_finding("executeQuery SQL userId injection", confidence=0.8)
         accepted, rejected = self.verify(finding, "ResultSet rs = statement.executeQuery(sql + userId);")

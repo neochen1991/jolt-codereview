@@ -73,6 +73,8 @@ const checks = [
       "\"bound_rules\": [rule]",
       "\"bound_skill_batch\": {",
       "\"enforce_skill_scope\": True",
+      "\"skill_checkpoints\": [checkpoint]",
+      "parse_skill_checkpoints(",
       "bound_skill_started",
       "bound_skill_checked",
       "batch_skill_summary = load_skill_summary(str(batch[\"skill_key\"]), files)",
@@ -91,8 +93,10 @@ const checks = [
     required: [
       "\"bound_rule_batch\": _compact_json_value(agent.get(\"bound_rule_batch\") or {}, text_limit=None, list_limit=None)",
       "\"bound_skill_batch\": _compact_json_value(agent.get(\"bound_skill_batch\") or {}, text_limit=None, list_limit=None)",
+      "\"skill_checkpoints\": _compact_json_value(agent.get(\"skill_checkpoints\") or [], text_limit=None, list_limit=None)",
       "\"bound_skill_review_contract\": {",
-      "禁止执行专家自由检视"
+      "禁止执行专家自由检视",
+      "必须只检查当前 checkpoint"
     ]
   },
   {

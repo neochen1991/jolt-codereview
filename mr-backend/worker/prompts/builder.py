@@ -149,6 +149,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
         "bound_markdown_rules": _compact_json_value(agent.get("bound_rules") or [], text_limit=None, list_limit=None),
         "bound_rule_batch": _compact_json_value(agent.get("bound_rule_batch") or {}, text_limit=None, list_limit=None),
         "bound_skill_batch": _compact_json_value(agent.get("bound_skill_batch") or {}, text_limit=None, list_limit=None),
+        "skill_checkpoints": _compact_json_value(agent.get("skill_checkpoints") or [], text_limit=None, list_limit=None),
         "bound_rule_review_contract": {
             "priority": "绑定 Markdown 规范是本专家的项目级检视准则，优先级高于自由发挥和通用静态工具建议。",
             "checklist": (
@@ -166,13 +167,15 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
             "priority": "如果 bound_skill_batch.enforce_skill_scope=true，当前批次只服务该 Skill，优先级高于 persona/review_scope 的自由检视。",
             "scope": (
                 "只允许输出当前 bound_skill_batch.skill_key 对应 Skill 明确要求检查的问题；"
+                "如果 skill_checkpoints 非空，只允许围绕当前 checkpoint 检查；"
                 "禁止执行专家自由检视，禁止输出 Skill 未要求的通用安全/编码/性能/架构问题。"
             ),
             "no_hit": "如果当前 MR 没有命中该 Skill 的检查点，返回空 JSON 数组，不要为了凑数输出相邻问题。",
             "traceability": (
-                "命中 Skill 时 covered_rules 优先填写 Skill 中声明的 rule_id；"
-                "如果 Skill 未声明 rule_id，则填写 SKILL:<bound_skill_batch.skill_key>，便于后续审计。"
+                "命中 Skill 时 covered_rules 优先填写当前 checkpoint_id；"
+                "如果 Skill 未声明 checkpoint_id，则填写 SKILL:<bound_skill_batch.skill_key>，便于后续审计。"
             ),
+            "evidence": "每个 finding 必须满足当前 checkpoint.required_evidence；命中 false_positive_patterns 时不要输出。",
         },
         "output_rule_fields": ["covered_rules", "skipped_rules"],
     }
@@ -232,6 +235,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
             "A. 按 dedicated_markdown_standard 的“专属代码规范”和 bound_markdown_rules 逐条检查，并遵守 bound_rule_review_contract；"
             "B. 按 persona 和 review_scope 做专家自由检视。"
             "但如果 bound_skill_batch.enforce_skill_scope=true，本次调用是 Skill 专属检视批次，只执行 A 中当前 Skill 明确要求的检查，禁止执行 B。"
+            "如果 review_rules.skill_checkpoints 非空，必须只检查当前 checkpoint，满足 required_evidence 才能输出；命中 false_positive_patterns 必须跳过。"
             "C. 如果 agent_profile.custom_prompt 不为空，必须按该自定义 Agent Prompt 执行补充检视。"
             "covered_rules 填写触发本问题的 rule_id；skipped_rules 填写已检查但未命中的 rule_id。"
             "tool_observations 是静态工具候选证据，不能不经判断直接复制为问题；"

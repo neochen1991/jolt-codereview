@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from orchestration.deepagents_runner import run_bounded_deepagent
 from prompts.example_retriever import retrieve_examples
+from rules.skill_checkpoint_parser import parse_skill_checkpoints
 
 
 def _builtin_java_heuristics_enabled(project_config: dict[str, Any]) -> bool:
@@ -102,25 +103,33 @@ def _bound_rule_batches(agent_context: dict[str, Any]) -> list[dict[str, Any]]:
         )
     for skill_index, skill_key in enumerate(custom_skills, start=1):
         filtered_assets = [asset for asset in skill_assets if str(asset.get("skill_key") or "") == skill_key]
-        batches.append(
-            {
-                "label": f"bound_skill:{skill_key}",
-                "rule_id": "",
-                "skill_key": skill_key,
-                "agent": {
-                    **agent_context,
-                    "custom_skills": [skill_key],
-                    "skill_assets": filtered_assets,
-                    "bound_rules": [],
-                    "bound_skill_batch": {
-                        "index": skill_index,
-                        "total": len(custom_skills),
-                        "skill_key": skill_key,
-                        "enforce_skill_scope": True,
+        checkpoints = _skill_checkpoints(skill_key, filtered_assets)
+        for checkpoint_index, checkpoint in enumerate(checkpoints, start=1):
+            checkpoint_id = str(checkpoint.get("checkpoint_id") or f"SKILL:{skill_key}")
+            batches.append(
+                {
+                    "label": f"bound_skill:{skill_key}:{checkpoint_id}",
+                    "rule_id": "",
+                    "skill_key": skill_key,
+                    "checkpoint_id": checkpoint_id,
+                    "agent": {
+                        **agent_context,
+                        "custom_skills": [skill_key],
+                        "skill_assets": filtered_assets,
+                        "skill_checkpoints": [checkpoint],
+                        "bound_rules": [],
+                        "bound_skill_batch": {
+                            "index": skill_index,
+                            "total": len(custom_skills),
+                            "checkpoint_index": checkpoint_index,
+                            "checkpoint_total": len(checkpoints),
+                            "skill_key": skill_key,
+                            "checkpoint_id": checkpoint_id,
+                            "enforce_skill_scope": True,
+                        },
                     },
-                },
-            }
-        )
+                }
+            )
     if not custom_skills:
         batches.append(
             {
@@ -139,6 +148,30 @@ def _bound_rule_batches(agent_context: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return batches
+
+
+def _skill_checkpoints(skill_key: str, skill_assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    skill_docs = [
+        asset
+        for asset in skill_assets
+        if str(asset.get("asset_path") or "").lower() == "skill.md"
+    ]
+    source_assets = skill_docs or skill_assets
+    combined: list[dict[str, Any]] = []
+    for asset in source_assets:
+        content = str(asset.get("content") or "")
+        if not content.strip():
+            continue
+        combined.extend(
+            parse_skill_checkpoints(
+                skill_key,
+                content,
+                source_path=str(asset.get("asset_path") or "SKILL.md"),
+            )
+        )
+    if combined:
+        return combined
+    return parse_skill_checkpoints(skill_key, "", source_path="SKILL.md")
 
 
 def _has_required_bound_review(agent_context: dict[str, Any]) -> bool:
@@ -540,9 +573,10 @@ def make_run_experts_node(
                         recorder.event(
                             span,
                             "bound_skill_checked",
-                            f"{agent_id} 完成绑定 Skill {batch['skill_key']} 检视",
+                            f"{agent_id} 完成绑定 Skill {batch['skill_key']} checkpoint {batch.get('checkpoint_id') or ''} 检视",
                             {
                                 "skill_key": batch["skill_key"],
+                                "checkpoint_id": batch.get("checkpoint_id"),
                                 "checked": True,
                                 "finding_count": len(batch_items),
                             },

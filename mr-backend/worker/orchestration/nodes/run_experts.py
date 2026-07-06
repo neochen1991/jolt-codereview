@@ -234,6 +234,63 @@ def _enforce_bound_batch_findings(batch: dict[str, Any], items: list[dict[str, A
     return kept, rejected
 
 
+def _bound_review_coverage_record(
+    agent_id: str,
+    batch: dict[str, Any],
+    items: list[dict[str, Any]],
+    rejected_items: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    rule_id = str(batch.get("rule_id") or "").strip()
+    checkpoint_id = str(batch.get("checkpoint_id") or "").strip()
+    if not rule_id and not checkpoint_id:
+        return None
+    record = {
+        "agent_id": agent_id,
+        "batch_label": str(batch.get("label") or ""),
+        "type": "skill_checkpoint" if checkpoint_id else "rule",
+        "rule_id": rule_id,
+        "skill_key": str(batch.get("skill_key") or ""),
+        "checkpoint_id": checkpoint_id,
+        "checked": True,
+        "finding_count": len(items),
+        "rejected_count": len(rejected_items),
+        "hit": len(items) > 0,
+    }
+    return record
+
+
+def _summarize_bound_review_coverage(records: list[dict[str, Any]]) -> dict[str, Any]:
+    required_records = [record for record in records if record.get("type") in {"rule", "skill_checkpoint"}]
+    required_count = len(required_records)
+    checked_count = sum(1 for record in required_records if record.get("checked"))
+    hit_count = sum(1 for record in required_records if int(record.get("finding_count") or 0) > 0)
+    rejected_count = sum(int(record.get("rejected_count") or 0) for record in required_records)
+    missed = [record for record in required_records if record.get("checked") and int(record.get("finding_count") or 0) == 0]
+    return {
+        "required_count": required_count,
+        "checked_count": checked_count,
+        "hit_count": hit_count,
+        "missed_count": len(missed),
+        "coverage_rate": round(checked_count / required_count, 4) if required_count else 1.0,
+        "hit_rate": round(hit_count / required_count, 4) if required_count else 1.0,
+        "rule_count": sum(1 for record in required_records if record.get("type") == "rule"),
+        "skill_checkpoint_count": sum(1 for record in required_records if record.get("type") == "skill_checkpoint"),
+        "rejected_count": rejected_count,
+        "missed": [
+            {
+                "agent_id": record.get("agent_id") or "",
+                "batch_label": record.get("batch_label") or "",
+                "type": record.get("type") or "",
+                "rule_id": record.get("rule_id") or "",
+                "skill_key": record.get("skill_key") or "",
+                "checkpoint_id": record.get("checkpoint_id") or "",
+            }
+            for record in missed
+        ],
+        "items": required_records,
+    }
+
+
 def _with_rejected_reason(item: dict[str, Any], reason: str) -> dict[str, Any]:
     return {**item, "rejected_reasons": _unique_strings([*(_string_list(item.get("rejected_reasons"))), reason])}
 
@@ -351,6 +408,7 @@ def make_run_experts_node(
         )
         conn.commit()
         all_findings: list[dict[str, Any]] = []
+        bound_review_coverage_records: list[dict[str, Any]] = []
         tool_observations = state.get("tool_observations") or load_tool_observations(conn, run_id)
         if effort == "trivial":
             trivial_span = recorder.span("trivial_short_circuit", "router_agent")
@@ -617,6 +675,9 @@ def make_run_experts_node(
                         batch_skill_summary = load_skill_summary(str(batch["skill_key"]), files)
                     batch_items = call_llm(project_config, recorder, span, batch_agent, llm_files, batch_skill_summary)
                     batch_items, rejected_batch_items = _enforce_bound_batch_findings(batch, batch_items)
+                    coverage_record = _bound_review_coverage_record(agent_id, batch, batch_items, rejected_batch_items)
+                    if coverage_record:
+                        bound_review_coverage_records.append(coverage_record)
                     if rejected_batch_items:
                         recorder.event(
                             span,
@@ -657,6 +718,27 @@ def make_run_experts_node(
             recorder.event(span, "finding_candidate", f"{agent_id} 产出 {len(merged)} 个候选问题")
             all_findings.extend(merged)
             recorder.finish(span)
-        return {**state, "all_findings": all_findings}
+        bound_review_coverage = _summarize_bound_review_coverage(bound_review_coverage_records)
+        if bound_review_coverage["required_count"]:
+            coverage_span = recorder.span("bound_review_coverage", "quality_audit")
+            recorder.event(
+                coverage_span,
+                "bound_review_coverage_summarized",
+                (
+                    f"绑定规则/Skill 覆盖审计：检查 {bound_review_coverage['checked_count']}/"
+                    f"{bound_review_coverage['required_count']}，命中 {bound_review_coverage['hit_count']}，"
+                    f"未命中 {bound_review_coverage['missed_count']}"
+                ),
+                bound_review_coverage,
+            )
+            recorder.finish(coverage_span)
+        return {
+            **state,
+            "all_findings": all_findings,
+            "candidate_quality": {
+                **(state.get("candidate_quality") or {}),
+                "bound_review_coverage": bound_review_coverage,
+            },
+        }
 
     return run_experts_node

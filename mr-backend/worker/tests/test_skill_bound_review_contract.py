@@ -12,7 +12,7 @@ fake_deepagents_runner = types.ModuleType("orchestration.deepagents_runner")
 fake_deepagents_runner.run_bounded_deepagent = lambda **_kwargs: {"tool_calls": [], "content": ""}
 sys.modules.setdefault("orchestration.deepagents_runner", fake_deepagents_runner)
 
-from orchestration.nodes.run_experts import _bound_rule_batches, _enforce_bound_batch_findings
+from orchestration.nodes.run_experts import _bound_rule_batches, _enforce_bound_batch_findings, _summarize_bound_review_coverage
 from prompts.builder import build_prompt
 from rules.skill_checkpoint_parser import parse_skill_checkpoints
 
@@ -179,9 +179,57 @@ def test_bound_rule_batch_filters_explicitly_mismatched_rule() -> None:
     assert rejected[0]["rejected_reasons"] == ["bound_rule_mismatch"], rejected
 
 
+def test_bound_review_coverage_summary_tracks_hits_and_misses() -> None:
+    summary = _summarize_bound_review_coverage(
+        [
+            {
+                "agent_id": "security_agent",
+                "batch_label": "bound_rule:SEC-AUTH-001",
+                "type": "rule",
+                "rule_id": "SEC-AUTH-001",
+                "checked": True,
+                "finding_count": 1,
+                "rejected_count": 0,
+            },
+            {
+                "agent_id": "security_agent",
+                "batch_label": "bound_skill:secure-review-skill:SEC-CMD-001",
+                "type": "skill_checkpoint",
+                "skill_key": "secure-review-skill",
+                "checkpoint_id": "SEC-CMD-001",
+                "checked": True,
+                "finding_count": 1,
+                "rejected_count": 1,
+            },
+            {
+                "agent_id": "security_agent",
+                "batch_label": "bound_skill:secure-review-skill:SEC-PATH-002",
+                "type": "skill_checkpoint",
+                "skill_key": "secure-review-skill",
+                "checkpoint_id": "SEC-PATH-002",
+                "checked": True,
+                "finding_count": 0,
+                "rejected_count": 0,
+            },
+        ]
+    )
+
+    assert summary["required_count"] == 3, summary
+    assert summary["checked_count"] == 3, summary
+    assert summary["hit_count"] == 2, summary
+    assert summary["missed_count"] == 1, summary
+    assert summary["coverage_rate"] == 1.0, summary
+    assert summary["hit_rate"] == round(2 / 3, 4), summary
+    assert summary["rule_count"] == 1, summary
+    assert summary["skill_checkpoint_count"] == 2, summary
+    assert summary["rejected_count"] == 1, summary
+    assert summary["missed"][0]["checkpoint_id"] == "SEC-PATH-002", summary
+
+
 if __name__ == "__main__":
     test_skill_markdown_is_parsed_into_auditable_checkpoints()
     test_custom_skill_creates_skill_scoped_batch_without_free_review()
     test_skill_scoped_prompt_disables_expert_free_review()
     test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_scope()
     test_bound_rule_batch_filters_explicitly_mismatched_rule()
+    test_bound_review_coverage_summary_tracks_hits_and_misses()

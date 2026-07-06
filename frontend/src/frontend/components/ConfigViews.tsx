@@ -2091,6 +2091,7 @@ export function AgentProfileCard({
   canEdit: boolean;
 }) {
   const agentKey = String(row.agent_key || row.agent_id);
+  const boundRuleResolutionRate = Number(quality.bound_rule_resolution_rate);
   const [roleProfile, setRoleProfile] = useState(String(row.role_profile || row.name || ""));
   const [responsibilityScope, setResponsibilityScope] = useState(String(row.responsibility_scope || ""));
   const [excludedScope, setExcludedScope] = useState(String(row.excluded_scope || ""));
@@ -2243,6 +2244,8 @@ export function AgentProfileCard({
           <span>工具 {toolCount}</span>
           <span>问题 {String(quality.finding_count ?? 0)}</span>
           <span>误报率 {String(quality.false_positive_rate ?? "--")}</span>
+          <span>规则闭环 {Number.isFinite(boundRuleResolutionRate) ? `${Math.round(boundRuleResolutionRate * 100)}%` : "--"}</span>
+          <span>未闭环 {String(quality.bound_rule_unresolved_count ?? 0)}</span>
         </div>
       </div>
       <div className="agent-card-actions">

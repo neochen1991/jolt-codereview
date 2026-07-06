@@ -20,7 +20,10 @@ const configSnippets = [
   "review-quality/metrics",
   "projectBoundRuleCoverage",
   "bound_rule_coverage",
+  "bound_rule_resolution_rate",
+  "bound_rule_unresolved_count",
   "项目规则闭环",
+  "规则闭环",
   "未闭环"
 ];
 

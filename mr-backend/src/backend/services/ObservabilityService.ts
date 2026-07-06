@@ -84,6 +84,60 @@ export function summarizeBoundRuleCoverage(rows: Array<{ coverage_json?: string 
   };
 }
 
+function emptyAgentCoverage(agentId: string) {
+  return {
+    agent_id: agentId,
+    required_count: 0,
+    checked_count: 0,
+    hit_count: 0,
+    skipped_count: 0,
+    missed_count: 0,
+    resolved_count: 0,
+    unresolved_count: 0,
+    rejected_count: 0,
+    resolution_rate: null as number | null,
+    unresolved_rate: null as number | null
+  };
+}
+
+export function summarizeBoundRuleCoverageByAgent(rows: Array<{ coverage_json?: string | null }>) {
+  const byAgent = new Map<string, ReturnType<typeof emptyAgentCoverage>>();
+  for (const row of rows) {
+    const payload = coveragePayload(row);
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    for (const rawItem of items) {
+      if (typeof rawItem !== "object" || !rawItem) continue;
+      const item = rawItem as Record<string, unknown>;
+      if (!["rule", "skill_checkpoint"].includes(String(item.type || ""))) continue;
+      const agentId = String(item.agent_id || "").trim();
+      if (!agentId) continue;
+      const current = byAgent.get(agentId) ?? emptyAgentCoverage(agentId);
+      current.required_count += 1;
+      if (item.checked) current.checked_count += 1;
+      const findingCount = numberValue(item.finding_count);
+      const skipped = Boolean(item.skipped);
+      if (findingCount > 0) current.hit_count += 1;
+      if (skipped) current.skipped_count += 1;
+      if (item.checked && findingCount === 0 && !skipped) current.missed_count += 1;
+      current.rejected_count += numberValue(item.rejected_count);
+      byAgent.set(agentId, current);
+    }
+  }
+  return [...byAgent.values()]
+    .map((item) => {
+      const resolved = item.hit_count + item.skipped_count;
+      const unresolved = item.missed_count;
+      return {
+        ...item,
+        resolved_count: resolved,
+        unresolved_count: unresolved,
+        resolution_rate: item.required_count ? Number((resolved / item.required_count).toFixed(4)) : null,
+        unresolved_rate: item.required_count ? Number((unresolved / item.required_count).toFixed(4)) : null
+      };
+    })
+    .sort((left, right) => left.agent_id.localeCompare(right.agent_id));
+}
+
 export class ObservabilityService {
   constructor(private readonly db: Db) {}
 
@@ -182,8 +236,31 @@ export class ObservabilityService {
       WHERE r.project_id = $1
       GROUP BY rf.agent_id
       ORDER BY finding_count DESC, rf.agent_id
-    `).all(projectId);
-    return { project_id: projectId, items };
+    `).all(projectId) as Array<Record<string, unknown>>;
+    const coverageRows = this.db.prepare(`
+      SELECT rr.coverage_json
+      FROM review_runs rr
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      JOIN merge_requests mr ON mr.id = rj.merge_request_id
+      JOIN repositories r ON r.id = mr.repository_id
+      WHERE r.project_id = $1
+        AND rr.coverage_json IS NOT NULL
+        AND rr.coverage_json <> '{}'
+    `).all(projectId) as Array<{ coverage_json?: string | null }>;
+    const coverageByAgent = summarizeBoundRuleCoverageByAgent(coverageRows);
+    const byAgent = new Map(items.map((item) => [String(item.agent_id || ""), item]));
+    for (const coverage of coverageByAgent) {
+      const existing = byAgent.get(coverage.agent_id) ?? { agent_id: coverage.agent_id, finding_count: 0 };
+      Object.assign(existing, {
+        bound_rule_required_count: coverage.required_count,
+        bound_rule_resolved_count: coverage.resolved_count,
+        bound_rule_unresolved_count: coverage.unresolved_count,
+        bound_rule_resolution_rate: coverage.resolution_rate,
+        bound_rule_rejected_count: coverage.rejected_count
+      });
+      byAgent.set(coverage.agent_id, existing);
+    }
+    return { project_id: projectId, items: [...byAgent.values()] };
   }
 
   getReviewQualityMetrics(projectId: string, since?: string | null) {

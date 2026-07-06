@@ -55,6 +55,12 @@ class VerifyFindingsSoftRejectTest(unittest.TestCase):
         self.assertGreaterEqual(state_score, 0.35)
         self.assertLess(unrelated_score, 0.2)
 
+    def test_chinese_semantic_similarity_does_not_match_same_domain_non_issues(self):
+        auth_false_positive = _token_jaccard("接口缺少鉴权", "接口权限控制页面展示管理员操作记录")
+        state_false_positive = _token_jaccard("客户端可控状态直接覆盖订单状态", "客户端传入订单状态用于查询筛选，没有修改订单状态")
+        self.assertLess(auth_false_positive, 0.35)
+        self.assertLess(state_false_positive, 0.35)
+
     def test_evidence_score_middle_lowers_confidence_and_flags(self):
         finding = self.base_finding("executeQuery SQL userId injection", confidence=0.8)
         accepted, rejected = self.verify(finding, "ResultSet rs = statement.executeQuery(sql + userId);")

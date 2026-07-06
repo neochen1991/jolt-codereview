@@ -55,7 +55,7 @@ CJK_SEMANTIC_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("服务端", ("服务端", "后端", "服务器端")),
     ("客户端", ("客户端", "前端", "请求方")),
     ("客户端可控", ("客户端可控", "客户端传入", "外部传入", "外部输入", "用户输入", "请求传入")),
-    ("状态变更", ("状态变更", "状态覆盖", "覆盖状态", "更新状态", "修改状态", "状态更新")),
+    ("状态变更", ("状态变更", "状态覆盖", "覆盖状态", "覆盖订单状态", "更新状态", "更新订单状态", "状态更新", "变更订单状态")),
     ("订单状态", ("订单状态", "支付状态", "业务状态")),
     ("缺少", ("缺少", "没有进行", "没有做", "未进行", "未做", "未校验", "未检查", "无校验")),
     ("校验", ("校验", "验证", "检查", "约束", "策略约束")),
@@ -91,7 +91,25 @@ def _cjk_semantic_similarity(a: str, b: str) -> float:
         return 0.0
     if not (overlap - GENERIC_CJK_SEMANTIC_TOKENS):
         return 0.0
+    if not _cjk_semantic_overlap_is_actionable(overlap):
+        return 0.0
     return (2 * len(overlap)) / (len(left) + len(right))
+
+
+def _cjk_semantic_overlap_is_actionable(overlap: set[str]) -> bool:
+    if "权限校验" in overlap:
+        return "缺少" in overlap
+    if "客户端可控" in overlap or "订单状态" in overlap or "状态变更" in overlap:
+        return "客户端可控" in overlap and "状态变更" in overlap
+    if "SQL注入" in overlap:
+        return True
+    if "字符串拼接" in overlap:
+        return "SQL注入" in overlap or "客户端可控" in overlap
+    if "资源关闭" in overlap:
+        return "缺少" in overlap
+    if "敏感信息" in overlap:
+        return bool(overlap & {"日志泄露", "缺少"})
+    return len(overlap - GENERIC_CJK_SEMANTIC_TOKENS) >= 2 and "缺少" in overlap
 
 
 def _evidence_matches_source(evidence: str, source_snippet: str) -> dict[str, Any]:

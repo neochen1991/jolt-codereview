@@ -462,6 +462,32 @@ def test_bound_skill_rejects_lower_priority_skip_marker_rewrite() -> None:
     assert rejected[0]["rejected_reasons"] == ["bound_skill_checkpoint_mismatch"], rejected
 
 
+def test_bound_skill_rejects_payload_with_lower_priority_skip_only() -> None:
+    kept, rejected = _enforce_bound_batch_findings(
+        {
+            "label": "bound_skill:secure-review-skill:SEC-CMD-001",
+            "rule_id": "",
+            "skill_key": "secure-review-skill",
+            "checkpoint_id": "SEC-CMD-001",
+            "agent": {"skill_checkpoints": [{"checkpoint_id": "SEC-CMD-001"}]},
+        },
+        [
+            {
+                "title": "通用注入风险待确认",
+                "problem_description": "这里描述的是通用注入规则上下文，不是当前 Skill checkpoint。",
+                "evidence": "仅按 SEC-INJECT-003 检查，没有声明命中 SEC-CMD-001。",
+                "skipped_rules": ["SEC-INJECT-003"],
+                "file_path": "src/App.java",
+                "line_start": 12,
+            }
+        ],
+    )
+
+    assert kept == [], kept
+    assert len(rejected) == 1, rejected
+    assert rejected[0]["rejected_reasons"] == ["bound_skill_checkpoint_mismatch"], rejected
+
+
 def test_bound_review_coverage_summary_tracks_hits_and_misses() -> None:
     summary = _summarize_bound_review_coverage(
         [
@@ -557,5 +583,6 @@ if __name__ == "__main__":
     test_bound_rule_batch_filters_explicitly_mismatched_rule()
     test_bound_skill_skip_marker_is_audited_without_becoming_finding()
     test_bound_skill_rejects_lower_priority_skip_marker_rewrite()
+    test_bound_skill_rejects_payload_with_lower_priority_skip_only()
     test_bound_review_coverage_summary_tracks_hits_and_misses()
     test_coverage_retry_batch_focuses_prompt_on_missed_bound_rule()

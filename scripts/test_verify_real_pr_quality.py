@@ -49,6 +49,7 @@ def test_report_threshold_failures_catches_rule_and_positive_mr_regressions() ->
         min_gold=10,
         min_negative_mrs=1,
         max_weak_evidence=0,
+        max_action_items=0,
         min_rule_precision=0.8,
         min_rule_recall=0.65,
         min_mr_precision=0.8,
@@ -64,5 +65,57 @@ def test_report_threshold_failures_catches_rule_and_positive_mr_regressions() ->
     assert not any("mr-negative" in failure for failure in failures)
 
 
+def test_report_threshold_failures_catches_unresolved_action_items() -> None:
+    report = {
+        "high_severity_accuracy": 1.0,
+        "mr_count": 1,
+        "gold_count": 10,
+        "negative_mr_count": 1,
+        "quality_summary": {"weak_findings": []},
+        "action_items": [
+            {
+                "type": "recall_gap",
+                "rule_id": "SEC-AUTH-001",
+                "priority": 1,
+                "message": "SEC-AUTH-001 missed 1 gold finding(s)",
+            }
+        ],
+        "by_rule": {
+            "SEC-AUTH-001": {
+                "gold_count": 10,
+                "finding_count": 10,
+                "precision": 1.0,
+                "recall": 1.0,
+            },
+        },
+        "by_mr": {
+            "mr-positive": {
+                "is_negative": False,
+                "gold_count": 10,
+                "finding_count": 10,
+                "precision": 1.0,
+                "recall": 1.0,
+            },
+        },
+    }
+    args = SimpleNamespace(
+        min_high_severity_accuracy=0.8,
+        min_mrs=1,
+        min_gold=10,
+        min_negative_mrs=1,
+        max_weak_evidence=0,
+        max_action_items=0,
+        min_rule_precision=0.8,
+        min_rule_recall=0.65,
+        min_mr_precision=0.8,
+        min_mr_recall=0.65,
+    )
+
+    failures = report_threshold_failures(report, args)
+
+    assert "action_item_count 1 > 0" in failures
+
+
 if __name__ == "__main__":
     test_report_threshold_failures_catches_rule_and_positive_mr_regressions()
+    test_report_threshold_failures_catches_unresolved_action_items()

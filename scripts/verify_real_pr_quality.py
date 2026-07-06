@@ -123,6 +123,9 @@ def report_threshold_failures(report: dict[str, Any], args: argparse.Namespace) 
     weak_findings = quality_summary.get("weak_findings") if isinstance(quality_summary.get("weak_findings"), list) else []
     if len(weak_findings) > args.max_weak_evidence:
         failures.append(f"weak_evidence_count {len(weak_findings)} > {args.max_weak_evidence}")
+    action_items = report.get("action_items") if isinstance(report.get("action_items"), list) else []
+    if len(action_items) > args.max_action_items:
+        failures.append(f"action_item_count {len(action_items)} > {args.max_action_items}")
 
     for rule_id, row in sorted((report.get("by_rule") or {}).items()):
         if not isinstance(row, dict):
@@ -162,6 +165,7 @@ def main() -> None:
     parser.add_argument("--min-gold", type=int, default=10)
     parser.add_argument("--min-negative-mrs", type=int, default=0)
     parser.add_argument("--max-weak-evidence", type=int, default=0)
+    parser.add_argument("--max-action-items", type=int, default=0)
     parser.add_argument("--min-rule-precision", type=float, default=0.80)
     parser.add_argument("--min-rule-recall", type=float, default=0.65)
     parser.add_argument("--min-mr-precision", type=float, default=0.80)
@@ -178,6 +182,7 @@ def main() -> None:
     high_accuracy = _float(report.get("high_severity_accuracy") or report.get("high_recall"))
     quality_summary = report.get("quality_summary") if isinstance(report.get("quality_summary"), dict) else {}
     weak_findings = quality_summary.get("weak_findings") if isinstance(quality_summary.get("weak_findings"), list) else []
+    action_items = report.get("action_items") if isinstance(report.get("action_items"), list) else []
     if failures:
         raise SystemExit("real PR quality gate failed: " + "; ".join(failures))
 
@@ -194,6 +199,7 @@ def main() -> None:
                 "gold_count": report.get("gold_count"),
                 "negative_false_positive_count": report.get("negative_false_positive_count"),
                 "weak_evidence_count": len(weak_findings),
+                "action_item_count": len(action_items),
                 "quality_fields_checked": len(findings),
             },
             ensure_ascii=False,

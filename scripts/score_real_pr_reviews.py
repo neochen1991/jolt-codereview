@@ -25,6 +25,51 @@ def finding_id(finding: dict[str, Any]) -> str:
     return norm(finding.get("finding_id") or finding.get("id") or finding.get("dedupe_hash")) or "<unknown>"
 
 
+def gold_id(gold: dict[str, Any]) -> str:
+    return norm(gold.get("id")) or "|".join(
+        [
+            norm(gold.get("mr_id")),
+            norm(gold.get("file") or gold.get("file_path")),
+            norm(gold.get("line") or gold.get("line_start")),
+            norm(gold.get("rule_id")),
+        ]
+    )
+
+
+def line_number(item: dict[str, Any]) -> int:
+    try:
+        return int(item.get("line_start") or item.get("line") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def gold_sort_key(gold: dict[str, Any]) -> tuple[str, str, int, str, str]:
+    return (
+        norm(gold.get("mr_id")),
+        norm(gold.get("file") or gold.get("file_path")),
+        line_number(gold),
+        norm(gold.get("rule_id")),
+        gold_id(gold),
+    )
+
+
+def finding_sort_key(finding: dict[str, Any]) -> tuple[str, str, int, str]:
+    return (
+        norm(finding.get("mr_id") or finding.get("merge_request_id")),
+        norm(finding.get("file_path") or finding.get("file")),
+        line_number(finding),
+        finding_id(finding),
+    )
+
+
+def line_distance(gold: dict[str, Any], finding: dict[str, Any]) -> int:
+    gold_line = line_number(gold)
+    finding_line = line_number(finding)
+    if not gold_line or not finding_line:
+        return 0
+    return abs(gold_line - finding_line)
+
+
 def quality_trace(finding: dict[str, Any]) -> dict[str, Any]:
     value = finding.get("quality_trace")
     return value if isinstance(value, dict) else {}
@@ -86,10 +131,13 @@ def matches(gold: dict[str, Any], finding: dict[str, Any], tolerance: int) -> bo
 
 
 def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], tolerance: int) -> dict[str, Any]:
-    positive_gold = [item for item in gold_items if norm(item.get("ground_truth") or "true_positive") != "negative"]
+    positive_gold = sorted(
+        [item for item in gold_items if norm(item.get("ground_truth") or "true_positive") != "negative"],
+        key=gold_sort_key,
+    )
     positive_mr_ids = {norm(item.get("mr_id")) for item in positive_gold if norm(item.get("mr_id"))}
     findings_by_mr: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for finding in findings:
+    for finding in sorted(findings, key=finding_sort_key):
         findings_by_mr[norm(finding.get("mr_id") or finding.get("merge_request_id"))].append(finding)
 
     matched_finding_ids: set[int] = set()
@@ -98,14 +146,12 @@ def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], t
     missed: list[dict[str, Any]] = []
     for gold in positive_gold:
         candidates = findings_by_mr.get(norm(gold.get("mr_id")), [])
-        match_index = next(
-            (
-                index
-                for index, finding in enumerate(candidates)
-                if id(finding) not in matched_finding_ids and matches(gold, finding, tolerance)
-            ),
-            None,
-        )
+        candidate_matches = [
+            (line_distance(gold, finding), finding_sort_key(finding), index)
+            for index, finding in enumerate(candidates)
+            if id(finding) not in matched_finding_ids and matches(gold, finding, tolerance)
+        ]
+        match_index = sorted(candidate_matches)[0][2] if candidate_matches else None
         if match_index is None:
             missed.append(gold)
             continue

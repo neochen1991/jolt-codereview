@@ -158,7 +158,58 @@ def test_evaluate_reports_mr_level_and_actionable_quality_gaps() -> None:
     assert {"recall_gap", "precision_gap", "weak_evidence"}.issubset(action_types), report
 
 
+def test_evaluate_is_stable_when_gold_order_changes() -> None:
+    gold = [
+        {
+            "id": "gold-first",
+            "mr_id": "mr-1",
+            "file_path": "src/Auth.java",
+            "line_start": 10,
+            "rule_id": "SEC-AUTH-001",
+            "severity": "high",
+            "evidence_keywords": ["auth"],
+        },
+        {
+            "id": "gold-second",
+            "mr_id": "mr-1",
+            "file_path": "src/Auth.java",
+            "line_start": 20,
+            "rule_id": "SEC-AUTH-001",
+            "severity": "high",
+            "evidence_keywords": ["auth"],
+        },
+    ]
+    findings = [
+        {
+            "finding_id": "finding-near-first",
+            "mr_id": "mr-1",
+            "file_path": "src/Auth.java",
+            "line_start": 15,
+            "title": "auth missing",
+            "covered_rules": ["SEC-AUTH-001"],
+        },
+        {
+            "finding_id": "finding-exact-second",
+            "mr_id": "mr-1",
+            "file_path": "src/Auth.java",
+            "line_start": 20,
+            "title": "auth missing",
+            "covered_rules": ["SEC-AUTH-001"],
+        },
+    ]
+
+    original = evaluate(gold, findings, tolerance=5)
+    reversed_gold = evaluate(list(reversed(gold)), findings, tolerance=5)
+
+    assert original["tp"] == 2, original
+    assert original["missed_gold_ids"] == [], original
+    assert reversed_gold["tp"] == original["tp"], reversed_gold
+    assert reversed_gold["missed_gold_ids"] == original["missed_gold_ids"], reversed_gold
+    assert reversed_gold["false_positive_findings"] == original["false_positive_findings"], reversed_gold
+
+
 if __name__ == "__main__":
     test_evaluate_uses_one_finding_for_one_gold_match()
     test_evaluate_reports_rule_level_precision_and_recall()
     test_evaluate_reports_mr_level_and_actionable_quality_gaps()
+    test_evaluate_is_stable_when_gold_order_changes()

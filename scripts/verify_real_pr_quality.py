@@ -112,6 +112,7 @@ def main() -> None:
     parser.add_argument("--min-mrs", type=int, default=1)
     parser.add_argument("--min-gold", type=int, default=10)
     parser.add_argument("--min-negative-mrs", type=int, default=0)
+    parser.add_argument("--max-weak-evidence", type=int, default=0)
     args = parser.parse_args()
 
     findings = read_jsonl(ROOT / args.findings)
@@ -129,6 +130,10 @@ def main() -> None:
         failures.append(f"gold_count {report.get('gold_count')} < {args.min_gold}")
     if int(report.get("negative_mr_count") or 0) < args.min_negative_mrs:
         failures.append(f"negative_mr_count {report.get('negative_mr_count')} < {args.min_negative_mrs}")
+    quality_summary = report.get("quality_summary") if isinstance(report.get("quality_summary"), dict) else {}
+    weak_findings = quality_summary.get("weak_findings") if isinstance(quality_summary.get("weak_findings"), list) else []
+    if len(weak_findings) > args.max_weak_evidence:
+        failures.append(f"weak_evidence_count {len(weak_findings)} > {args.max_weak_evidence}")
     if failures:
         raise SystemExit("real PR quality gate failed: " + "; ".join(failures))
 
@@ -144,6 +149,7 @@ def main() -> None:
                 "mr_count": report.get("mr_count"),
                 "gold_count": report.get("gold_count"),
                 "negative_false_positive_count": report.get("negative_false_positive_count"),
+                "weak_evidence_count": len(weak_findings),
                 "quality_fields_checked": len(findings),
             },
             ensure_ascii=False,

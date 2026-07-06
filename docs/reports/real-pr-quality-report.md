@@ -7,31 +7,28 @@
 | precision | 1.0000 |
 | recall | 1.0000 |
 | high_severity_accuracy | 1.0000 |
-| gold_count | 10 |
-| finding_count | 10 |
-| mr_count | 1 |
-| negative_mr_count | 0 |
+| gold_count | 25 |
+| finding_count | 25 |
+| mr_count | 5 |
+| negative_mr_count | 2 |
 | negative_false_positive_count | 0 |
 
 ## Evidence Quality
 
 | metric | value |
 | --- | --- |
-| evidence_score_min | 0.4400 |
-| evidence_score_avg | 0.6440 |
-| evidence_score_max | 0.7000 |
+| evidence_score_min | 0.5900 |
+| evidence_score_avg | 0.6556 |
+| evidence_score_max | 0.7200 |
 | evidence_score_below_0_35 | 0 |
-| evidence_score_below_0_50 | 2 |
+| evidence_score_below_0_50 | 0 |
 | missing_evidence_score_count | 0 |
 | missing_consensus_agents_count | 0 |
 | missing_critic_verdict_count | 0 |
 
 ## Action Items
 
-| type | target | priority | message |
-| --- | --- | --- | --- |
-| weak_evidence | finding_13677286ee914cfa | 1 | finding has weak or incomplete quality evidence |
-| weak_evidence | finding_b516460a479349de | 1 | finding has weak or incomplete quality evidence |
+No action items.
 
 ## Rule Gaps
 
@@ -39,11 +36,11 @@ No rule-level recall or precision gaps.
 
 ## MR Gaps
 
-No MR-level recall or precision gaps.
+| mr_id | negative | tp | fp | fn | precision | recall | ids |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| mr_real_project_default_apache_dubbo_16306 | yes | 0 | 0 | 0 | 0.0000 | 0.0000 |  |
+| mr_real_project_default_spring_projects_spring_framework_36861 | yes | 0 | 0 | 0 | 0.0000 | 0.0000 |  |
 
 ## Weak Evidence Findings
 
-| finding_id | mr_id | file | line | score | rules | missing_fields |
-| --- | --- | --- | --- | --- | --- | --- |
-| finding_13677286ee914cfa | mr_repo_github_java_complex_10file_9301 | pom.xml | 18 | 0.4400 | DEP-CVE-001 |  |
-| finding_b516460a479349de | mr_repo_github_java_complex_10file_9301 | src/main/resources/application-prod.yml | 7 | 0.4751 | SEC-SECRET-004 |  |
+No weak evidence findings.

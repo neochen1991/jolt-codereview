@@ -78,7 +78,9 @@ def _project_id_for_job(conn: Any, job: Any) -> str:
 
 def _bound_rule_batches(agent_context: dict[str, Any]) -> list[dict[str, Any]]:
     rules = [rule for rule in (agent_context.get("bound_rules") or []) if isinstance(rule, dict)]
-    if not rules:
+    custom_skills = [str(skill).strip() for skill in (agent_context.get("custom_skills") or []) if str(skill).strip()]
+    skill_assets = [asset for asset in (agent_context.get("skill_assets") or []) if isinstance(asset, dict)]
+    if not rules and not custom_skills:
         return [{"label": "default", "agent": agent_context, "rule_id": ""}]
     batches: list[dict[str, Any]] = []
     for index, rule in enumerate(rules, start=1):
@@ -98,22 +100,44 @@ def _bound_rule_batches(agent_context: dict[str, Any]) -> list[dict[str, Any]]:
                 },
             }
         )
-    batches.append(
-        {
-            "label": "expert_free_review",
-            "rule_id": "",
-            "agent": {
-                **agent_context,
-                "bound_rules": [],
-                "bound_rule_batch": {
-                    "index": len(rules) + 1,
-                    "total": len(rules) + 1,
-                    "rule_id": "",
-                    "purpose": "free_review_after_all_bound_rules",
+    for skill_index, skill_key in enumerate(custom_skills, start=1):
+        filtered_assets = [asset for asset in skill_assets if str(asset.get("skill_key") or "") == skill_key]
+        batches.append(
+            {
+                "label": f"bound_skill:{skill_key}",
+                "rule_id": "",
+                "skill_key": skill_key,
+                "agent": {
+                    **agent_context,
+                    "custom_skills": [skill_key],
+                    "skill_assets": filtered_assets,
+                    "bound_rules": [],
+                    "bound_skill_batch": {
+                        "index": skill_index,
+                        "total": len(custom_skills),
+                        "skill_key": skill_key,
+                        "enforce_skill_scope": True,
+                    },
                 },
-            },
-        }
-    )
+            }
+        )
+    if not custom_skills:
+        batches.append(
+            {
+                "label": "expert_free_review",
+                "rule_id": "",
+                "agent": {
+                    **agent_context,
+                    "bound_rules": [],
+                    "bound_rule_batch": {
+                        "index": len(rules) + 1,
+                        "total": len(rules) + 1,
+                        "rule_id": "",
+                        "purpose": "free_review_after_all_bound_rules",
+                    },
+                },
+            }
+        )
     return batches
 
 
@@ -486,19 +510,42 @@ def make_run_experts_node(
                                 "rule_id": batch["rule_id"],
                             },
                         )
+                    if batch["rule_id"]:
+                        batch_event_type = "bound_rule_batch_started"
+                        batch_payload = batch_agent.get("bound_rule_batch") or {}
+                    elif batch.get("skill_key"):
+                        batch_event_type = "bound_skill_started"
+                        batch_payload = batch_agent.get("bound_skill_batch") or {}
+                    else:
+                        batch_event_type = "expert_free_review_started"
+                        batch_payload = batch_agent.get("bound_rule_batch") or {}
                     recorder.event(
                         span,
-                        "bound_rule_batch_started" if batch["rule_id"] else "expert_free_review_started",
+                        batch_event_type,
                         f"{agent_id} 开始检视 {batch['label']}",
-                        batch_agent.get("bound_rule_batch") or {},
+                        batch_payload,
                     )
-                    batch_items = call_llm(project_config, recorder, span, batch_agent, llm_files, skill_summary)
+                    batch_skill_summary = skill_summary
+                    if batch.get("skill_key"):
+                        batch_skill_summary = load_skill_summary(str(batch["skill_key"]), files)
+                    batch_items = call_llm(project_config, recorder, span, batch_agent, llm_files, batch_skill_summary)
                     if batch["rule_id"]:
                         recorder.event(
                             span,
                             "bound_rule_checked",
                             f"{agent_id} 完成绑定规则 {batch['rule_id']} 检视",
                             _rule_checked_status(batch_items, str(batch["rule_id"])),
+                        )
+                    elif batch.get("skill_key"):
+                        recorder.event(
+                            span,
+                            "bound_skill_checked",
+                            f"{agent_id} 完成绑定 Skill {batch['skill_key']} 检视",
+                            {
+                                "skill_key": batch["skill_key"],
+                                "checked": True,
+                                "finding_count": len(batch_items),
+                            },
                         )
                     llm_items.extend(batch_items)
             for item in llm_items:

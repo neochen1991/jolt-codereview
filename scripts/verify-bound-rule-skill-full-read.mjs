@@ -71,6 +71,11 @@ const checks = [
     required: [
       "def _bound_rule_batches(agent_context: dict[str, Any])",
       "\"bound_rules\": [rule]",
+      "\"bound_skill_batch\": {",
+      "\"enforce_skill_scope\": True",
+      "bound_skill_started",
+      "bound_skill_checked",
+      "batch_skill_summary = load_skill_summary(str(batch[\"skill_key\"]), files)",
       "\"purpose\": \"free_review_after_all_bound_rules\"",
       "def _has_required_bound_review(agent_context: dict[str, Any])",
       "if effort == \"trivial\" and not _has_required_bound_review(agent_context):",
@@ -84,7 +89,10 @@ const checks = [
     file: "mr-backend/worker/prompts/builder.py",
     forbidden: [],
     required: [
-      "\"bound_rule_batch\": _compact_json_value(agent.get(\"bound_rule_batch\") or {}, text_limit=None, list_limit=None)"
+      "\"bound_rule_batch\": _compact_json_value(agent.get(\"bound_rule_batch\") or {}, text_limit=None, list_limit=None)",
+      "\"bound_skill_batch\": _compact_json_value(agent.get(\"bound_skill_batch\") or {}, text_limit=None, list_limit=None)",
+      "\"bound_skill_review_contract\": {",
+      "禁止执行专家自由检视"
     ]
   },
   {

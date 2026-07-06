@@ -15,6 +15,8 @@ Current scope:
   positives against the gold labels.
 - `npm run export:real-findings` exports the latest completed review findings
   for seeded real PR fixtures into `evaluation/real_findings.jsonl`.
+- `npm run verify:real-pr-dataset` audits manifest/gold/finding structure and
+  catches duplicate labels, missing MR ids, and malformed finding ids.
 - `npm run verify:real-prs` gates current real-review quality and requires every
   finding to carry `evidence_score`, `consensus_agents`, and
   `quality_trace.critic_verdict`.

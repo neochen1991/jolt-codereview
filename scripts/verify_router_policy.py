@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "worker"))
+sys.path.insert(0, str(ROOT / "mr-backend" / "worker"))
+
+fake_deepagents_runner = types.ModuleType("orchestration.deepagents_runner")
+fake_deepagents_runner.run_bounded_deepagent = lambda **_kwargs: {"tool_calls": [], "content": ""}
+sys.modules.setdefault("orchestration.deepagents_runner", fake_deepagents_runner)
 
 import review_runtime
-from review_runtime import ChangedFile, route_agents
+from review_runtime import ChangedFile, route_agents, router_prompt_payload
 
 
 def agent(agent_id: str, paths: list[str] | None = None, languages: list[str] | None = None) -> dict:
@@ -22,6 +27,41 @@ def agent(agent_id: str, paths: list[str] | None = None, languages: list[str] | 
 
 
 def main() -> None:
+    prompt_payload = router_prompt_payload(
+        [
+            {
+                **agent("security_agent"),
+                "bound_rules": [
+                    {
+                        "rule_id": "SEC-CMD-001",
+                        "title": "命令执行安全",
+                        "required_evidence": "外部输入来源；命令执行 sink；缺少白名单",
+                    }
+                ],
+                "custom_skills": ["secure-review-skill"],
+                "skill_assets": [
+                    {"asset_path": "SKILL.md", "asset_type": "skill"},
+                    {"asset_path": "references/security-rules.md", "asset_type": "reference"},
+                ],
+            }
+        ],
+        [
+            ChangedFile(
+                "src/main/java/com/acme/payment/service/CommandService.java",
+                "modified",
+                2,
+                0,
+                2,
+                "+Runtime.getRuntime().exec(request.getParameter(\"cmd\"));\n",
+            )
+        ],
+    )
+    router_agent = prompt_payload["agents"][0]
+    assert router_agent["bound_config"]["bound_rules"][0]["rule_id"] == "SEC-CMD-001", router_agent
+    assert router_agent["bound_config"]["custom_skills"] == ["secure-review-skill"], router_agent
+    assert "references/security-rules.md" in router_agent["bound_config"]["skill_asset_paths"], router_agent
+    assert "不能因为绑定规则或 Skill 就强制选择" in prompt_payload["policy"], prompt_payload["policy"]
+
     original = review_runtime.route_agents_with_llm
     called = {"value": False}
 

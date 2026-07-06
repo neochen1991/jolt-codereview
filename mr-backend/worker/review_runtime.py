@@ -4003,31 +4003,7 @@ def route_agents_with_llm(
     budget_tracker: Any | None,
 ) -> list[str]:
     llm = project_config.get("llm", {})
-    prompt = json.dumps(
-        {
-            "task": "请根据变更文件和专家职责选择最相关的 agent_id，只输出 JSON 数组，例如 [\"security_agent\"]。",
-            "files": [
-                {
-                    "filename": item.filename,
-                    "status": item.status,
-                    "additions": item.additions,
-                    "deletions": item.deletions,
-                    "patch_head": item.patch[:800],
-                }
-                for item in files[:30]
-            ],
-            "agents": [
-                {
-                    "agent_id": agent.get("agent_id"),
-                    "display_name": agent.get("display_name"),
-                    "applies_to": agent.get("applies_to"),
-                }
-                for agent in agent_configs
-            ],
-            "policy": "最多选择 10 个；优先让 LLM 根据文件、patch 和专家唯一职责选择；Java/Spring MR 应覆盖安全、性能、通用编码、DDD、Redis、依赖、Database、后端接口等明显相关专家。",
-        },
-        ensure_ascii=False,
-    )
+    prompt = json.dumps(router_prompt_payload(agent_configs, files), ensure_ascii=False)
     prompt_tokens = estimate_tokens(prompt)
     providers = candidate_providers(llm, required_context=prompt_tokens)
     provider = str((providers[0] if providers else {}).get("provider") or llm.get("default_provider") or "dashscope-openai-compatible")
@@ -4098,6 +4074,62 @@ def route_agents_with_llm(
             else:
                 recorder.event(span_id, "router_llm_error", f"路由 LLM 失败，回退规则路由：{exc}")
     return []
+
+
+def router_prompt_payload(agent_configs: list[dict[str, Any]], files: list[ChangedFile]) -> dict[str, Any]:
+    return {
+        "task": "请根据变更文件、patch、专家职责、绑定规则和 Skill 选择最相关的 agent_id，只输出 JSON 数组，例如 [\"security_agent\"]。",
+        "files": [
+            {
+                "filename": item.filename,
+                "status": item.status,
+                "additions": item.additions,
+                "deletions": item.deletions,
+                "patch_head": item.patch[:800],
+            }
+            for item in files[:30]
+        ],
+        "agents": [
+            {
+                "agent_id": agent.get("agent_id"),
+                "display_name": agent.get("display_name"),
+                "applies_to": agent.get("applies_to"),
+                "bound_config": router_bound_config_summary(agent),
+            }
+            for agent in agent_configs
+        ],
+        "policy": (
+            "最多选择 10 个；优先让 LLM 根据文件、patch 和专家唯一职责选择；"
+            "绑定规则和 Skill 是判断专家相关性的强线索，但不能因为绑定规则或 Skill 就强制选择，"
+            "必须结合当前 diff 是否可能命中这些规则；Java/Spring MR 应覆盖安全、性能、通用编码、"
+            "DDD、Redis、依赖、Database、后端接口等明显相关专家。"
+        ),
+    }
+
+
+def router_bound_config_summary(agent: dict[str, Any]) -> dict[str, Any]:
+    bound_rules = []
+    for rule in agent.get("bound_rules") or []:
+        if not isinstance(rule, dict):
+            continue
+        bound_rules.append(
+            {
+                "rule_id": str(rule.get("rule_id") or ""),
+                "title": str(rule.get("title") or ""),
+                "applies_to": str(rule.get("applies_to") or ""),
+                "required_evidence": str(rule.get("required_evidence") or rule.get("evidence_required") or "")[:500],
+            }
+        )
+    skill_assets = [asset for asset in (agent.get("skill_assets") or []) if isinstance(asset, dict)]
+    return {
+        "bound_rules": bound_rules[:20],
+        "custom_skills": [str(skill) for skill in (agent.get("custom_skills") or []) if str(skill).strip()][:20],
+        "skill_asset_paths": [
+            str(asset.get("asset_path") or "")
+            for asset in skill_assets
+            if str(asset.get("asset_path") or "").strip()
+        ][:50],
+    }
 
 
 def required_java_agent_ids(files: list[ChangedFile], text: str) -> list[str]:

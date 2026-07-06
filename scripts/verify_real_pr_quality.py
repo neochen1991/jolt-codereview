@@ -101,27 +101,16 @@ def run_score(args: argparse.Namespace, report_path: Path) -> dict[str, Any]:
     return json.loads(report_path.read_text("utf-8"))
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--gold", default="evaluation/real_gold_set.jsonl")
-    parser.add_argument("--findings", default="evaluation/real_findings.jsonl")
-    parser.add_argument("--min-precision", type=float, default=0.80)
-    parser.add_argument("--min-recall", type=float, default=0.65)
-    parser.add_argument("--min-high-severity-accuracy", type=float, default=0.80)
-    parser.add_argument("--max-negative-fp", type=int, default=0)
-    parser.add_argument("--min-mrs", type=int, default=1)
-    parser.add_argument("--min-gold", type=int, default=10)
-    parser.add_argument("--min-negative-mrs", type=int, default=0)
-    parser.add_argument("--max-weak-evidence", type=int, default=0)
-    args = parser.parse_args()
+def _float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
-    findings = read_jsonl(ROOT / args.findings)
-    with tempfile.TemporaryDirectory(prefix="jolt-real-pr-quality-") as tmpdir:
-        report_path = Path(tmpdir) / "real-pr-report.json"
-        report = run_score(args, report_path)
 
-    failures = validate_quality_fields(findings)
-    high_accuracy = float(report.get("high_severity_accuracy") or report.get("high_recall") or 0)
+def report_threshold_failures(report: dict[str, Any], args: argparse.Namespace) -> list[str]:
+    failures: list[str] = []
+    high_accuracy = _float(report.get("high_severity_accuracy") or report.get("high_recall"))
     if high_accuracy < args.min_high_severity_accuracy:
         failures.append(f"high_severity_accuracy {high_accuracy} < {args.min_high_severity_accuracy}")
     if int(report.get("mr_count") or 0) < args.min_mrs:
@@ -134,6 +123,61 @@ def main() -> None:
     weak_findings = quality_summary.get("weak_findings") if isinstance(quality_summary.get("weak_findings"), list) else []
     if len(weak_findings) > args.max_weak_evidence:
         failures.append(f"weak_evidence_count {len(weak_findings)} > {args.max_weak_evidence}")
+
+    for rule_id, row in sorted((report.get("by_rule") or {}).items()):
+        if not isinstance(row, dict):
+            continue
+        if int(row.get("gold_count") or 0) <= 0 and int(row.get("finding_count") or 0) <= 0:
+            continue
+        precision = _float(row.get("precision"))
+        recall = _float(row.get("recall"))
+        if precision < args.min_rule_precision:
+            failures.append(f"rule {rule_id} precision {precision} < {args.min_rule_precision}")
+        if recall < args.min_rule_recall:
+            failures.append(f"rule {rule_id} recall {recall} < {args.min_rule_recall}")
+
+    for mr_id, row in sorted((report.get("by_mr") or {}).items()):
+        if not isinstance(row, dict) or bool(row.get("is_negative")):
+            continue
+        if int(row.get("gold_count") or 0) <= 0:
+            continue
+        precision = _float(row.get("precision"))
+        recall = _float(row.get("recall"))
+        if precision < args.min_mr_precision:
+            failures.append(f"mr {mr_id} precision {precision} < {args.min_mr_precision}")
+        if recall < args.min_mr_recall:
+            failures.append(f"mr {mr_id} recall {recall} < {args.min_mr_recall}")
+    return failures
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--gold", default="evaluation/real_gold_set.jsonl")
+    parser.add_argument("--findings", default="evaluation/real_findings.jsonl")
+    parser.add_argument("--min-precision", type=float, default=0.80)
+    parser.add_argument("--min-recall", type=float, default=0.65)
+    parser.add_argument("--min-high-severity-accuracy", type=float, default=0.80)
+    parser.add_argument("--max-negative-fp", type=int, default=0)
+    parser.add_argument("--min-mrs", type=int, default=1)
+    parser.add_argument("--min-gold", type=int, default=10)
+    parser.add_argument("--min-negative-mrs", type=int, default=0)
+    parser.add_argument("--max-weak-evidence", type=int, default=0)
+    parser.add_argument("--min-rule-precision", type=float, default=0.80)
+    parser.add_argument("--min-rule-recall", type=float, default=0.65)
+    parser.add_argument("--min-mr-precision", type=float, default=0.80)
+    parser.add_argument("--min-mr-recall", type=float, default=0.65)
+    args = parser.parse_args()
+
+    findings = read_jsonl(ROOT / args.findings)
+    with tempfile.TemporaryDirectory(prefix="jolt-real-pr-quality-") as tmpdir:
+        report_path = Path(tmpdir) / "real-pr-report.json"
+        report = run_score(args, report_path)
+
+    failures = validate_quality_fields(findings)
+    failures.extend(report_threshold_failures(report, args))
+    high_accuracy = _float(report.get("high_severity_accuracy") or report.get("high_recall"))
+    quality_summary = report.get("quality_summary") if isinstance(report.get("quality_summary"), dict) else {}
+    weak_findings = quality_summary.get("weak_findings") if isinstance(quality_summary.get("weak_findings"), list) else []
     if failures:
         raise SystemExit("real PR quality gate failed: " + "; ".join(failures))
 

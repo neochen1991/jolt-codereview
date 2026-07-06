@@ -39,10 +39,10 @@
     "verify:real-pr-seed-tool": "node scripts/verify-real-pr-seed-tool.mjs",
     "verify:real-findings-export": "node scripts/verify-real-findings-export.mjs",
     "verify:real-pr-dataset": "python3 scripts/test_audit_real_pr_dataset.py && python3 scripts/audit_real_pr_dataset.py",
-    "verify:real-prs": "python3 scripts/verify_real_pr_quality.py",
+    "verify:real-prs": "python3 scripts/test_verify_real_pr_quality.py && python3 scripts/verify_real_pr_quality.py",
     "verify:real-pr-repeatability": "python3 scripts/verify_real_pr_repeatability.py",
     "verify:real-pr-report": "python3 scripts/test_render_real_pr_quality_report.py",
-    "verify:real-prs:target": "python3 scripts/audit_real_pr_dataset.py --min-manifests 4 --min-positive-mrs 3 --min-gold 25 --min-negative-mrs 1 --require-manifest-for-gold --require-gold-for-manifest --require-finding-for-positive-mr --require-negative-no-findings --require-gold-for-finding && python3 scripts/verify_real_pr_quality.py --min-mrs 4 --min-gold 25 --min-negative-mrs 1 --min-precision 0.80 --min-recall 0.65 --min-high-severity-accuracy 0.80 --max-negative-fp 0",
+    "verify:real-prs:target": "python3 scripts/test_verify_real_pr_quality.py && python3 scripts/audit_real_pr_dataset.py --min-manifests 4 --min-positive-mrs 3 --min-gold 25 --min-negative-mrs 1 --require-manifest-for-gold --require-gold-for-manifest --require-finding-for-positive-mr --require-negative-no-findings --require-gold-for-finding && python3 scripts/verify_real_pr_quality.py --min-mrs 4 --min-gold 25 --min-negative-mrs 1 --min-precision 0.80 --min-recall 0.65 --min-high-severity-accuracy 0.80 --max-negative-fp 0",
     "verify:gold-eval": "node scripts/verify-gold-eval.mjs",
     "verify:postgres-only-runtime": "node scripts/verify-postgres-only-runtime.mjs"
   },

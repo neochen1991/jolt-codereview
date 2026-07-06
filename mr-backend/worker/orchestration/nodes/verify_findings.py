@@ -74,10 +74,19 @@ CJK_SEMANTIC_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("敏感信息", ("敏感信息", "敏感数据", "密钥", "密码", "口令", "令牌", "凭证", "token", "secret", "accesskey", "apikey", "api key")),
     ("日志输出", ("日志输出", "打印日志", "写入日志", "记录日志", "logger", "log")),
     ("日志泄露", ("日志泄露", "泄露凭证", "泄露敏感", "敏感日志")),
+    ("响应返回", ("返回", "响应", "返回给前端", "response", "return", "dto")),
+    ("脱敏", ("脱敏", "掩码", "打码", "mask", "masked", "redact", "redacted")),
+    ("手机号", ("手机号", "手机号码", "电话", "phone", "mobile", "telephone", "tel")),
+    ("邮箱", ("邮箱", "邮件地址", "email", "mail")),
+    ("身份证", ("身份证", "证件号", "idcard", "id_card", "identity")),
     ("资源关闭", ("资源关闭", "资源释放", "未关闭", "没有关闭", "try-with-resources", "文件句柄")),
     ("BigDecimal", ("bigdecimal",)),
     ("浮点数", ("double", "float", "浮点")),
     ("金额", ("金额", "价格", "费用", "total", "amount", "price")),
+    ("Redis", ("redis", "redistemplate", "stringredistemplate")),
+    ("缓存Key", ("key", "缓存键", "redis key", "cache key")),
+    ("过期时间", ("ttl", "expire", "expiration", "过期时间", "过期", "超时")),
+    ("Redis写入", ("set(", "opsforvalue", "opsforhash", "缓存写入", "写缓存")),
     ("精度问题", ("精度问题", "精度丢失", "精度风险", "精度")),
     ("返回NULL", ("return null", "返回 null", "返回null")),
     ("集合索引", ("get(0)", "首元素", "第一个", "first element", "索引访问")),
@@ -112,10 +121,26 @@ SEMANTIC_OBJECT_TOKENS = {
     "管理操作",
     "文件路径",
     "敏感信息",
+    "手机号",
+    "邮箱",
+    "身份证",
     "BigDecimal",
     "浮点数",
     "金额",
+    "Redis",
+    "缓存Key",
+    "过期时间",
 }
+SEMANTIC_DOMAIN_ACTION_TOKENS = {
+    "响应返回",
+    "日志输出",
+    "状态变更",
+    "Redis写入",
+    "文件读取",
+    "SQL执行",
+    "命令执行",
+}
+SEMANTIC_PROTECTION_TOKENS = {"缺少", "校验", "权限校验", "资源关闭", "脱敏", "过期时间"}
 
 
 def _cjk_semantic_tokens(value: str) -> set[str]:
@@ -206,6 +231,27 @@ def _code_semantic_tokens(value: str) -> set[str]:
     if has_sensitive and has_log_sink:
         tokens.add("日志泄露")
 
+    if _has_any_code_word(words, compact, {"return", "response", "respond", "dto", "result", "body"}):
+        tokens.add("响应返回")
+    if _has_any_code_word(words, compact, {"phone", "mobile", "telephone", "tel", "phonenumber", "mobilephone"}):
+        tokens.add("手机号")
+    if _has_any_code_word(words, compact, {"email", "mail"}):
+        tokens.add("邮箱")
+    if _has_any_code_word(words, compact, {"idcard", "id_card", "identity", "identityno", "certno"}):
+        tokens.add("身份证")
+    if _has_any_code_word(words, compact, {"mask", "masked", "redact", "redacted", "desensitize", "desensitized"}):
+        tokens.add("脱敏")
+
+    if "redis" in compact or _has_any_code_word(words, compact, {"redistemplate", "stringredistemplate", "redis"}):
+        tokens.add("Redis")
+    if "redis" in tokens or "Redis" in tokens:
+        if _has_any_code_word(words, compact, {"key", "cachekey"}) or ".keys(" in compact:
+            tokens.add("缓存Key")
+        if _has_any_code_word(words, compact, {"ttl", "expire", "expiration", "timeout"}) or ".expire(" in compact:
+            tokens.add("过期时间")
+        if ".set(" in compact or "opsforvalue" in compact or "opsforhash" in compact:
+            tokens.add("Redis写入")
+
     has_resource_open = _has_any_code_word(
         words,
         compact,
@@ -257,24 +303,53 @@ def _semantic_similarity(a: str, b: str) -> float:
     right = _semantic_tokens(b)
     if not left or not right:
         return 0.0
-    overlap = left & right
-    if len(overlap) < 2:
+    if _missing_protection_is_present(left, right):
         return 0.0
-    if not _cjk_semantic_overlap_is_actionable(overlap):
+    overlap = left & right
+    cross_domain_match = _cross_domain_semantic_match(left, right, overlap)
+    if len(overlap) < 2:
+        if not cross_domain_match:
+            return 0.0
+    elif not _cjk_semantic_overlap_is_actionable(overlap) and not cross_domain_match:
         return 0.0
     specific_overlap = overlap - GENERIC_CJK_SEMANTIC_TOKENS
-    if not specific_overlap:
+    if not specific_overlap and not cross_domain_match:
         return 0.0
     if "客户端可控" in left and "客户端可控" not in overlap and not (right & {"SQL注入", "命令注入", "路径穿越"}):
         return 0.0
     dice = (2 * len(overlap)) / (len(left) + len(right))
     left_specific = left - GENERIC_CJK_SEMANTIC_TOKENS
     evidence_coverage = len(specific_overlap) / len(left_specific) if left_specific else 0.0
-    return max(dice, min(1.0, evidence_coverage))
+    cross_domain_floor = 0.55 if cross_domain_match else 0.0
+    return max(dice, min(1.0, evidence_coverage), cross_domain_floor)
+
+
+def _missing_protection_is_present(evidence_tokens: set[str], source_tokens: set[str]) -> bool:
+    if "缺少" not in evidence_tokens:
+        return False
+    if "缺少" in source_tokens:
+        return False
+    protected_pairs = [
+        "脱敏",
+        "权限校验",
+        "过期时间",
+        "空集合校验",
+    ]
+    return any(token in evidence_tokens and token in source_tokens for token in protected_pairs)
+
+
+def _cross_domain_semantic_match(left: set[str], right: set[str], overlap: set[str]) -> bool:
+    if {"Redis", "缓存Key", "缺少", "过期时间"} <= left and {"Redis", "缓存Key", "Redis写入"} <= right:
+        return True
+    if {"手机号", "缺少", "脱敏"} <= left and "手机号" in right and ("响应返回" in right or "日志输出" in right):
+        return True
+    return _domain_overlap_is_actionable(overlap)
 
 
 def _cjk_semantic_overlap_is_actionable(overlap: set[str]) -> bool:
     specific = overlap - GENERIC_CJK_SEMANTIC_TOKENS
+    if _domain_overlap_is_actionable(overlap):
+        return True
     if "权限校验" in overlap and "缺少" in overlap:
         return True
     if "资源关闭" in overlap and "缺少" in overlap:
@@ -296,6 +371,21 @@ def _cjk_semantic_overlap_is_actionable(overlap: set[str]) -> bool:
     if {"敏感信息", "日志输出"} <= overlap:
         return True
     return bool((specific & SEMANTIC_ACTION_TOKENS) and (specific & SEMANTIC_OBJECT_TOKENS))
+
+
+def _domain_overlap_is_actionable(overlap: set[str]) -> bool:
+    domain_objects = overlap & SEMANTIC_OBJECT_TOKENS
+    actions = overlap & SEMANTIC_DOMAIN_ACTION_TOKENS
+    protections = overlap & SEMANTIC_PROTECTION_TOKENS
+    if {"Redis", "缓存Key"} <= overlap and ({"过期时间", "Redis写入"} & overlap):
+        return True
+    if domain_objects and actions:
+        return True
+    if domain_objects and protections and "缺少" in overlap:
+        return True
+    if {"敏感信息", "脱敏"} <= overlap:
+        return True
+    return False
 
 
 def _evidence_matches_source(evidence: str, source_snippet: str) -> dict[str, Any]:

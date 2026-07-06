@@ -117,6 +117,34 @@ class VerifyFindingsSoftRejectTest(unittest.TestCase):
         )
         self.assertGreaterEqual(result["score"], 0.5, result)
 
+    def test_chinese_sensitive_response_matches_code_identifier_semantics(self):
+        result = _evidence_matches_source(
+            "用户手机号未脱敏直接返回给前端。",
+            "return user.getPhoneNumber();",
+        )
+        self.assertGreaterEqual(result["score"], 0.5, result)
+
+    def test_masked_sensitive_response_does_not_match_missing_mask_claim(self):
+        result = _evidence_matches_source(
+            "用户手机号未脱敏直接返回给前端。",
+            "return mask(user.getPhoneNumber());",
+        )
+        self.assertLess(result["score"], 0.5, result)
+
+    def test_chinese_redis_missing_ttl_matches_write_without_expire(self):
+        result = _evidence_matches_source(
+            "Redis key 写入缓存时没有设置过期时间。",
+            "redisTemplate.opsForValue().set(key, value);",
+        )
+        self.assertGreaterEqual(result["score"], 0.5, result)
+
+    def test_redis_write_with_expire_does_not_match_missing_ttl_claim(self):
+        result = _evidence_matches_source(
+            "Redis key 写入缓存时没有设置过期时间。",
+            "redisTemplate.opsForValue().set(key, value, Duration.ofMinutes(5)); redisTemplate.expire(key, ttl);",
+        )
+        self.assertLess(result["score"], 0.5, result)
+
     def test_non_sensitive_log_does_not_match_secret_leak_semantics(self):
         result = _evidence_matches_source(
             "敏感 token 被直接打印到日志，可能泄露凭证。",

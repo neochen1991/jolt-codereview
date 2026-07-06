@@ -48,6 +48,25 @@ def assert_gold_examples_are_retrieved_by_agent_language_and_category() -> None:
     assert any(item["file_path"].endswith(".java") for item in examples), examples
 
 
+def assert_real_finding_context_enriches_positive_examples() -> None:
+    examples = retrieve_examples(
+        "redis_agent",
+        [ChangedFile("src/main/java/com/acme/payment/infra/RedisPaymentCache.java")],
+        k=3,
+        feedback_rows=[],
+    )
+    redis_example = next(
+        item
+        for item in examples
+        if item["label"] == "expected_finding" and item["rule_id"] == "REDIS-TTL-002"
+    )
+    assert redis_example["source"] == "gold", redis_example
+    assert redis_example["title"] == "Redis 缓存写入缺少 TTL", redis_example
+    assert "redisTemplate.opsForValue().set" in redis_example["snippet"], redis_example
+    assert "过期时间" in redis_example["problem_description"], redis_example
+    assert "设置明确过期时间" in redis_example["recommendation"], redis_example
+
+
 def assert_feedback_false_positive_is_included_as_negative_example() -> None:
     examples = retrieve_examples(
         "security_agent",
@@ -155,6 +174,7 @@ def assert_no_manual_prompt_example_files() -> None:
 def main() -> None:
     assert_empty_gold_returns_no_examples()
     assert_gold_examples_are_retrieved_by_agent_language_and_category()
+    assert_real_finding_context_enriches_positive_examples()
     assert_feedback_false_positive_is_included_as_negative_example()
     assert_boundary_example_is_included_to_protect_expert_scope()
     assert_prompt_injects_learned_examples_only_when_available()

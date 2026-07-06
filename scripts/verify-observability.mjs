@@ -15,7 +15,9 @@ if (!Array.isArray(toolchain.tool_calls)) throw new Error("toolchain status miss
 if (!Array.isArray(agents.items)) throw new Error("agent quality missing items");
 if (!quality.llm_calls) throw new Error("review quality missing llm_calls");
 if (!qualityMetrics.totals) throw new Error("review quality metrics missing totals");
+if (!qualityMetrics.bound_rule_coverage) throw new Error("review quality metrics missing bound_rule_coverage");
 if (!qualityMetricsCompat.slo) throw new Error("compat review quality metrics missing slo");
+if (!qualityMetricsCompat.bound_rule_coverage) throw new Error("compat review quality metrics missing bound_rule_coverage");
 
 console.log(JSON.stringify({
   queue: {
@@ -34,6 +36,7 @@ console.log(JSON.stringify({
   review_quality: {
     llm_calls: quality.llm_calls,
     metrics_totals: qualityMetrics.totals,
+    bound_rule_coverage: qualityMetrics.bound_rule_coverage,
     metrics_compat_totals: qualityMetricsCompat.totals
   }
 }, null, 2));

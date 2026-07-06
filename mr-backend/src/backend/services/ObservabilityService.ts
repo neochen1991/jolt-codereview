@@ -9,6 +9,62 @@ function parseJson(value: string | null | undefined) {
   }
 }
 
+function numberValue(value: unknown) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function coveragePayload(row: { coverage_json?: string | null }) {
+  const coverage = parseJson(row.coverage_json);
+  const candidateQuality = typeof coverage.candidate_quality === "object" && coverage.candidate_quality ? coverage.candidate_quality as Record<string, unknown> : {};
+  const payload = candidateQuality.bound_review_coverage ?? coverage.bound_review_coverage;
+  return typeof payload === "object" && payload ? payload as Record<string, unknown> : null;
+}
+
+export function summarizeBoundRuleCoverage(rows: Array<{ coverage_json?: string | null }>) {
+  const missed: Array<Record<string, unknown>> = [];
+  const totals = rows.reduce(
+    (acc, row) => {
+      const payload = coveragePayload(row);
+      if (!payload) return acc;
+      const required = numberValue(payload.required_count);
+      if (!required) return acc;
+      acc.run_count += 1;
+      acc.required_count += required;
+      acc.checked_count += numberValue(payload.checked_count);
+      acc.hit_count += numberValue(payload.hit_count);
+      acc.missed_count += numberValue(payload.missed_count);
+      acc.rule_count += numberValue(payload.rule_count);
+      acc.skill_checkpoint_count += numberValue(payload.skill_checkpoint_count);
+      acc.rejected_count += numberValue(payload.rejected_count);
+      if (numberValue(payload.coverage_rate) < 0.7) acc.low_coverage_run_count += 1;
+      const missedItems = Array.isArray(payload.missed) ? payload.missed : [];
+      for (const item of missedItems) {
+        if (missed.length >= 20 || typeof item !== "object" || !item) continue;
+        missed.push(item as Record<string, unknown>);
+      }
+      return acc;
+    },
+    {
+      run_count: 0,
+      required_count: 0,
+      checked_count: 0,
+      hit_count: 0,
+      missed_count: 0,
+      rule_count: 0,
+      skill_checkpoint_count: 0,
+      rejected_count: 0,
+      low_coverage_run_count: 0
+    }
+  );
+  return {
+    ...totals,
+    coverage_rate: totals.required_count ? Number((totals.checked_count / totals.required_count).toFixed(4)) : null,
+    hit_rate: totals.required_count ? Number((totals.hit_count / totals.required_count).toFixed(4)) : null,
+    missed
+  };
+}
+
 export class ObservabilityService {
   constructor(private readonly db: Db) {}
 
@@ -146,6 +202,21 @@ export class ObservabilityService {
       feedback_accepted: number;
       feedback_false_positive: number;
     }>;
+    const runParams: unknown[] = [projectId];
+    const runSinceFilter = since ? "AND COALESCE(rr.completed_at, rr.started_at) >= $2" : "";
+    if (since) runParams.push(since);
+    const coverageRows = this.db.prepare(`
+      SELECT rr.coverage_json
+      FROM review_runs rr
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      JOIN merge_requests mr ON mr.id = rj.merge_request_id
+      JOIN repositories r ON r.id = mr.repository_id
+      WHERE r.project_id = $1 ${runSinceFilter}
+        AND rr.coverage_json IS NOT NULL
+        AND rr.coverage_json <> '{}'
+      ORDER BY rr.started_at DESC
+      LIMIT 200
+    `).all(...runParams) as Array<{ coverage_json?: string | null }>;
 
     const buckets = new Map<string, {
       week: string;
@@ -207,6 +278,7 @@ export class ObservabilityService {
         false_positive_rate: totals.published ? Number((totals.false_positive / totals.published).toFixed(4)) : null,
         high_severity_accuracy: totals.high_published ? Number((totals.high_accepted / totals.high_published).toFixed(4)) : null
       },
+      bound_rule_coverage: summarizeBoundRuleCoverage(coverageRows),
       items
     };
   }

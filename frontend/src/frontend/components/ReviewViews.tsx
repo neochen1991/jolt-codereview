@@ -668,10 +668,35 @@ export function ReviewProgressPanel({ detail, status }: { detail: Detail; status
   );
 }
 
+function coverageNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function coverageCount(value: unknown) {
+  const parsed = coverageNumber(value);
+  return parsed === null ? 0 : parsed;
+}
+
+function formatCoveragePercent(value: unknown) {
+  const parsed = coverageNumber(value);
+  return parsed === null ? "--" : `${Math.round(parsed * 100)}%`;
+}
+
 export function CoverageCard({ run }: { run?: Record<string, unknown> }) {
   const coverage = safeJson(String(run?.coverage_json || "{}"));
   const tools = Array.isArray(coverage.tools) ? coverage.tools as Array<Record<string, unknown>> : [];
   const agents = Array.isArray(coverage.agents_executed) ? coverage.agents_executed.map((item) => String(item)) : [];
+  const candidateQuality = typeof coverage.candidate_quality === "object" && coverage.candidate_quality ? coverage.candidate_quality as Record<string, unknown> : {};
+  const boundReviewCoverage = (
+    typeof candidateQuality.bound_review_coverage === "object" && candidateQuality.bound_review_coverage
+      ? candidateQuality.bound_review_coverage
+      : coverage.bound_review_coverage
+  ) as Record<string, unknown> | undefined;
+  const requiredBoundRules = coverageCount(boundReviewCoverage?.required_count);
+  const resolvedBoundRules = coverageCount(boundReviewCoverage?.resolved_count);
+  const unresolvedBoundRules = coverageCount(boundReviewCoverage?.unresolved_count ?? boundReviewCoverage?.missed_count);
+  const hasBoundCoverage = requiredBoundRules > 0;
   return (
     <div className="coverage-card">
       <div>
@@ -688,6 +713,22 @@ export function CoverageCard({ run }: { run?: Record<string, unknown> }) {
         </p>
       ))}
       {!tools.length && <p><Check size={15} /><span>暂无 coverage_json</span><em>等待检视完成</em><strong>--</strong></p>}
+      {hasBoundCoverage && (
+        <>
+          <p>
+            <ShieldCheck size={15} />
+            <span>绑定规则闭环</span>
+            <em>{resolvedBoundRules}/{requiredBoundRules} 已闭环 · 覆盖 {formatCoveragePercent(boundReviewCoverage?.coverage_rate)}</em>
+            <strong>{formatCoveragePercent(boundReviewCoverage?.resolution_rate)}</strong>
+          </p>
+          <p>
+            <AlertTriangle size={15} />
+            <span>未闭环规则</span>
+            <em>命中 {String(boundReviewCoverage?.hit_count || 0)} · 跳过 {String(boundReviewCoverage?.skipped_count || 0)}</em>
+            <strong>{unresolvedBoundRules}</strong>
+          </p>
+        </>
+      )}
       {agents.length > 0 && (
         <p>
           <Check size={15} />

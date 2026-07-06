@@ -22,5 +22,13 @@
     "enabled": true,
     "dir": "logs",
     "api_file": "jolt-common-api.log"
+  },
+  "cleanup_policy": {
+    "enabled": true,
+    "run_on_startup": true,
+    "interval_seconds": 3600,
+    "max_age_days": 1,
+    "max_total_mb": 1024,
+    "max_log_file_mb": 256
   }
 }

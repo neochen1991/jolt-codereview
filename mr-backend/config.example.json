@@ -26,6 +26,14 @@
     "worker_file": "jolt-worker.log",
     "review_run_dir": "review-runs"
   },
+  "cleanup_policy": {
+    "enabled": true,
+    "run_on_startup": true,
+    "interval_seconds": 3600,
+    "max_age_days": 1,
+    "max_total_mb": 10240,
+    "max_log_file_mb": 512
+  },
   "review_policy": {
     "max_added_lines_per_mr": 2000
   },

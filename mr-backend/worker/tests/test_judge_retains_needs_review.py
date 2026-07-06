@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "worker"))
+
+from orchestration.judging.evidence_score import apply_evidence_score_policy
+from orchestration.nodes.judge_findings import (
+    _critic_rejected,
+    build_quality_trace,
+    retain_as_needs_review,
+    should_retain_low_precision_without_tool_support,
+)
+
+
+def agent_finding(**overrides: object) -> dict:
+    item = {
+        "severity": "medium",
+        "confidence": 0.78,
+        "agent_id": "security_agent",
+        "dedupe_hash": "agent-only-1",
+        "file_path": "src/main/java/com/acme/payment/api/AdminController.java",
+        "line_start": 42,
+        "line_end": 42,
+        "title": "管理接口缺少权限校验",
+        "problem_description": "新增管理接口可以修改支付状态，但没有权限校验。",
+        "evidence": "@PostMapping(\"/admin/payments/{id}/force\")",
+        "recommendation": "为该接口增加服务端权限校验，并补充未授权访问测试。",
+        "suggested_code": "@PreAuthorize(\"hasAuthority('PAYMENT_ADMIN')\")",
+        "covered_rules": ["SEC-AUTHZ-002"],
+        "verification_flags": ["low_evidence_match"],
+    }
+    item.update(overrides)
+    return item
+
+
+def test_agent_only_complete_finding_is_retained_without_tool_support() -> None:
+    finding = agent_finding()
+
+    assert should_retain_low_precision_without_tool_support(finding, []) is True
+
+
+def test_partial_evidence_contract_is_retained_as_needs_review() -> None:
+    finding = agent_finding(suggested_code="")
+    trace = build_quality_trace(finding, [])
+
+    retained = retain_as_needs_review(
+        finding,
+        reason="evidence_contract_not_satisfied",
+        quality_trace=trace,
+        source_observations=[],
+        tool_provenance=[],
+    )
+
+    assert retained["selected"] == 0
+    assert retained["judge_adjustment"] == "needs_review:evidence_contract_not_satisfied"
+    assert retained["quality_trace"]["judge"]["review_tier"] == "needs_review"
+    assert retained["quality_trace"]["evidence_contract"]["decision_hint"] in {"advisory_candidate", "needs_review"}
+
+
+def test_low_evidence_score_downgrades_to_needs_review_instead_of_drop() -> None:
+    finding = agent_finding()
+    scored = apply_evidence_score_policy(finding, {"score": 0.2, "components": {}}, {"drop_below": 0.35, "downgrade_below": 0.5})
+
+    retained = retain_as_needs_review(
+        scored,
+        reason="evidence_score_below_drop_threshold",
+        quality_trace=build_quality_trace(scored, []),
+        source_observations=[],
+        tool_provenance=[],
+    )
+
+    assert retained["selected"] == 0
+    assert retained["judge_adjustment"] == "needs_review:evidence_score_below_drop_threshold"
+    assert retained["quality_trace"]["judge"]["retained_reason"] == "evidence_score_below_drop_threshold"
+
+
+def test_critic_rejected_still_allows_hard_drop() -> None:
+    finding = agent_finding()
+    trace = build_quality_trace(finding, [])
+    trace["critic_verdict"] = {"verdict": "rejected", "reason": "source snippet does not support finding"}
+
+    assert _critic_rejected({"quality_trace": trace}) is True
+
+
+if __name__ == "__main__":
+    test_agent_only_complete_finding_is_retained_without_tool_support()
+    test_partial_evidence_contract_is_retained_as_needs_review()
+    test_low_evidence_score_downgrades_to_needs_review_instead_of_drop()
+    test_critic_rejected_still_allows_hard_drop()

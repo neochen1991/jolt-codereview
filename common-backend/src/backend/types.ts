@@ -26,4 +26,12 @@ export interface AppConfig {
     dir?: string;
     api_file?: string;
   };
+  cleanup_policy?: {
+    enabled?: boolean;
+    run_on_startup?: boolean;
+    interval_seconds?: number;
+    max_age_days?: number;
+    max_total_mb?: number;
+    max_log_file_mb?: number;
+  };
 }

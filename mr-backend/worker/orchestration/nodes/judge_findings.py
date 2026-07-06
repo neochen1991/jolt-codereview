@@ -3235,6 +3235,78 @@ def build_quality_trace(finding: dict[str, Any], source_observations: list[dict[
     }
 
 
+def _has_structured_agent_evidence(finding: dict[str, Any]) -> bool:
+    if _is_tool_backed_finding(finding):
+        return False
+    has_agent = _has_text(finding.get("agent_id"))
+    has_location = _has_text(finding.get("file_path")) and bool(_as_int(finding.get("line_start")))
+    has_rule = bool([rule for rule in (finding.get("covered_rules") or []) if str(rule or "").strip()] or _has_text(finding.get("rule_id")) or _has_text(finding.get("tool_rule_id")))
+    has_problem = _has_text(finding.get("title")) and (_has_text(finding.get("problem_description")) or _has_text(finding.get("evidence")))
+    has_recommendation = _has_text(finding.get("recommendation"))
+    try:
+        confidence = float(finding.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return has_agent and has_location and has_rule and has_problem and has_recommendation and confidence >= 0.6
+
+
+def should_retain_low_precision_without_tool_support(finding: dict[str, Any], source_observations: list[dict[str, Any]]) -> bool:
+    if source_observations:
+        return False
+    if not _has_structured_agent_evidence(finding):
+        return False
+    covered = {str(rule) for rule in (finding.get("covered_rules") or []) if rule}
+    if any(_looks_like_bound_document_rule(rule) for rule in covered):
+        return True
+    flags = {str(flag) for flag in (finding.get("verification_flags") or [])}
+    if flags & {"bound_rule_document_supplement", "low_evidence_match", "source_location_supported", "source_window_missing"}:
+        return True
+    return bool(covered)
+
+
+def retain_as_needs_review(
+    finding: dict[str, Any],
+    *,
+    reason: str,
+    quality_trace: dict[str, Any] | None = None,
+    source_observations: list[dict[str, Any]] | None = None,
+    tool_provenance: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    item = dict(finding)
+    trace = quality_trace if isinstance(quality_trace, dict) else build_quality_trace(item, source_observations or [])
+    trace_judge = trace.get("judge") if isinstance(trace.get("judge"), dict) else {}
+    item["selected"] = 0
+    item["judge_adjustment"] = f"needs_review:{reason}"
+    item["quality_trace"] = {
+        **trace,
+        "judge": {
+            **trace_judge,
+            "selected": False,
+            "adjustment": item["judge_adjustment"],
+            "review_tier": "needs_review",
+            "retained_reason": reason,
+        },
+    }
+    item["verification_flags"] = [*(item.get("verification_flags") or []), "retained_for_human_review"]
+    if source_observations is not None:
+        item["source_observations"] = source_observations
+    if tool_provenance is not None:
+        item["tool_provenance"] = tool_provenance
+    return item
+
+
+def _is_needs_review_retained(finding: dict[str, Any]) -> bool:
+    trace = finding.get("quality_trace") if isinstance(finding.get("quality_trace"), dict) else {}
+    judge = trace.get("judge") if isinstance(trace.get("judge"), dict) else {}
+    return str(judge.get("review_tier") or "") == "needs_review" or str(finding.get("judge_adjustment") or "").startswith("needs_review:")
+
+
+def _critic_rejected(finding: dict[str, Any]) -> bool:
+    trace = finding.get("quality_trace") if isinstance(finding.get("quality_trace"), dict) else {}
+    verdict = trace.get("critic_verdict") if isinstance(trace.get("critic_verdict"), dict) else {}
+    return str(verdict.get("verdict") or "") == "rejected"
+
+
 def is_publishable_evidence_contract(quality_trace: dict[str, Any]) -> bool:
     contract = quality_trace.get("evidence_contract") if isinstance(quality_trace, dict) else None
     if not isinstance(contract, dict):
@@ -3656,6 +3728,23 @@ def make_judge_findings_node(
             finding = reconcile_rules_with_tool_observations(finding, source_observations)
             finding = align_finding_with_tool_observations(finding, source_observations)
             if _drop_without_tool_support(finding, source_observations):
+                if should_retain_low_precision_without_tool_support(finding, source_observations):
+                    tool_provenance = _tool_provenance(finding, source_observations)
+                    retained = retain_as_needs_review(
+                        finding,
+                        reason="unsupported_low_precision_llm_finding",
+                        quality_trace=build_quality_trace(finding, source_observations),
+                        source_observations=source_observations,
+                        tool_provenance=tool_provenance,
+                    )
+                    prepared_findings.append(retained)
+                    recorder.event(
+                        judge_span,
+                        "finding_retained_for_review",
+                        f"{finding.get('title', 'candidate')} 被保留为 needs_review：unsupported_low_precision_llm_finding",
+                        {"dedupe_hash": finding.get("dedupe_hash"), "rules": finding.get("covered_rules") or []},
+                    )
+                    continue
                 judge_rejections.append({**finding, "rejected_reasons": ["unsupported_low_precision_llm_finding"]})
                 recorder.event(
                     judge_span,
@@ -3696,8 +3785,44 @@ def make_judge_findings_node(
                 "consensus_agents": evidence_score.get("consensus_agents") or [],
                 "matched_suppression_hint": evidence_score.get("matched_suppression_hint"),
             }
+            if finding.get("judge_adjustment") == "evidence_score_below_drop_threshold" and should_retain_low_precision_without_tool_support(finding, source_observations):
+                finding = retain_as_needs_review(
+                    finding,
+                    reason="evidence_score_below_drop_threshold",
+                    quality_trace=quality_trace,
+                    source_observations=source_observations,
+                    tool_provenance=tool_provenance,
+                )
+                prepared_findings.append(finding)
+                recorder.event(
+                    judge_span,
+                    "finding_retained_for_review",
+                    f"{finding.get('title', 'candidate')} 被保留为 needs_review：evidence_score_below_drop_threshold",
+                    {"dedupe_hash": finding.get("dedupe_hash"), "evidence_score": evidence_score},
+                )
+                continue
             if not is_publishable_evidence_contract(quality_trace):
                 contract = quality_trace.get("evidence_contract") if isinstance(quality_trace, dict) else {}
+                if should_retain_low_precision_without_tool_support(finding, source_observations):
+                    retained = retain_as_needs_review(
+                        finding,
+                        reason="evidence_contract_not_satisfied",
+                        quality_trace=quality_trace,
+                        source_observations=source_observations,
+                        tool_provenance=tool_provenance,
+                    )
+                    prepared_findings.append(retained)
+                    recorder.event(
+                        judge_span,
+                        "finding_retained_for_review",
+                        f"{finding.get('title', 'candidate')} 被保留为 needs_review：evidence_contract_not_satisfied",
+                        {
+                            "dedupe_hash": finding.get("dedupe_hash"),
+                            "contract_status": contract.get("status") if isinstance(contract, dict) else None,
+                            "missing": contract.get("missing") if isinstance(contract, dict) else [],
+                        },
+                    )
+                    continue
                 rejected = {
                     **finding,
                     "quality_trace": quality_trace,
@@ -3732,6 +3857,19 @@ def make_judge_findings_node(
         )
         quality_selected_findings: list[dict[str, Any]] = []
         for finding in final_findings:
+            if _critic_rejected(finding):
+                rejected = {**finding, "rejected_reasons": ["critic_rejected"]}
+                judge_rejections.append(rejected)
+                recorder.event(
+                    judge_span,
+                    "finding_dropped",
+                    f"{finding.get('title', 'candidate')} 被 Judge 过滤：critic_rejected",
+                    {"dedupe_hash": finding.get("dedupe_hash"), "critic_verdict": finding.get("quality_trace", {}).get("critic_verdict") if isinstance(finding.get("quality_trace"), dict) else None},
+                )
+                continue
+            if _is_needs_review_retained(finding):
+                quality_selected_findings.append(finding)
+                continue
             if not bool(finding.get("selected", 1)) or finding.get("judge_adjustment") == "evidence_score_below_drop_threshold":
                 rejected = {**finding, "rejected_reasons": ["evidence_score_below_drop_threshold"]}
                 judge_rejections.append(rejected)

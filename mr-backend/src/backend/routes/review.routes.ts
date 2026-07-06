@@ -80,6 +80,21 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     return ensureProjectRead(projectId, req);
   }
 
+  function normalizeLegacyEvidenceReasonText(value: unknown) {
+    if (typeof value !== "string" || !value.includes("evidence_not_in_source")) return value;
+    return value
+      .replace(/被过滤[:：]evidence_not_in_source/g, "证据未直接引用源码：已标记为 low_evidence_match，当前版本不再因此过滤")
+      .replace(/evidence_not_in_source/g, "low_evidence_match");
+  }
+
+  function normalizeLegacyEvidenceTraceRow<T extends Record<string, any>>(row: T): T {
+    return {
+      ...row,
+      summary: normalizeLegacyEvidenceReasonText(row.summary),
+      payload_json: normalizeLegacyEvidenceReasonText(row.payload_json)
+    };
+  }
+
   function compareRunsForMr(mrId: string, limit = 200) {
     const runs = all<{ id: string; review_job_id: string; started_at: string }>(`
       SELECT rr.id, rr.review_job_id, rr.started_at
@@ -369,7 +384,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         WHERE s.review_run_id = $1
         ORDER BY e.created_at
       `, [selectedRun.id])) {
-        items.push({
+        items.push(normalizeLegacyEvidenceTraceRow({
           kind: "trace_event",
           id: row.id,
           timestamp: row.created_at,
@@ -380,7 +395,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
           agent_id: row.agent_id,
           event_type: row.event_type,
           payload_json: row.payload_json
-        });
+        }));
       }
 
       for (const row of normalizeSkillCalls(items.filter((item) => item.kind === "trace_event"))) {
@@ -610,7 +625,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const denied = ensureProjectRead(params.projectId, req);
       if (denied) return denied;
       return {
-        items: all(`
+        items: all<Record<string, any>>(`
         SELECT dl.*, r.name AS repository_name, mr.title AS merge_request_title, mr.number
         FROM review_jobs_dead_letter dl
         JOIN review_jobs rj ON rj.id = dl.review_job_id
@@ -676,7 +691,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
               LIMIT $2
             ) recent_trace
             ORDER BY created_at, span_key
-          `, [latestRun.id, logLimit])
+          `, [latestRun.id, logLimit]).map(normalizeLegacyEvidenceTraceRow)
         : [];
       const sessionLogs = latestRun
         ? {
@@ -953,7 +968,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const limit = boundedQueryLimit(url, "limit", 240, 1000);
       const offset = boundedQueryOffset(url);
       return {
-        items: all(`
+        items: all<Record<string, any>>(`
           SELECT *
           FROM (
             SELECT s.*, e.event_type, e.summary, e.payload_json, e.created_at AS event_created_at
@@ -964,7 +979,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
             LIMIT $2 OFFSET $3
           ) recent_trace
           ORDER BY event_created_at, started_at
-        `, [params.runId, limit, offset]),
+        `, [params.runId, limit, offset]).map(normalizeLegacyEvidenceTraceRow),
         page: { limit, offset }
       };
     }),
@@ -999,7 +1014,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
           LIMIT $2 OFFSET $3
         ) recent_events
         ORDER BY created_at
-      `, include("events") || include("skill_calls") ? [params.runId, limit, offset] : [params.runId, 0, 0]);
+      `, include("events") || include("skill_calls") ? [params.runId, limit, offset] : [params.runId, 0, 0]).map(normalizeLegacyEvidenceTraceRow);
       const llmCalls = include("llm_calls") ? all(`
         SELECT *
         FROM (

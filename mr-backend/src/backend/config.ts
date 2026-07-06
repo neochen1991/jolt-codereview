@@ -29,6 +29,14 @@ const DEFAULT_CONFIG: AppConfig = {
     worker_file: "jolt-worker.log",
     review_run_dir: "review-runs"
   },
+  cleanup_policy: {
+    enabled: true,
+    run_on_startup: true,
+    interval_seconds: 3600,
+    max_age_days: 1,
+    max_total_mb: 10240,
+    max_log_file_mb: 512
+  },
   budget_policy: {
     efforts: {
       standard: {
@@ -91,6 +99,7 @@ function mergeConfig(base: AppConfig, override: AppConfig): AppConfig {
     codehub: { ...base.codehub, ...override.codehub },
     server: { ...base.server, ...override.server },
     logging: { ...base.logging, ...override.logging },
+    cleanup_policy: { ...base.cleanup_policy, ...override.cleanup_policy },
     budget_policy: { ...base.budget_policy, ...override.budget_policy },
     review_policy: { ...base.review_policy, ...override.review_policy },
     agent_policy: { ...base.agent_policy, ...override.agent_policy },

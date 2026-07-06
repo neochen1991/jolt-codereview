@@ -13,6 +13,7 @@ import { queuedReviewWorkerCapacity } from "./services/WorkerLaunchPolicy.js";
 import { spawnWorkerOnce } from "./services/WorkerProcessLauncher.js";
 import { WorkerPoolManager } from "./services/WorkerPoolManager.js";
 import { CommonBackendClient } from "./services/CommonBackendClient.js";
+import { startRuntimeFileCleanup } from "./services/RuntimeFileCleanupService.js";
 
 const config = loadConfig();
 clearLogFiles(config);
@@ -26,6 +27,7 @@ const reviewJobRepository = new ReviewJobRepository(db);
 const commonClient = new CommonBackendClient(config);
 const reviewQueueService = new ReviewQueueService(reviewJobRepository);
 const workerPool = new WorkerPoolManager({ config, db, logger, effectiveConfig });
+const stopRuntimeFileCleanup = startRuntimeFileCleanup(config, logger);
 
 async function effectiveConfig(projectId: string) {
   return commonClient.projectEffectiveConfig(projectId);
@@ -85,6 +87,7 @@ server.listen(port, host, () => {
 
 function shutdown() {
   logger.log("mr_api_shutdown");
+  stopRuntimeFileCleanup();
   autoSyncScheduler.stop();
   workerPool.stop();
   server.close(() => process.exit(0));

@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "worker"))
 
-from orchestration.nodes.verify_findings import _evidence_matches_source, verify_candidate_findings
+from orchestration.nodes.verify_findings import _evidence_matches_source, _token_jaccard, verify_candidate_findings
 
 
 class VerifyFindingsSoftRejectTest(unittest.TestCase):
@@ -42,6 +42,10 @@ class VerifyFindingsSoftRejectTest(unittest.TestCase):
         self.assertEqual(len(accepted), 1)
         self.assertEqual(rejected, [])
         self.assertGreaterEqual(_evidence_matches_source(finding["evidence"], "ResultSet rs = statement.executeQuery(sql);")["score"], 0.5)
+
+    def test_chinese_evidence_token_similarity_uses_ngrams(self):
+        score = _token_jaccard("订单状态缺少校验", "订单状态没有进行服务端校验")
+        self.assertGreaterEqual(score, 0.2)
 
     def test_evidence_score_middle_lowers_confidence_and_flags(self):
         finding = self.base_finding("executeQuery SQL userId injection", confidence=0.8)

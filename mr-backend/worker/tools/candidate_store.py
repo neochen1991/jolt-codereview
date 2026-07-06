@@ -22,6 +22,23 @@ def _safe_json(value: Any, default: Any) -> str:
         return json.dumps(default, ensure_ascii=False)
 
 
+def sanitize_rejected_reasons(reasons: list[str] | None) -> list[str]:
+    cleaned: list[str] = []
+    removed_legacy_evidence_reason = False
+    for reason in reasons or []:
+        value = str(reason or "").strip()
+        if not value:
+            continue
+        if value == "evidence_not_in_source":
+            removed_legacy_evidence_reason = True
+            continue
+        if value not in cleaned:
+            cleaned.append(value)
+    if removed_legacy_evidence_reason and not cleaned:
+        cleaned.append("low_evidence_match")
+    return cleaned
+
+
 def _candidate_dedupe_hash(item: dict[str, Any], stage: str) -> str:
     dedupe_hash = str(item.get("dedupe_hash") or "").strip()
     if dedupe_hash:
@@ -66,6 +83,7 @@ def upsert_candidate_finding(
     source_tool_observation = item.get("source_tool_observation")
     if source_tool_observation and not source_observations:
         source_observations = [source_tool_observation]
+    clean_rejected_reasons = sanitize_rejected_reasons(rejected_reasons or item.get("rejected_reasons") or [])
     conn.execute(
         """
         INSERT INTO candidate_findings (
@@ -113,7 +131,7 @@ def upsert_candidate_finding(
             str(item.get("title") or item.get("message") or "")[:300],
             str(item.get("problem_description") or item.get("message") or item.get("title") or "")[:4000],
             str(item.get("evidence") or item.get("message") or "")[:4000],
-            _safe_json(rejected_reasons or item.get("rejected_reasons") or [], []),
+            _safe_json(clean_rejected_reasons, []),
             _safe_json(source_observations, []),
             _safe_json(item, {}),
             final_finding_id,

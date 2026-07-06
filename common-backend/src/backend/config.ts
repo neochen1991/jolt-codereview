@@ -26,6 +26,14 @@ const DEFAULT_CONFIG: AppConfig = {
     enabled: true,
     dir: "logs",
     api_file: "jolt-common-api.log"
+  },
+  cleanup_policy: {
+    enabled: true,
+    run_on_startup: true,
+    interval_seconds: 3600,
+    max_age_days: 1,
+    max_total_mb: 1024,
+    max_log_file_mb: 256
   }
 };
 
@@ -35,7 +43,8 @@ function mergeConfig(base: AppConfig, override: AppConfig): AppConfig {
     ...override,
     llm: { ...base.llm, ...override.llm },
     server: { ...base.server, ...override.server },
-    logging: { ...base.logging, ...override.logging }
+    logging: { ...base.logging, ...override.logging },
+    cleanup_policy: { ...base.cleanup_policy, ...override.cleanup_policy }
   };
 }
 

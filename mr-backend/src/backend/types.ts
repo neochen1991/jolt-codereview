@@ -41,6 +41,14 @@ export interface AppConfig {
     worker_file?: string;
     review_run_dir?: string;
   };
+  cleanup_policy?: {
+    enabled?: boolean;
+    run_on_startup?: boolean;
+    interval_seconds?: number;
+    max_age_days?: number;
+    max_total_mb?: number;
+    max_log_file_mb?: number;
+  };
   budget_policy?: Record<string, unknown>;
   token_usage?: {
     enabled?: boolean;

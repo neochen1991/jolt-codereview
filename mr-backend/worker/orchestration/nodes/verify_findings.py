@@ -17,11 +17,34 @@ def _line_value(finding: dict[str, Any]) -> int:
 
 
 def _token_jaccard(a: str, b: str) -> float:
-    left = set(re.findall(r"\w+", a.lower()))
-    right = set(re.findall(r"\w+", b.lower()))
+    include_cjk = _has_cjk(a) and _has_cjk(b)
+    left = _similarity_tokens(a, include_cjk=include_cjk)
+    right = _similarity_tokens(b, include_cjk=include_cjk)
     if not left or not right:
         return 0.0
     return len(left & right) / len(left | right)
+
+
+def _has_cjk(value: str) -> bool:
+    return re.search(r"[\u3400-\u9fff]", str(value or "")) is not None
+
+
+def _similarity_tokens(value: str, *, include_cjk: bool) -> set[str]:
+    tokens: set[str] = set()
+    for match in re.findall(r"[a-zA-Z0-9_]+|[\u3400-\u9fff]+", str(value or "").lower()):
+        if re.fullmatch(r"[\u3400-\u9fff]+", match):
+            if not include_cjk:
+                continue
+            if len(match) == 1:
+                tokens.add(match)
+                continue
+            for size in (2, 3):
+                if len(match) < size:
+                    continue
+                tokens.update(match[index : index + size] for index in range(0, len(match) - size + 1))
+            continue
+        tokens.add(match)
+    return tokens
 
 
 def _evidence_matches_source(evidence: str, source_snippet: str) -> dict[str, Any]:

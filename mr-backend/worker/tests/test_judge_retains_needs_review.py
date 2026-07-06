@@ -187,6 +187,28 @@ def test_bound_skill_merge_restores_authoritative_id_when_current_rules_are_dirt
     assert "SEC-INJECT-003" not in merged["covered_rules"], merged
 
 
+def test_bound_skill_merge_does_not_add_lower_priority_skipped_rule() -> None:
+    primary = agent_finding(
+        covered_rules=["SEC-CMD-001"],
+        skipped_rules=["SEC-CMD-001"],
+        rule_id="SEC-CMD-001",
+        skill_key="secure-review-skill",
+        review_batch_label="bound_skill:secure-review-skill:SEC-CMD-001",
+    )
+    secondary = agent_finding(
+        covered_rules=["SEC-INJECT-003"],
+        skipped_rules=["SEC-INJECT-003"],
+        rule_id="SEC-INJECT-003",
+        tool_rule_id="SEC-INJECT-003",
+        verification_flags=["tool_promoted"],
+    )
+
+    merged = _merge_finding_metadata(primary, secondary)
+
+    assert merged["skipped_rules"] == ["SEC-CMD-001"], merged
+    assert "SEC-INJECT-003" not in merged["skipped_rules"], merged
+
+
 def test_low_evidence_score_downgrades_to_needs_review_instead_of_drop() -> None:
     finding = agent_finding()
     scored = apply_evidence_score_policy(finding, {"score": 0.2, "components": {}}, {"drop_below": 0.35, "downgrade_below": 0.5})
@@ -221,5 +243,6 @@ if __name__ == "__main__":
     test_bound_skill_merge_uses_batch_label_when_checkpoint_field_missing()
     test_bound_skill_merge_recovers_retry_label_with_colon_checkpoint()
     test_bound_skill_merge_restores_authoritative_id_when_current_rules_are_dirty()
+    test_bound_skill_merge_does_not_add_lower_priority_skipped_rule()
     test_low_evidence_score_downgrades_to_needs_review_instead_of_drop()
     test_critic_rejected_still_allows_hard_drop()

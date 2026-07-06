@@ -215,13 +215,13 @@ def test_skill_scoped_prompt_requires_skill_rule_id_and_source_priority() -> Non
         "agent_profile",
     ], parsed["review_rules"]
     assert parsed["review_rules"]["canonical_rule_id_policy"]["priority_order"] == "skill > 绑定规范 > 专家画像", parsed["review_rules"]
-    assert "Skill 定义的 rule_id/checkpoint_id 原值" in parsed["review_rules"]["canonical_rule_id_policy"]["skill"], parsed["review_rules"]
+    assert "covered_rules、skipped_rules、rule_id 必须使用 Skill 中定义的原始规则 ID" in parsed["review_rules"]["canonical_rule_id_policy"]["skill"], parsed["review_rules"]
     skill_contract = parsed["review_rules"]["bound_skill_review_contract"]
     assert "必须使用 skill_checkpoints 中定义的 checkpoint_id/rule_id 原值" in skill_contract["traceability"], skill_contract
     assert "禁止替换成规范、专家画像或通用规则中的其他 rule_id" in skill_contract["traceability"], skill_contract
-    assert "covered_rules/skipped_rules 必须保留 Skill 原始 ID" in skill_contract["traceability"], skill_contract
+    assert "covered_rules、skipped_rules、rule_id 必须使用 Skill 中定义的原始规则 ID" in skill_contract["traceability"], skill_contract
     assert "当 Skill、绑定规范、专家画像描述相同问题时，以 Skill 的 rule_id/checkpoint_id 为准" in parsed["task"], parsed["task"]
-    assert "Skill 规则命中时必须保留 Skill 定义的原始 rule_id/checkpoint_id" in parsed["task"], parsed["task"]
+    assert "Skill 规则命中时 covered_rules、skipped_rules、rule_id 必须保留 Skill 定义的原始规则 ID" in parsed["task"], parsed["task"]
 
 
 def test_skill_checkpoint_rejects_lower_priority_rule_id_rewrite() -> None:
@@ -344,6 +344,39 @@ def test_skill_checkpoint_batch_rejects_explicit_false_positive_pattern() -> Non
 
     assert len(kept) == 1, kept
     assert kept[0]["bound_evidence_contract"]["status"] == "satisfied", kept
+    assert len(rejected) == 1, rejected
+    assert rejected[0]["rejected_reasons"] == ["bound_false_positive_pattern_match"], rejected
+    assert rejected[0]["bound_evidence_contract"]["false_positive_matches"] == ["固定常量命令"], rejected
+
+
+def test_skill_checkpoint_batch_rejects_markdown_section_false_positive_pattern() -> None:
+    kept, rejected = _enforce_bound_batch_findings(
+        {
+            "label": "bound_skill:secure-review-skill:SEC-CMD-001",
+            "rule_id": "",
+            "skill_key": "secure-review-skill",
+            "checkpoint_id": "SEC-CMD-001",
+            "agent": {
+                "skill_checkpoints": [
+                    {
+                        "checkpoint_id": "SEC-CMD-001",
+                        "required_evidence": "外部输入来源；命令执行 sink；缺少白名单或枚举映射",
+                        "false_positive_patterns": "误报模式：- 固定常量命令 - 参数来自内部枚举",
+                    }
+                ]
+            },
+        },
+        [
+            {
+                "title": "固定常量命令",
+                "problem_description": "Runtime.exec 执行固定常量命令。",
+                "evidence": "Runtime.getRuntime().exec(\"uptime\") 是固定常量命令。",
+                "covered_rules": ["SEC-CMD-001"],
+            }
+        ],
+    )
+
+    assert kept == [], kept
     assert len(rejected) == 1, rejected
     assert rejected[0]["rejected_reasons"] == ["bound_false_positive_pattern_match"], rejected
     assert rejected[0]["bound_evidence_contract"]["false_positive_matches"] == ["固定常量命令"], rejected
@@ -579,6 +612,7 @@ if __name__ == "__main__":
     test_skill_checkpoint_rejects_lower_priority_rule_id_rewrite()
     test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_scope()
     test_skill_checkpoint_batch_rejects_explicit_false_positive_pattern()
+    test_skill_checkpoint_batch_rejects_markdown_section_false_positive_pattern()
     test_skill_checkpoint_batch_flags_missing_required_evidence_without_dropping()
     test_bound_rule_batch_filters_explicitly_mismatched_rule()
     test_bound_skill_skip_marker_is_audited_without_becoming_finding()

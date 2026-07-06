@@ -365,9 +365,16 @@ def _finding_contract_text(finding: dict[str, Any]) -> str:
 
 def _contract_clauses(text: str) -> list[str]:
     clauses: list[str] = []
-    for raw in re.split(r"[\n;；。]", str(text or "")):
+    normalized = re.sub(r"([:：])\s*[-*]\s*", r"\1\n- ", str(text or ""))
+    normalized = re.sub(r"\s+[-*]\s+", "\n- ", normalized)
+    for raw in re.split(r"[\n;；。]", normalized):
         cleaned = re.sub(r"^\s*[-*]\s*", "", raw).strip()
-        cleaned = re.sub(r"^(?:证据要求|输出要求|required evidence)[:：]\s*", "", cleaned, flags=re.I).strip()
+        cleaned = re.sub(
+            r"^(?:证据要求|输出要求|required evidence|误报模式|误报排除|例外|false positive patterns?)[:：]\s*",
+            "",
+            cleaned,
+            flags=re.I,
+        ).strip()
         if len(cleaned) >= 2:
             clauses.append(cleaned)
     return _unique_strings(clauses)

@@ -309,7 +309,8 @@ def run_bounded_deepagent(
             "需要查看具体代码时必须调用 read_file 或 read_diff_patch 读取真实 MR 变更 patch；"
             "如果存在项目自定义标准 Skill bundle，必须优先调用 list_skill_assets/read_skill_asset 读取 references 或 scripts；"
             "规则来源优先级固定为 Skill > 绑定规范 > 专家画像；"
-            "读取 Skill 后必须在摘要中保留 Skill 中定义的原始 rule_id/checkpoint_id，不得改写成绑定规范、专家画像或通用规则 ID；"
+            "读取 Skill 后必须在摘要中保留 Skill 中定义的原始 rule_id/checkpoint_id；"
+            "后续 finding 的 covered_rules、skipped_rules、rule_id 必须使用 Skill 原始规则 ID，不得改写成绑定规范、专家画像或通用规则 ID；"
             "run_skill_script 默认只记录意图，不执行未沙箱化脚本；"
             "不启用 sub-agent，不直接伪造 finding。"
         ),
@@ -334,6 +335,7 @@ def run_bounded_deepagent(
                                 "如果 skill_asset_paths 非空，必须先调用 list_skill_assets，"
                                 "再调用 read_skill_asset 读取 SKILL.md 和 references/ 下的规范资料；"
                                 "摘要必须保留 Skill 中定义的原始 rule_id/checkpoint_id；"
+                                "covered_rules、skipped_rules、rule_id 必须使用 Skill 原始规则 ID，不能替换成其他规则 ID；"
                                 "如果 Skill、绑定规范、专家画像描述同一问题，优先级按 Skill > 绑定规范 > 专家画像；"
                                 "scripts/ 下资源只能通过 run_skill_script 记录受控调用意图。"
                             ),

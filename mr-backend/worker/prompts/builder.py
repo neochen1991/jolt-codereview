@@ -168,7 +168,8 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
             "priority_order": "skill > 绑定规范 > 专家画像",
             "skill": (
                 "Skill 命中时必须使用 Skill 定义的 rule_id/checkpoint_id 原值；"
-                "covered_rules/skipped_rules 必须保留 Skill 原始 ID，不能替换成绑定规范、专家画像、自定义 prompt 或通用规则里的其他 ID。"
+                "covered_rules、skipped_rules、rule_id 必须使用 Skill 中定义的原始规则 ID，"
+                "不能替换成绑定规范、专家画像、自定义 prompt 或通用规则里的其他 ID。"
             ),
             "bound_markdown_standard": "没有命中 Skill 时，使用绑定规范中定义的 rule_id 原值，不能替换成专家画像或通用规则 ID。",
             "agent_profile": "只有 Skill 和绑定规范都没有定义该问题时，才允许使用专家画像/通用规则归类。",
@@ -199,7 +200,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
             "traceability": (
                 "命中 Skill 时 covered_rules/skipped_rules 必须使用 skill_checkpoints 中定义的 checkpoint_id/rule_id 原值；"
                 "禁止替换成规范、专家画像或通用规则中的其他 rule_id。"
-                "covered_rules/skipped_rules 必须保留 Skill 原始 ID。"
+                "covered_rules、skipped_rules、rule_id 必须使用 Skill 中定义的原始规则 ID。"
                 "如果 Skill 未声明 checkpoint_id，则填写 SKILL:<bound_skill_batch.skill_key>，便于后续审计。"
             ),
             "evidence": "每个 finding 必须满足当前 checkpoint.required_evidence；命中 false_positive_patterns 时不要输出。",
@@ -266,7 +267,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
             "B. 按 persona 和 review_scope 做专家自由检视。"
             "但如果 bound_skill_batch.enforce_skill_scope=true，本次调用是 Skill 专属检视批次，只执行 A 中当前 Skill 明确要求的检查，禁止执行 B。"
             "当 Skill、绑定规范、专家画像描述相同问题时，以 Skill 的 rule_id/checkpoint_id 为准；"
-            "Skill 规则命中时必须保留 Skill 定义的原始 rule_id/checkpoint_id，不能改写为绑定规范或专家画像中的 rule_id；"
+            "Skill 规则命中时 covered_rules、skipped_rules、rule_id 必须保留 Skill 定义的原始规则 ID，不能改写为绑定规范或专家画像中的 rule_id；"
             "当绑定规范和专家画像描述相同问题时，以绑定规范 rule_id 为准。"
             "如果 coverage_retry.enabled=true，本次是低覆盖补检视，只复核 coverage_retry.target_id；没有新证据时返回空 JSON 数组。"
             "如果 review_rules.skill_checkpoints 非空，必须只检查当前 checkpoint，满足 required_evidence 才能输出；命中 false_positive_patterns 必须跳过。"

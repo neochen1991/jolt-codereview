@@ -647,6 +647,7 @@ def _typed_issue_signature(finding: dict[str, Any]) -> str:
 
 def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
     covered = set(primary.get("covered_rules") or [])
+    bound_ids: set[str] = set()
     if _has_bound_authoritative_rule(primary):
         bound_ids = _bound_authoritative_ids(primary)
         covered = {rule for rule in covered if rule in bound_ids} or bound_ids or covered
@@ -659,6 +660,8 @@ def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) 
         covered.update(secondary.get("covered_rules") or [])
     skipped = set(primary.get("skipped_rules") or [])
     skipped.update(secondary.get("skipped_rules") or [])
+    if bound_ids:
+        skipped = {rule for rule in skipped if rule in bound_ids}
     agents = set(str(item) for item in (primary.get("merged_agent_ids") or []) if item)
     for value in [primary.get("agent_id"), secondary.get("agent_id"), *(secondary.get("merged_agent_ids") or [])]:
         if value:

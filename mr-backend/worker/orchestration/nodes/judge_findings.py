@@ -8,9 +8,16 @@ from calibration.precision_history import calibrate_findings_with_history, load_
 from diff.slicer import extract_added_lines
 from orchestration.judging.evidence_score import apply_evidence_score_policy, changed_line_index, score as score_evidence
 from orchestration.nodes.critic_pass import run_critic_pass
-from rules.registry import load_registry, rule_for_tool_observation
+from rules.registry import (
+    external_tool_rule_map,
+    load_registry,
+    promotable_rule_ids,
+    rule_for_tool_observation,
+    tool_coverage_fill_rule_ids,
+    tool_source_for_observation,
+)
 from tools.candidate_store import upsert_candidate_finding, upsert_candidate_findings
-from tools.tool_normalizer import DDD_RULE_IDS, CATEGORY_PRIMARY_RULE, canonical_rule_id, line_bucket, normalize_tool_finding, normalized_rule_category, sha1
+from tools.tool_normalizer import CATEGORY_PRIMARY_RULE, canonical_rule_id, line_bucket, normalize_tool_finding, normalized_rule_category, sha1
 
 SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 SELECTABLE_SEVERITIES = {"critical", "high", "medium"}
@@ -27,75 +34,9 @@ OSS_TOOL_PROMOTION_THRESHOLDS = {
     "gitleaks": 0.82,
     "tree_sitter_code_graph": 0.82,
 }
-PROMOTABLE_TOOL_RULES = {
-    "BE-API-001",
-    "BE-IDEMP-004",
-    "BE-TX-002",
-    "CODE-EXC-003",
-    "CODE-NULL-001",
-    "CODE-RESOURCE-005",
-    "CODE-STATE-004",
-    "DB-DDL-001",
-    "DB-NOTNULL-002",
-    "DDD-AGG-001",
-    "DDD-VO-002",
-    "DEP-CVE-001",
-    "DEP-SCOPE-005",
-    "PERF-LIKE-002",
-    "PERF-MEM-004",
-    "PERF-QUERY-001",
-    "REDIS-CMD-003",
-    "REDIS-TTL-002",
-    "SEC-CONFIG-007",
-    "SEC-CRYPTO-010",
-    "SEC-CRYPTO-011",
-    "SEC-DEBUG-011",
-    "SEC-AUTHN-001",
-    "SEC-AUTHZ-002",
-    "SEC-INJECT-003",
-    "SEC-RISK-006",
-    "SEC-SECRET-004",
-    "SEC-SECRET-004:ERROR_RESPONSE",
-    "SEC-SSRF-009",
-    "SEC-WEBHOOK-008",
-    "TEST-COVER-001",
-    "ALI-BIGDECIMAL-001",
-    "ALI-CONCURRENCY-001",
-    "ALI-CONCURRENCY-002",
-    "ALI-CONCURRENCY-003",
-    "ALI-DB-001",
-    "ALI-DB-002",
-    "ALI-EQUALS-001",
-    "ALI-EXC-002",
-    "ALI-LOG-001",
-    "ALI-MYBATIS-001",
-    "ALI-NAMING-001",
-    "ALI-NAMING-002",
-    "ALI-RETURN-001",
-    "HW-LAYER-001",
-    "HW-PERF-001",
-    "HW-SEC-001",
-    "HW-TX-001",
-}
-PROMOTABLE_TOOL_RULES.update(DDD_RULE_IDS)
-
-TOOL_COVERAGE_FILL_RULES = {
-    "BE-API-001",
-    "CODE-NULL-001",
-    "DB-DDL-001",
-    "DDD-VO-002",
-    "DEP-CVE-001",
-    "PERF-QUERY-001",
-    "REDIS-CMD-003",
-    "REDIS-TTL-002",
-    "SEC-INJECT-003",
-    "SEC-SECRET-004",
-}
-
-PROMOTABLE_EXTERNAL_TOOL_RULES = {
-    "AvoidCatchingGenericException": "CODE-EXC-003",
-    "CloseResource": "CODE-RESOURCE-005",
-}
+PROMOTABLE_TOOL_RULES = promotable_rule_ids()
+TOOL_COVERAGE_FILL_RULES = tool_coverage_fill_rule_ids()
+PROMOTABLE_EXTERNAL_TOOL_RULES = external_tool_rule_map()
 
 AGENT_BY_RULE_PREFIX = {
     "BE-": "backend_agent",
@@ -1867,32 +1808,19 @@ def _finding_is_rule_specific(finding: dict[str, Any], rule_id: str) -> bool:
 
 
 def _tool_coverage_fill_rule_ids() -> set[str]:
-    registry = load_registry()
-    rules = {
-        str(rule.get("id") or "")
-        for rule in registry.get("rules", [])
-        if isinstance(rule, dict) and rule.get("promote_from_tool")
-    }
-    return {rule for rule in rules if rule} or set(TOOL_COVERAGE_FILL_RULES)
+    return set(TOOL_COVERAGE_FILL_RULES)
 
 
 def _tool_coverage_fill_threshold(rule_id: str, observation: dict[str, Any]) -> float:
-    registry_rule = rule_for_tool_observation(observation)
+    source_match = tool_source_for_observation(observation)
     min_confidences: list[float] = []
-    if isinstance(registry_rule, dict) and str(registry_rule.get("id") or "") == rule_id:
-        for source in registry_rule.get("tool_sources") or []:
-            if not isinstance(source, dict):
-                continue
-            tool_rule_id = str(source.get("tool_rule_id") or "")
-            tool = str(source.get("tool") or "*").lower()
-            observation_tool_rule = str(observation.get("rule_id") or observation.get("tool_rule_id") or "")
-            observation_tool = str(observation.get("tool_name") or "").lower()
-            if tool_rule_id != observation_tool_rule or (tool != "*" and tool != observation_tool):
-                continue
+    if isinstance(source_match, dict) and str((source_match.get("rule") or {}).get("id") or "") == rule_id:
+        source = source_match.get("source") or {}
+        if isinstance(source, dict):
             try:
                 min_confidences.append(float(source.get("min_confidence") or 0))
             except (TypeError, ValueError):
-                continue
+                pass
     return max([0.85, *min_confidences])
 
 
@@ -2378,21 +2306,32 @@ def _drop_without_tool_support(finding: dict[str, Any], source_observations: lis
 
 def _canonical_tool_rule_id(observation: dict[str, Any]) -> str:
     raw_rule = canonical_rule_id(observation.get("rule_id"))
-    tool_name = str(observation.get("tool_name") or "").strip().lower()
+    registry_rule = rule_for_tool_observation(observation)
+    if isinstance(registry_rule, dict) and registry_rule.get("promote_from_tool"):
+        return str(registry_rule.get("id") or "")
     if raw_rule in PROMOTABLE_TOOL_RULES:
         return raw_rule
     if raw_rule in PROMOTABLE_EXTERNAL_TOOL_RULES:
         return PROMOTABLE_EXTERNAL_TOOL_RULES[raw_rule]
-    registry_rule = rule_for_tool_observation(observation)
-    if isinstance(registry_rule, dict) and registry_rule.get("promote_from_tool"):
-        return str(registry_rule.get("id") or "")
     category = normalized_rule_category(raw_rule, observation.get("message"))
     primary = CATEGORY_PRIMARY_RULE.get(category, "")
     if primary in PROMOTABLE_TOOL_RULES:
         return primary
-    if tool_name == "pmd" and raw_rule == "CloseResource":
-        return "CODE-RESOURCE-005"
     return ""
+
+
+def _tool_promotion_threshold(rule_id: str, observation: dict[str, Any]) -> float:
+    source_match = tool_source_for_observation(observation)
+    source_threshold = 0.0
+    if isinstance(source_match, dict) and str((source_match.get("rule") or {}).get("id") or "") == rule_id:
+        source = source_match.get("source") or {}
+        if isinstance(source, dict):
+            try:
+                source_threshold = float(source.get("min_confidence") or 0)
+            except (TypeError, ValueError):
+                source_threshold = 0.0
+    tool_name = str(observation.get("tool_name") or "").strip().lower()
+    return max(source_threshold, OSS_TOOL_PROMOTION_THRESHOLDS.get(tool_name, 0.85))
 
 
 def _promotable_tool_observation(observation: dict[str, Any]) -> bool:
@@ -2427,56 +2366,14 @@ def _promotable_tool_observation(observation: dict[str, Any]) -> bool:
         )
         if not has_ddd_context:
             return False
-    tool_name = str(observation.get("tool_name") or "").strip().lower()
-    confidence = float(observation.get("confidence") or 0)
     has_location = bool(observation.get("file_path")) and _as_int(observation.get("line_start")) is not None
-    if tool_name == "java_web_static":
-        return confidence >= 0.78 and has_location
-    if tool_name == "pmd":
-        return rule_id in {"CODE-EXC-003", "CODE-RESOURCE-005"} and confidence >= 0.75
-    if tool_name == "semgrep":
-        return rule_id in {
-            "BE-API-001",
-            "BE-IDEMP-004",
-            "CODE-NULL-001",
-            "CODE-STATE-004",
-            "DB-DDL-001",
-            "DDD-AGG-001",
-            "DDD-POLICY-001",
-            "DDD-VO-002",
-            "ALI-BIGDECIMAL-001",
-            "PERF-LIKE-002",
-            "PERF-QUERY-001",
-            "REDIS-CMD-003",
-            "REDIS-TTL-002",
-            "SEC-AUTHZ-002",
-            "SEC-CRYPTO-010",
-            "SEC-CRYPTO-011",
-            "SEC-DEBUG-011",
-            "SEC-CONFIG-007",
-            "SEC-INJECT-003",
-            "SEC-RISK-006",
-            "SEC-SECRET-004",
-            "SEC-SECRET-004:ERROR_RESPONSE",
-            "SEC-SSRF-009",
-            "SEC-WEBHOOK-008",
-            "TEST-COVER-001",
-            "ALI-CONCURRENCY-001",
-            "ALI-CONCURRENCY-002",
-            "ALI-CONCURRENCY-003",
-            "CODE-RESOURCE-005",
-            "HW-SEC-001",
-            "HW-TX-001",
-            "PERF-MEM-004",
-        } and confidence >= 0.76
-    if tool_name in {"trivy", "osv"}:
-        return rule_id == "DEP-CVE-001" and confidence >= 0.78 and bool(observation.get("file_path"))
-    threshold = OSS_TOOL_PROMOTION_THRESHOLDS.get(tool_name)
-    if threshold is None:
+    if not has_location:
         return False
-    if tool_name in {"dependency-check", "trivy", "osv"}:
-        return rule_id == "DEP-CVE-001" and confidence >= threshold and bool(observation.get("file_path"))
-    return confidence >= threshold and has_location
+    try:
+        confidence = float(observation.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return confidence >= _tool_promotion_threshold(rule_id, observation)
 
 
 def _tool_candidate_hash(rule_id: str, observation: dict[str, Any]) -> str:

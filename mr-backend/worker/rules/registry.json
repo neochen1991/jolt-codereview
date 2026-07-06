@@ -12,8 +12,8 @@
     ]
   },
   "generated_from": [
-    "worker/orchestration/nodes/judge_findings.py",
-    "worker/tools/tool_normalizer.py"
+    "mr-backend/worker/orchestration/nodes/judge_findings.py",
+    "mr-backend/worker/tools/tool_normalizer.py"
   ],
   "rules": [
     {
@@ -387,7 +387,13 @@
         "line_bucket",
         "primary_symbol"
       ],
-      "tool_sources": []
+      "tool_sources": [
+        {
+          "min_confidence": 0.85,
+          "tool": "*",
+          "tool_rule_id": "ALI-NAMING-002"
+        }
+      ]
     },
     {
       "agent_owners": [
@@ -2709,7 +2715,13 @@
         "line_bucket",
         "primary_symbol"
       ],
-      "tool_sources": []
+      "tool_sources": [
+        {
+          "min_confidence": 0.85,
+          "tool": "*",
+          "tool_rule_id": "DEP-SCOPE-005"
+        }
+      ]
     },
     {
       "agent_owners": [
@@ -3023,7 +3035,13 @@
         "line_bucket",
         "primary_symbol"
       ],
-      "tool_sources": []
+      "tool_sources": [
+        {
+          "min_confidence": 0.85,
+          "tool": "*",
+          "tool_rule_id": "SEC-AUTHN-001"
+        }
+      ]
     },
     {
       "agent_owners": [

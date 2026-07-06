@@ -54,6 +54,33 @@ def rule_ids() -> set[str]:
     return set(load_registry()["by_id"])
 
 
+def promotable_rule_ids() -> set[str]:
+    return {
+        str(item.get("id") or "")
+        for item in load_registry()["by_id"].values()
+        if isinstance(item, dict) and item.get("promote_from_tool")
+    } - {""}
+
+
+def tool_coverage_fill_rule_ids() -> set[str]:
+    return promotable_rule_ids()
+
+
+def external_tool_rule_map() -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for item in load_registry()["by_id"].values():
+        rule_id = str(item.get("id") or "")
+        if not rule_id:
+            continue
+        for source in item.get("tool_sources") or []:
+            if not isinstance(source, dict):
+                continue
+            tool_rule_id = str(source.get("tool_rule_id") or "")
+            if tool_rule_id and tool_rule_id != rule_id:
+                mapping.setdefault(tool_rule_id, rule_id)
+    return mapping
+
+
 def category_for_rule(rule_id: str | None) -> str:
     item = rule(rule_id)
     category = item.get("category") if isinstance(item, dict) else None
@@ -88,18 +115,29 @@ def signature_keys_for(rule_id: str | None) -> list[str]:
     return [str(key) for key in values] if isinstance(values, list) else ["covered_rules", "file_path", "line_bucket"]
 
 
-def rule_for_tool_observation(observation: dict[str, Any]) -> dict[str, Any] | None:
+def _tool_source_candidates(observation: dict[str, Any]) -> list[dict[str, Any]]:
     registry = load_registry()
     tool = str(observation.get("tool_name") or "")
     tool_rule_id = str(observation.get("rule_id") or observation.get("tool_rule_id") or "")
     if not tool_rule_id:
-        return None
-    candidates = [
+        return []
+    return [
         *registry["tool_index"].get((tool, tool_rule_id), []),
         *registry["wildcard_index"].get(tool_rule_id, []),
     ]
-    confidence = float(observation.get("confidence") or 0)
+
+
+def tool_source_for_observation(observation: dict[str, Any]) -> dict[str, Any] | None:
+    candidates = _tool_source_candidates(observation)
     for candidate in candidates:
+        if candidate["rule"].get("promote_from_tool"):
+            return candidate
+    return candidates[0] if candidates else None
+
+
+def rule_for_tool_observation(observation: dict[str, Any]) -> dict[str, Any] | None:
+    confidence = float(observation.get("confidence") or 0)
+    for candidate in _tool_source_candidates(observation):
         source = candidate["source"]
         try:
             min_confidence = float(source.get("min_confidence") or 0)

@@ -10,6 +10,7 @@ if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
 from orchestration.nodes import judge_findings
+from rules.registry import external_tool_rule_map, promotable_rule_ids
 from tools.tool_normalizer import CATEGORY_PRIMARY_RULE, RULE_CATEGORY_MAP
 
 
@@ -34,10 +35,10 @@ def severity_floor(rule_id: str) -> str:
 
 
 def main() -> None:
+    promotable_rules = promotable_rule_ids()
     rules: dict[str, dict] = {}
     for rule_id in sorted(
-        set(judge_findings.PROMOTABLE_TOOL_RULES)
-        | set(judge_findings.TOOL_COVERAGE_FILL_RULES)
+        set(promotable_rules)
         | set(judge_findings.RULE_REMEDIATION)
         | set(judge_findings.AGENT_BY_RULE)
         | set(CATEGORY_PRIMARY_RULE.values())
@@ -52,7 +53,7 @@ def main() -> None:
             "evidence_requirements": {"requires_line": True, "min_evidence_components": 3},
             "tool_sources": [],
             "signature_keys": ["covered_rules", "file_path", "line_bucket", "primary_symbol"],
-            "promote_from_tool": rule_id in judge_findings.PROMOTABLE_TOOL_RULES,
+            "promote_from_tool": rule_id in promotable_rules,
             "is_bound_document_rule": False,
         }
 
@@ -68,7 +69,7 @@ def main() -> None:
             }
         )
 
-    for raw_rule, target_rule in sorted(judge_findings.PROMOTABLE_EXTERNAL_TOOL_RULES.items()):
+    for raw_rule, target_rule in sorted(external_tool_rule_map().items()):
         if target_rule in rules:
             rules[target_rule]["tool_sources"].append(
                 {
@@ -88,6 +89,8 @@ def main() -> None:
             seen.add(key)
             deduped.append(source)
         rule["tool_sources"] = deduped
+        if rule["promote_from_tool"] and not rule["tool_sources"]:
+            rule["tool_sources"].append({"tool": "*", "tool_rule_id": rule["id"], "min_confidence": 0.85})
 
     registry = {
         "generated_from": [

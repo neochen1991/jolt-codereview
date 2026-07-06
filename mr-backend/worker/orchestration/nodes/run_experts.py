@@ -201,6 +201,60 @@ def _rule_checked_status(items: list[dict[str, Any]], rule_id: str) -> dict[str,
     }
 
 
+def _enforce_bound_batch_findings(batch: dict[str, Any], items: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    expected_rule_id = str(batch.get("rule_id") or "").strip()
+    expected_checkpoint_id = str(batch.get("checkpoint_id") or "").strip()
+    expected_id = expected_rule_id or expected_checkpoint_id
+    if not expected_id:
+        return items, []
+
+    is_skill_checkpoint = bool(expected_checkpoint_id)
+    mismatch_reason = "bound_skill_checkpoint_mismatch" if is_skill_checkpoint else "bound_rule_mismatch"
+    attribution_flag = "bound_skill_checkpoint_attributed" if is_skill_checkpoint else "bound_rule_attributed"
+    kept: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for item in items:
+        finding = dict(item)
+        covered_rules = _string_list(finding.get("covered_rules"))
+        if covered_rules and expected_id not in covered_rules:
+            rejected.append(_with_rejected_reason(finding, mismatch_reason))
+            continue
+
+        if not covered_rules:
+            finding["verification_flags"] = _unique_strings([*(_string_list(finding.get("verification_flags"))), attribution_flag])
+        finding["covered_rules"] = [expected_id]
+        finding["rule_id"] = expected_id
+        finding["review_batch_label"] = str(batch.get("label") or "")
+        if expected_rule_id:
+            finding["bound_rule_id"] = expected_rule_id
+        if is_skill_checkpoint:
+            finding["skill_key"] = str(batch.get("skill_key") or "")
+            finding["checkpoint_id"] = expected_checkpoint_id
+        kept.append(finding)
+    return kept, rejected
+
+
+def _with_rejected_reason(item: dict[str, Any], reason: str) -> dict[str, Any]:
+    return {**item, "rejected_reasons": _unique_strings([*(_string_list(item.get("rejected_reasons"))), reason])}
+
+
+def _string_list(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    return [str(value).strip() for value in raw if str(value).strip()]
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return unique
+
+
 def _first_rule_id(row: Any) -> str:
     if "covered_rules_json" not in row.keys():
         return ""
@@ -562,6 +616,21 @@ def make_run_experts_node(
                     if batch.get("skill_key"):
                         batch_skill_summary = load_skill_summary(str(batch["skill_key"]), files)
                     batch_items = call_llm(project_config, recorder, span, batch_agent, llm_files, batch_skill_summary)
+                    batch_items, rejected_batch_items = _enforce_bound_batch_findings(batch, batch_items)
+                    if rejected_batch_items:
+                        recorder.event(
+                            span,
+                            "bound_batch_findings_rejected",
+                            f"{agent_id} 过滤 {len(rejected_batch_items)} 个越界批次 finding",
+                            {
+                                "batch_label": batch["label"],
+                                "rule_id": batch.get("rule_id") or "",
+                                "skill_key": batch.get("skill_key") or "",
+                                "checkpoint_id": batch.get("checkpoint_id") or "",
+                                "rejected_count": len(rejected_batch_items),
+                                "rejected_reasons": sorted({reason for item in rejected_batch_items for reason in (item.get("rejected_reasons") or [])}),
+                            },
+                        )
                     if batch["rule_id"]:
                         recorder.event(
                             span,

@@ -12,7 +12,7 @@ fake_deepagents_runner = types.ModuleType("orchestration.deepagents_runner")
 fake_deepagents_runner.run_bounded_deepagent = lambda **_kwargs: {"tool_calls": [], "content": ""}
 sys.modules.setdefault("orchestration.deepagents_runner", fake_deepagents_runner)
 
-from orchestration.nodes.run_experts import _bound_rule_batches
+from orchestration.nodes.run_experts import _bound_rule_batches, _enforce_bound_batch_findings
 from prompts.builder import build_prompt
 from rules.skill_checkpoint_parser import parse_skill_checkpoints
 
@@ -124,7 +124,64 @@ def test_skill_scoped_prompt_disables_expert_free_review() -> None:
     assert "禁止执行专家自由检视" in prompt, prompt
 
 
+def test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_scope() -> None:
+    kept, rejected = _enforce_bound_batch_findings(
+        {
+            "label": "bound_skill:secure-review-skill:SEC-CMD-001",
+            "rule_id": "",
+            "skill_key": "secure-review-skill",
+            "checkpoint_id": "SEC-CMD-001",
+        },
+        [
+            {
+                "title": "命令注入",
+                "problem_description": "用户输入进入 Runtime.exec。",
+                "file_path": "src/App.java",
+                "line_start": 12,
+            },
+            {
+                "title": "路径穿越",
+                "problem_description": "文件名未 normalize。",
+                "covered_rules": ["SEC-PATH-002"],
+                "file_path": "src/App.java",
+                "line_start": 30,
+            },
+        ],
+    )
+
+    assert len(kept) == 1, kept
+    assert kept[0]["covered_rules"] == ["SEC-CMD-001"], kept
+    assert kept[0]["rule_id"] == "SEC-CMD-001", kept
+    assert kept[0]["skill_key"] == "secure-review-skill", kept
+    assert kept[0]["checkpoint_id"] == "SEC-CMD-001", kept
+    assert "bound_skill_checkpoint_attributed" in kept[0]["verification_flags"], kept
+    assert len(rejected) == 1, rejected
+    assert rejected[0]["rejected_reasons"] == ["bound_skill_checkpoint_mismatch"], rejected
+
+
+def test_bound_rule_batch_filters_explicitly_mismatched_rule() -> None:
+    kept, rejected = _enforce_bound_batch_findings(
+        {
+            "label": "bound_rule:JAVA-001",
+            "rule_id": "JAVA-001",
+        },
+        [
+            {"title": "命中规则", "covered_rules": ["JAVA-001"]},
+            {"title": "缺少归属"},
+            {"title": "越界规则", "covered_rules": ["JAVA-999"]},
+        ],
+    )
+
+    assert [item["covered_rules"] for item in kept] == [["JAVA-001"], ["JAVA-001"]], kept
+    assert kept[1]["rule_id"] == "JAVA-001", kept
+    assert "bound_rule_attributed" in kept[1]["verification_flags"], kept
+    assert len(rejected) == 1, rejected
+    assert rejected[0]["rejected_reasons"] == ["bound_rule_mismatch"], rejected
+
+
 if __name__ == "__main__":
     test_skill_markdown_is_parsed_into_auditable_checkpoints()
     test_custom_skill_creates_skill_scoped_batch_without_free_review()
     test_skill_scoped_prompt_disables_expert_free_review()
+    test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_scope()
+    test_bound_rule_batch_filters_explicitly_mismatched_rule()

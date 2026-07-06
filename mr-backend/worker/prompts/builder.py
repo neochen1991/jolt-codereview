@@ -144,11 +144,20 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
         "format": "diff_slices_v1",
         "items": compact,
     }
+    bound_rule_batch = agent.get("bound_rule_batch") if isinstance(agent.get("bound_rule_batch"), dict) else {}
+    bound_skill_batch = agent.get("bound_skill_batch") if isinstance(agent.get("bound_skill_batch"), dict) else {}
+    coverage_retry = {
+        "enabled": bool(bound_rule_batch.get("coverage_retry") or bound_skill_batch.get("coverage_retry")),
+        "target_id": str(bound_rule_batch.get("target_id") or bound_skill_batch.get("target_id") or bound_rule_batch.get("rule_id") or bound_skill_batch.get("checkpoint_id") or ""),
+        "retry_reason": str(bound_rule_batch.get("retry_reason") or bound_skill_batch.get("retry_reason") or ""),
+        "usage_policy": "为绑定规则或 Skill checkpoint 的低覆盖补检视调用；只复核 target_id，不输出相邻问题。",
+    }
     review_rules = {
         "dedicated_markdown_standard": _compact_text(skill_summary, None),
         "bound_markdown_rules": _compact_json_value(agent.get("bound_rules") or [], text_limit=None, list_limit=None),
-        "bound_rule_batch": _compact_json_value(agent.get("bound_rule_batch") or {}, text_limit=None, list_limit=None),
-        "bound_skill_batch": _compact_json_value(agent.get("bound_skill_batch") or {}, text_limit=None, list_limit=None),
+        "bound_rule_batch": _compact_json_value(bound_rule_batch, text_limit=None, list_limit=None),
+        "bound_skill_batch": _compact_json_value(bound_skill_batch, text_limit=None, list_limit=None),
+        "coverage_retry": coverage_retry,
         "skill_checkpoints": _compact_json_value(agent.get("skill_checkpoints") or [], text_limit=None, list_limit=None),
         "bound_rule_review_contract": {
             "priority": "绑定 Markdown 规范是本专家的项目级检视准则，优先级高于自由发挥和通用静态工具建议。",
@@ -235,6 +244,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
             "A. 按 dedicated_markdown_standard 的“专属代码规范”和 bound_markdown_rules 逐条检查，并遵守 bound_rule_review_contract；"
             "B. 按 persona 和 review_scope 做专家自由检视。"
             "但如果 bound_skill_batch.enforce_skill_scope=true，本次调用是 Skill 专属检视批次，只执行 A 中当前 Skill 明确要求的检查，禁止执行 B。"
+            "如果 coverage_retry.enabled=true，本次是低覆盖补检视，只复核 coverage_retry.target_id；没有新证据时返回空 JSON 数组。"
             "如果 review_rules.skill_checkpoints 非空，必须只检查当前 checkpoint，满足 required_evidence 才能输出；命中 false_positive_patterns 必须跳过。"
             "C. 如果 agent_profile.custom_prompt 不为空，必须按该自定义 Agent Prompt 执行补充检视。"
             "covered_rules 填写触发本问题的 rule_id；skipped_rules 填写已检查但未命中的 rule_id。"

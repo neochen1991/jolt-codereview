@@ -12,8 +12,8 @@ fake_deepagents_runner = types.ModuleType("orchestration.deepagents_runner")
 fake_deepagents_runner.run_bounded_deepagent = lambda **_kwargs: {"tool_calls": [], "content": ""}
 sys.modules.setdefault("orchestration.deepagents_runner", fake_deepagents_runner)
 
-from orchestration.nodes.run_experts import _bound_rule_batches, _enforce_bound_batch_findings, _summarize_bound_review_coverage
 from prompts.builder import build_prompt
+from orchestration.nodes.run_experts import _bound_rule_batches, _coverage_retry_batch, _enforce_bound_batch_findings, _summarize_bound_review_coverage
 from rules.skill_checkpoint_parser import parse_skill_checkpoints
 
 
@@ -313,6 +313,31 @@ def test_bound_review_coverage_summary_tracks_hits_and_misses() -> None:
     assert summary["missed"][0]["checkpoint_id"] == "SEC-PATH-002", summary
 
 
+def test_coverage_retry_batch_focuses_prompt_on_missed_bound_rule() -> None:
+    batch = {
+        "label": "bound_rule:SEC-AUTH-001",
+        "rule_id": "SEC-AUTH-001",
+        "agent": {
+            "agent_id": "security_agent",
+            "display_name": "安全专家",
+            "applies_to": {"persona": "安全检视", "exclusive_scope": "security"},
+            "bound_rules": [{"rule_id": "SEC-AUTH-001", "title": "接口鉴权", "required_evidence": "入口方法；鉴权调用"}],
+            "bound_rule_batch": {"index": 1, "total": 1, "rule_id": "SEC-AUTH-001"},
+        },
+    }
+
+    retry = _coverage_retry_batch(batch, reason="missing_after_first_pass")
+    assert retry is not None, retry
+    assert retry["label"] == "bound_rule:SEC-AUTH-001:coverage_retry", retry
+    assert retry["agent"]["bound_rule_batch"]["coverage_retry"] is True, retry
+    assert retry["agent"]["bound_rule_batch"]["retry_reason"] == "missing_after_first_pass", retry
+    prompt, _ = build_prompt(retry["agent"], [], "")
+    parsed = __import__("json").loads(prompt)
+    assert parsed["review_rules"]["coverage_retry"]["enabled"] is True, parsed["review_rules"]
+    assert parsed["review_rules"]["coverage_retry"]["target_id"] == "SEC-AUTH-001", parsed["review_rules"]
+    assert "补检视" in parsed["task"], parsed["task"]
+
+
 if __name__ == "__main__":
     test_skill_markdown_is_parsed_into_auditable_checkpoints()
     test_custom_skill_creates_skill_scoped_batch_without_free_review()
@@ -322,3 +347,4 @@ if __name__ == "__main__":
     test_skill_checkpoint_batch_flags_missing_required_evidence_without_dropping()
     test_bound_rule_batch_filters_explicitly_mismatched_rule()
     test_bound_review_coverage_summary_tracks_hits_and_misses()
+    test_coverage_retry_batch_focuses_prompt_on_missed_bound_rule()

@@ -81,6 +81,9 @@ const checks = [
       "bound_false_positive_pattern_match",
       "bound_required_evidence_incomplete",
       "def _summarize_bound_review_coverage(records: list[dict[str, Any]])",
+      "def _coverage_retry_batch(batch: dict[str, Any], *, reason: str)",
+      "bound_rule_coverage_low",
+      "bound_rule_coverage_retry_completed",
       "bound_review_coverage_summarized",
       "\"bound_review_coverage\": bound_review_coverage",
       "bound_batch_findings_rejected",
@@ -102,12 +105,16 @@ const checks = [
     file: "mr-backend/worker/prompts/builder.py",
     forbidden: [],
     required: [
-      "\"bound_rule_batch\": _compact_json_value(agent.get(\"bound_rule_batch\") or {}, text_limit=None, list_limit=None)",
-      "\"bound_skill_batch\": _compact_json_value(agent.get(\"bound_skill_batch\") or {}, text_limit=None, list_limit=None)",
+      "bound_rule_batch = agent.get(\"bound_rule_batch\") if isinstance(agent.get(\"bound_rule_batch\"), dict) else {}",
+      "bound_skill_batch = agent.get(\"bound_skill_batch\") if isinstance(agent.get(\"bound_skill_batch\"), dict) else {}",
+      "\"bound_rule_batch\": _compact_json_value(bound_rule_batch, text_limit=None, list_limit=None)",
+      "\"bound_skill_batch\": _compact_json_value(bound_skill_batch, text_limit=None, list_limit=None)",
+      "\"coverage_retry\": coverage_retry",
       "\"skill_checkpoints\": _compact_json_value(agent.get(\"skill_checkpoints\") or [], text_limit=None, list_limit=None)",
       "\"bound_skill_review_contract\": {",
       "禁止执行专家自由检视",
-      "必须只检查当前 checkpoint"
+      "必须只检查当前 checkpoint",
+      "如果 coverage_retry.enabled=true"
     ]
   },
   {

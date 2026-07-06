@@ -151,6 +151,33 @@ def _bound_rule_batches(agent_context: dict[str, Any]) -> list[dict[str, Any]]:
     return batches
 
 
+def _coverage_retry_batch(batch: dict[str, Any], *, reason: str) -> dict[str, Any] | None:
+    rule_id = str(batch.get("rule_id") or "").strip()
+    checkpoint_id = str(batch.get("checkpoint_id") or "").strip()
+    if not rule_id and not checkpoint_id:
+        return None
+    agent = dict(batch.get("agent") or {})
+    applies_to = dict(agent.get("applies_to") or {})
+    target_id = rule_id or checkpoint_id
+    existing_prompt = str(applies_to.get("custom_prompt") or "").strip()
+    retry_prompt = (
+        f"绑定规则/Skill 补检视：上一轮没有输出 {target_id} 的命中或明确跳过结果。"
+        "本轮只复核该规则/Checkpoint；如果命中，必须输出精确源码证据和 covered_rules；"
+        "如果没有命中，返回空 JSON 数组，不要输出相邻问题。"
+    )
+    applies_to["custom_prompt"] = f"{existing_prompt}\n\n{retry_prompt}".strip()
+    agent["applies_to"] = applies_to
+    if rule_id:
+        rule_batch = dict(agent.get("bound_rule_batch") or {})
+        rule_batch.update({"coverage_retry": True, "retry_reason": reason, "target_id": rule_id})
+        agent["bound_rule_batch"] = rule_batch
+    if checkpoint_id:
+        skill_batch = dict(agent.get("bound_skill_batch") or {})
+        skill_batch.update({"coverage_retry": True, "retry_reason": reason, "target_id": checkpoint_id})
+        agent["bound_skill_batch"] = skill_batch
+    return {**batch, "label": f"{batch.get('label')}:coverage_retry", "agent": agent, "coverage_retry": True}
+
+
 def _skill_checkpoints(skill_key: str, skill_assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     skill_docs = [
         asset
@@ -786,8 +813,54 @@ def make_run_experts_node(
                         batch_skill_summary = load_skill_summary(str(batch["skill_key"]), files)
                     batch_items = call_llm(project_config, recorder, span, batch_agent, llm_files, batch_skill_summary)
                     batch_items, rejected_batch_items = _enforce_bound_batch_findings(batch, batch_items)
+                    retry_count = 0
+                    retry_hit = False
+                    if (
+                        not batch_items
+                        and (batch.get("rule_id") or batch.get("checkpoint_id"))
+                        and not (budget_tracker and budget_tracker.should_stop())
+                    ):
+                        retry_batch = _coverage_retry_batch(batch, reason="missing_after_first_pass")
+                        if retry_batch:
+                            recorder.event(
+                                span,
+                                "bound_rule_coverage_low",
+                                f"{agent_id} 对 {batch['label']} 首轮未命中，发起补检视",
+                                {
+                                    "batch_label": batch["label"],
+                                    "rule_id": batch.get("rule_id") or "",
+                                    "skill_key": batch.get("skill_key") or "",
+                                    "checkpoint_id": batch.get("checkpoint_id") or "",
+                                    "reason": "missing_after_first_pass",
+                                },
+                            )
+                            retry_agent = retry_batch["agent"]
+                            retry_skill_summary = batch_skill_summary
+                            if retry_batch.get("skill_key"):
+                                retry_skill_summary = load_skill_summary(str(retry_batch["skill_key"]), files)
+                            retry_items = call_llm(project_config, recorder, span, retry_agent, llm_files, retry_skill_summary)
+                            retry_items, retry_rejected_items = _enforce_bound_batch_findings(batch, retry_items)
+                            retry_count = 1
+                            retry_hit = bool(retry_items)
+                            batch_items.extend(retry_items)
+                            rejected_batch_items.extend(retry_rejected_items)
+                            recorder.event(
+                                span,
+                                "bound_rule_coverage_retry_completed",
+                                f"{agent_id} 完成 {batch['label']} 补检视，新增 {len(retry_items)} 个 finding",
+                                {
+                                    "batch_label": batch["label"],
+                                    "rule_id": batch.get("rule_id") or "",
+                                    "skill_key": batch.get("skill_key") or "",
+                                    "checkpoint_id": batch.get("checkpoint_id") or "",
+                                    "finding_count": len(retry_items),
+                                    "rejected_count": len(retry_rejected_items),
+                                },
+                            )
                     coverage_record = _bound_review_coverage_record(agent_id, batch, batch_items, rejected_batch_items)
                     if coverage_record:
+                        coverage_record["retry_count"] = retry_count
+                        coverage_record["retry_hit"] = retry_hit
                         bound_review_coverage_records.append(coverage_record)
                     if rejected_batch_items:
                         recorder.event(

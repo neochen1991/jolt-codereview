@@ -1,0 +1,19 @@
+{
+  "id": "java-complex-local-fixture-9301",
+  "fixture_type": "local_fixture",
+  "mr_id": "mr_repo_github_java_complex_10file_9301",
+  "description": "Local production-style Java complex MR fixture used by the current real_gold_set.jsonl baseline.",
+  "expected_gold_ids": [
+    "real-java-complex-001",
+    "real-java-complex-002",
+    "real-java-complex-003",
+    "real-java-complex-004",
+    "real-java-complex-005",
+    "real-java-complex-006",
+    "real-java-complex-007",
+    "real-java-complex-008",
+    "real-java-complex-009",
+    "real-java-complex-010"
+  ],
+  "tags": ["local-fixture", "java", "baseline"]
+}

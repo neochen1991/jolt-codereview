@@ -63,7 +63,8 @@ def load_manifests(path: Path, project_id: str) -> tuple[dict[str, dict[str, Any
             failures.append(f"{file}: cannot derive mr_id")
         if fixture_id in manifests:
             failures.append(f"{file}: duplicate manifest id {fixture_id}")
-        manifests[fixture_id] = {**item, "_file": str(file), "_id": fixture_id, "_mr_id": mr_id}
+        fixture_type = norm(item.get("fixture_type") or item.get("type") or "real_open_source")
+        manifests[fixture_id] = {**item, "_file": str(file), "_id": fixture_id, "_mr_id": mr_id, "_fixture_type": fixture_type}
     return manifests, failures
 
 
@@ -106,6 +107,11 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
     negative_gold_mrs = {norm(item.get("mr_id")) for item in gold if is_negative(item) and norm(item.get("mr_id"))}
     finding_mrs = {norm(item.get("mr_id") or item.get("merge_request_id")) for item in findings if norm(item.get("mr_id") or item.get("merge_request_id"))}
     manifest_mrs = {norm(item.get("_mr_id")) for item in manifests.values() if norm(item.get("_mr_id"))}
+    target_manifests = {
+        key: item
+        for key, item in manifests.items()
+        if norm(item.get("_fixture_type")) in {"real_open_source", "github_real_pr"}
+    }
 
     missing_manifest_for_gold = sorted((positive_gold_mrs | negative_gold_mrs) - manifest_mrs)
     manifests_without_gold = sorted(manifest_mrs - (positive_gold_mrs | negative_gold_mrs))
@@ -113,8 +119,8 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
     negative_mrs_with_findings = sorted(negative_gold_mrs & finding_mrs)
     findings_without_gold = sorted(finding_mrs - (positive_gold_mrs | negative_gold_mrs))
 
-    if len(manifests) < args.min_manifests:
-        failures.append(f"manifest_count {len(manifests)} < {args.min_manifests}")
+    if len(target_manifests) < args.min_manifests:
+        failures.append(f"target_manifest_count {len(target_manifests)} < {args.min_manifests}")
     if len(positive_gold_mrs) < args.min_positive_mrs:
         failures.append(f"positive_gold_mr_count {len(positive_gold_mrs)} < {args.min_positive_mrs}")
     positive_gold_count = len([item for item in gold if not is_negative(item)])
@@ -136,6 +142,11 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "ok": not failures,
         "manifest_count": len(manifests),
+        "target_manifest_count": len(target_manifests),
+        "fixture_type_counts": {
+            fixture_type: len([item for item in manifests.values() if norm(item.get("_fixture_type")) == fixture_type])
+            for fixture_type in sorted({norm(item.get("_fixture_type")) for item in manifests.values()})
+        },
         "positive_gold_mr_count": len(positive_gold_mrs),
         "negative_gold_mr_count": len(negative_gold_mrs),
         "gold_count": positive_gold_count,

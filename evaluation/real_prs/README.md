@@ -47,6 +47,10 @@ Create one manifest per PR in this directory. Use `.json` for active manifests:
 }
 ```
 
+Use `fixture_type: "real_open_source"` for target-gate fixtures. Local baseline
+fixtures may use `fixture_type: "local_fixture"` so their gold labels can be
+audited without counting toward the 4 real open-source PR target.
+
 Fetch and cache GitHub data without writing the database:
 
 ```bash

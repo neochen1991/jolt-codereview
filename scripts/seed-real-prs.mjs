@@ -48,6 +48,7 @@ function requireField(value, name) {
 
 function normalizeManifest(raw, sourcePath) {
   const repository = raw.repository || {};
+  const fixtureType = String(raw.fixture_type || raw.type || "real_open_source");
   const owner = String(requireField(repository.owner ?? raw.owner, "repository.owner"));
   const repo = String(requireField(repository.repo ?? raw.repo, "repository.repo"));
   const pullNumber = Number(requireField(raw.pull_number ?? raw.number, "pull_number"));
@@ -55,6 +56,7 @@ function normalizeManifest(raw, sourcePath) {
   const id = String(raw.id || `${owner}-${repo}-${pullNumber}`).replace(/[^a-zA-Z0-9_-]+/g, "-").toLowerCase();
   return {
     id,
+    fixture_type: fixtureType,
     sourcePath,
     projectId: String(raw.project_id || ""),
     repository: {
@@ -270,7 +272,10 @@ async function writeFixture(client, projectId, manifest, fixture, cacheRoot) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const manifests = listManifestFiles(args.manifestDir).map((file) => normalizeManifest(readJson(file), file));
+  const manifests = listManifestFiles(args.manifestDir)
+    .map((file) => ({ file, raw: readJson(file) }))
+    .filter(({ raw }) => !raw.fixture_type || ["real_open_source", "github_real_pr"].includes(String(raw.fixture_type)))
+    .map(({ file, raw }) => normalizeManifest(raw, file));
   if (!manifests.length) {
     throw new Error(`No real PR manifest files found in ${args.manifestDir}`);
   }

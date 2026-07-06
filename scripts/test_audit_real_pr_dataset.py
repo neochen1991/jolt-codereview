@@ -67,7 +67,7 @@ def test_audit_reports_manifest_gold_and_negative_mismatches() -> None:
         assert "mr_real_project_default_acme_service_12" in report["missing_manifest_for_gold"], report
         assert "mr_real_project_default_acme_service_11" in report["positive_mrs_without_findings"], report
         assert "mr_real_project_default_acme_service_12" in report["negative_mrs_with_findings"], report
-        assert any("manifest_count 1 < 2" == failure for failure in report["failures"]), report
+        assert any("target_manifest_count 1 < 2" == failure for failure in report["failures"]), report
         assert any("positive_gold_mr_count 1 < 2" == failure for failure in report["failures"]), report
         assert any("gold_count 1 < 3" == failure for failure in report["failures"]), report
         assert any("negative_gold_mr_count 1 < 2" == failure for failure in report["failures"]), report
@@ -121,9 +121,59 @@ def test_audit_accepts_complete_dataset_shape() -> None:
         ))
         assert report["ok"], report
         assert report["manifest_count"] == 1, report
+        assert report["target_manifest_count"] == 1, report
         assert report["positive_gold_mr_count"] == 1, report
+
+
+def test_local_fixture_manifest_satisfies_gold_mapping_but_not_target_count() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        manifest_dir = root / "real_prs"
+        manifest_dir.mkdir()
+        (manifest_dir / "local-java-fixture.json").write_text(
+            json.dumps({
+                "id": "local-java-fixture",
+                "fixture_type": "local_fixture",
+                "mr_id": "mr_repo_github_java_complex_10file_9301",
+            }),
+            "utf-8",
+        )
+        gold = root / "gold.jsonl"
+        findings = root / "findings.jsonl"
+        write_jsonl(gold, [
+            {
+                "id": "gold-local",
+                "mr_id": "mr_repo_github_java_complex_10file_9301",
+                "rule_id": "SEC-AUTH-001",
+                "file_path": "src/Auth.java",
+            }
+        ])
+        write_jsonl(findings, [
+            {"finding_id": "finding-local", "mr_id": "mr_repo_github_java_complex_10file_9301"}
+        ])
+        report = audit(argparse.Namespace(
+            manifest_dir=str(manifest_dir),
+            gold=str(gold),
+            findings=str(findings),
+            project_id="project_default",
+            min_manifests=1,
+            min_positive_mrs=1,
+            min_gold=1,
+            min_negative_mrs=0,
+            require_manifest_for_gold=True,
+            require_gold_for_manifest=True,
+            require_finding_for_positive_mr=True,
+            require_negative_no_findings=True,
+            require_gold_for_finding=True,
+        ))
+        assert not report["ok"], report
+        assert report["manifest_count"] == 1, report
+        assert report["target_manifest_count"] == 0, report
+        assert report["missing_manifest_for_gold"] == [], report
+        assert any("target_manifest_count 0 < 1" == failure for failure in report["failures"]), report
 
 
 if __name__ == "__main__":
     test_audit_reports_manifest_gold_and_negative_mismatches()
     test_audit_accepts_complete_dataset_shape()
+    test_local_fixture_manifest_satisfies_gold_mapping_but_not_target_count()

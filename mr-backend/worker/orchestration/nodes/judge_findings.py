@@ -2970,11 +2970,17 @@ def _bound_authoritative_ids(finding: dict[str, Any]) -> set[str]:
     }
     label = str(finding.get("review_batch_label") or "").strip()
     if label.startswith("bound_rule:"):
-        ids.add(label.removeprefix("bound_rule:").split(":", 1)[0].strip())
+        value = label.removeprefix("bound_rule:")
+        if value.endswith(":coverage_retry"):
+            value = value[: -len(":coverage_retry")]
+        ids.add(value.split(":", 1)[0].strip())
     elif label.startswith("bound_skill:"):
-        parts = label.split(":")
-        if len(parts) >= 3:
-            ids.add(parts[-1].strip())
+        value = label.removeprefix("bound_skill:")
+        if value.endswith(":coverage_retry"):
+            value = value[: -len(":coverage_retry")]
+        parts = value.split(":", 1)
+        if len(parts) == 2:
+            ids.add(parts[1].strip())
     return {item for item in ids if item}
 
 

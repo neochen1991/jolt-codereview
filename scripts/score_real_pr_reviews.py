@@ -111,6 +111,89 @@ def finding_text(finding: dict[str, Any]) -> str:
     ).lower()
 
 
+def primary_rule_id(item: dict[str, Any]) -> str:
+    return sorted(rule_ids(item))[0] if rule_ids(item) else norm(item.get("rule_id"))
+
+
+def semantic_dedupe_signature(item: dict[str, Any]) -> str:
+    trace = quality_trace(item)
+    semantic = trace.get("semantic_dedupe") if isinstance(trace.get("semantic_dedupe"), dict) else {}
+    explicit = norm(semantic.get("signature") or item.get("business_issue_signature"))
+    if explicit:
+        return explicit
+    text = finding_text(item)
+    rule = primary_rule_id(item)
+    root = ""
+    if "audit" in text or "审计" in text or rule.endswith("AUDIT-001"):
+        root = "missing_audit"
+    elif "consistency" in text or "一致性" in text or "补偿" in text or "副作用" in text or rule.endswith("CONSISTENCY-001"):
+        root = "missing_consistency_boundary"
+    elif "ttl" in text or "expire" in text or "过期" in text or rule == "REDIS-TTL-002":
+        root = "missing_ttl"
+    elif "auth" in text or "鉴权" in text or "权限" in text:
+        root = "missing_auth"
+    if not root:
+        return ""
+    action = ""
+    if "batch" in text or "批量" in text:
+        action = "batch"
+    if "approve" in text or "审核" in text:
+        action = f"{action}_approve".strip("_")
+    if "refund" in text or "退款" in text:
+        action = f"{action}_refund".strip("_")
+    if "cache" in text or "缓存" in text:
+        action = f"{action}_cache".strip("_")
+    entity = "refund" if ("refund" in text or "退款" in text) else ""
+    if not action and not entity:
+        return ""
+    return "|".join(part for part in [rule, action, root, entity] if part)
+
+
+def matches_negative(negative: dict[str, Any], finding: dict[str, Any], tolerance: int) -> bool:
+    scope = negative.get("negative_scope") if isinstance(negative.get("negative_scope"), dict) else {}
+    scoped = {**negative, **scope}
+    return matches(scoped, finding, tolerance)
+
+
+def duplicate_match(
+    finding: dict[str, Any],
+    matched_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
+) -> dict[str, Any] | None:
+    finding_signature = semantic_dedupe_signature(finding)
+    if not finding_signature:
+        return None
+    finding_rules = rule_ids(finding)
+    finding_mr = norm(finding.get("mr_id") or finding.get("merge_request_id"))
+    for gold, matched in matched_pairs:
+        if finding_mr != norm(gold.get("mr_id")):
+            continue
+        if not (finding_rules & rule_ids(matched) or finding_rules & {norm(gold.get("rule_id"))}):
+            continue
+        if finding_signature == semantic_dedupe_signature(matched):
+            return gold
+    return None
+
+
+def classify_false_positives(
+    false_positives: list[dict[str, Any]],
+    negative_gold: list[dict[str, Any]],
+    matched_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
+    tolerance: int,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for finding in false_positives:
+        duplicate_gold = duplicate_match(finding, matched_pairs)
+        if duplicate_gold:
+            records.append({"finding": finding, "fp_type": "duplicate", "matched_gold_id": gold_id(duplicate_gold)})
+            continue
+        negative = next((item for item in negative_gold if matches_negative(item, finding, tolerance)), None)
+        if negative:
+            records.append({"finding": finding, "fp_type": "negative", "matched_gold_id": gold_id(negative)})
+            continue
+        records.append({"finding": finding, "fp_type": "true_fp", "matched_gold_id": ""})
+    return records
+
+
 def matches(gold: dict[str, Any], finding: dict[str, Any], tolerance: int) -> bool:
     if norm(gold.get("mr_id")) != norm(finding.get("mr_id") or finding.get("merge_request_id")):
         return False
@@ -133,6 +216,10 @@ def matches(gold: dict[str, Any], finding: dict[str, Any], tolerance: int) -> bo
 def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], tolerance: int) -> dict[str, Any]:
     positive_gold = sorted(
         [item for item in gold_items if norm(item.get("ground_truth") or "true_positive") != "negative"],
+        key=gold_sort_key,
+    )
+    negative_gold = sorted(
+        [item for item in gold_items if norm(item.get("ground_truth")) == "negative"],
         key=gold_sort_key,
     )
     positive_mr_ids = {norm(item.get("mr_id")) for item in positive_gold if norm(item.get("mr_id"))}
@@ -161,12 +248,16 @@ def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], t
         matched_pairs.append((gold, matched_finding))
 
     false_positives = [finding for finding in findings if id(finding) not in matched_finding_ids]
-    negative_mr_ids = {
+    all_negative_mr_ids = {
         norm(item.get("mr_id"))
-        for item in gold_items
-        if norm(item.get("ground_truth")) == "negative" and norm(item.get("mr_id"))
+        for item in negative_gold
+        if norm(item.get("mr_id"))
     }
-    negative_false_positives = [finding for finding in findings if norm(finding.get("mr_id")) in negative_mr_ids]
+    negative_mr_ids = all_negative_mr_ids - positive_mr_ids
+    fp_records = classify_false_positives(false_positives, negative_gold, matched_pairs, tolerance)
+    duplicate_fp_count = len([item for item in fp_records if item["fp_type"] == "duplicate"])
+    negative_fp_count = len([item for item in fp_records if item["fp_type"] == "negative"])
+    true_fp_count = len([item for item in fp_records if item["fp_type"] == "true_fp"])
     tp = len(matched_gold_ids)
     fp = len(false_positives)
     fn = len(missed)
@@ -188,11 +279,14 @@ def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], t
         "positive_mr_count": len(positive_mr_ids),
         "finding_count": len(findings),
         "negative_mr_count": len(negative_mr_ids),
-        "negative_false_positive_count": len(negative_false_positives),
-        "by_rule": by_rule_report(positive_gold, matched_pairs, missed, false_positives),
-        "by_mr": by_mr_report(positive_gold, matched_pairs, missed, false_positives, negative_mr_ids),
+        "negative_false_positive_count": negative_fp_count,
+        "negative_fp_count": negative_fp_count,
+        "duplicate_fp_count": duplicate_fp_count,
+        "true_fp_count": true_fp_count,
+        "by_rule": by_rule_report(positive_gold, matched_pairs, missed, fp_records),
+        "by_mr": by_mr_report(positive_gold, matched_pairs, missed, fp_records, negative_mr_ids),
         "quality_summary": quality_summary(findings),
-        "action_items": action_items(positive_gold, matched_pairs, missed, false_positives, findings),
+        "action_items": action_items(positive_gold, matched_pairs, missed, fp_records, findings),
         "missed_gold_ids": [norm(item.get("id")) for item in missed],
         "false_positive_findings": [
             {
@@ -203,8 +297,11 @@ def evaluate(gold_items: list[dict[str, Any]], findings: list[dict[str, Any]], t
                 "title": finding.get("title"),
                 "covered_rules": finding.get("covered_rules") or [],
                 "evidence_score": evidence_score_value(finding),
+                "fp_type": record.get("fp_type"),
+                "matched_gold_id": record.get("matched_gold_id"),
             }
-            for finding in false_positives
+            for record in fp_records
+            for finding in [record["finding"]]
         ],
     }
 
@@ -213,7 +310,7 @@ def by_rule_report(
     positive_gold: list[dict[str, Any]],
     matched_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
     missed: list[dict[str, Any]],
-    false_positives: list[dict[str, Any]],
+    false_positive_records: list[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = defaultdict(
         lambda: {
@@ -237,10 +334,12 @@ def by_rule_report(
         rule = norm(gold.get("rule_id")) or "unclassified"
         rows[rule]["fn"] += 1
         rows[rule]["missed_gold_ids"].append(norm(gold.get("id")))
-    for finding in false_positives:
+    for record in false_positive_records:
+        finding = record["finding"]
         rules = sorted(rule_ids(finding)) or ["unclassified"]
         for rule in rules:
             rows[rule]["fp"] += 1
+            rows[rule][f"{record['fp_type']}_count"] = int(rows[rule].get(f"{record['fp_type']}_count") or 0) + 1
             rows[rule]["finding_count"] += 1
     for gold, _finding in matched_pairs:
         rule = norm(gold.get("rule_id")) or "unclassified"
@@ -256,7 +355,7 @@ def by_mr_report(
     positive_gold: list[dict[str, Any]],
     matched_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
     missed: list[dict[str, Any]],
-    false_positives: list[dict[str, Any]],
+    false_positive_records: list[dict[str, Any]],
     negative_mr_ids: set[str],
 ) -> dict[str, dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = defaultdict(
@@ -286,9 +385,11 @@ def by_mr_report(
         mr_id = norm(gold.get("mr_id")) or "unclassified"
         rows[mr_id]["fn"] += 1
         rows[mr_id]["missed_gold_ids"].append(norm(gold.get("id")))
-    for finding in false_positives:
+    for record in false_positive_records:
+        finding = record["finding"]
         mr_id = norm(finding.get("mr_id") or finding.get("merge_request_id")) or "unclassified"
         rows[mr_id]["fp"] += 1
+        rows[mr_id][f"{record['fp_type']}_count"] = int(rows[mr_id].get(f"{record['fp_type']}_count") or 0) + 1
         rows[mr_id]["finding_count"] += 1
         rows[mr_id]["false_positive_finding_ids"].append(finding_id(finding))
     for row in rows.values():
@@ -351,10 +452,10 @@ def action_items(
     positive_gold: list[dict[str, Any]],
     matched_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
     missed: list[dict[str, Any]],
-    false_positives: list[dict[str, Any]],
+    false_positive_records: list[dict[str, Any]],
     findings: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    rule_report = by_rule_report(positive_gold, matched_pairs, missed, false_positives)
+    rule_report = by_rule_report(positive_gold, matched_pairs, missed, false_positive_records)
     items: list[dict[str, Any]] = []
     for rule, row in rule_report.items():
         if row["fn"]:
@@ -365,12 +466,16 @@ def action_items(
                 "message": f"{rule} missed {row['fn']} gold finding(s)",
                 "missed_gold_ids": row["missed_gold_ids"],
             })
-        if row["fp"]:
+        for subtype in ["true_fp", "duplicate", "negative"]:
+            count = int(row.get(f"{subtype}_count") or 0)
+            if not count:
+                continue
             items.append({
                 "type": "precision_gap",
+                "subtype": subtype,
                 "rule_id": rule,
-                "priority": row["fp"],
-                "message": f"{rule} produced {row['fp']} unmatched finding(s)",
+                "priority": count,
+                "message": f"{rule} produced {count} {subtype} finding(s)",
             })
     weak = quality_summary(findings)["weak_findings"]
     for finding in weak[:10]:

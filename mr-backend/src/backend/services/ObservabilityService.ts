@@ -100,6 +100,51 @@ function emptyAgentCoverage(agentId: string) {
   };
 }
 
+type SkillCheckpointMetric = {
+  project_id: string;
+  skill_key: string;
+  checkpoint_id: string;
+  agent_id: string;
+  model: string;
+  week: string;
+  checked_count: number;
+  hit_count: number;
+  skip_count: number;
+  retry_count: number;
+  retry_hit_count: number;
+  rejected_count: number;
+  manual_accept_count: number;
+  manual_reject_count: number;
+  duplicate_merge_count: number;
+};
+
+function emptySkillCheckpointMetric(
+  projectId: string,
+  skillKey: string,
+  checkpointId: string,
+  agentId: string,
+  model: string,
+  week: string
+): SkillCheckpointMetric {
+  return {
+    project_id: projectId,
+    skill_key: skillKey,
+    checkpoint_id: checkpointId,
+    agent_id: agentId,
+    model,
+    week,
+    checked_count: 0,
+    hit_count: 0,
+    skip_count: 0,
+    retry_count: 0,
+    retry_hit_count: 0,
+    rejected_count: 0,
+    manual_accept_count: 0,
+    manual_reject_count: 0,
+    duplicate_merge_count: 0
+  };
+}
+
 export function summarizeBoundRuleCoverageByAgent(rows: Array<{ coverage_json?: string | null }>) {
   const byAgent = new Map<string, ReturnType<typeof emptyAgentCoverage>>();
   for (const row of rows) {
@@ -136,6 +181,58 @@ export function summarizeBoundRuleCoverageByAgent(rows: Array<{ coverage_json?: 
       };
     })
     .sort((left, right) => left.agent_id.localeCompare(right.agent_id));
+}
+
+export function summarizeSkillCheckpointMetrics(
+  projectId: string,
+  rows: Array<{ id: string; started_at?: string | null; coverage_json?: string | null }>,
+  modelByRunAgent: Map<string, string>
+) {
+  const byKey = new Map<string, SkillCheckpointMetric>();
+  for (const row of rows) {
+    const payload = coveragePayload(row);
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    for (const rawItem of items) {
+      if (typeof rawItem !== "object" || !rawItem) continue;
+      const item = rawItem as Record<string, unknown>;
+      if (String(item.type || "") !== "skill_checkpoint") continue;
+      const skillKey = String(item.skill_key || "skill_bundle").trim();
+      const checkpointId = String(item.checkpoint_id || item.rule_id || "").trim();
+      const agentId = String(item.agent_id || "").trim();
+      if (!skillKey || !checkpointId || !agentId) continue;
+      const model = modelByRunAgent.get(`${row.id}:${agentId}`) || "unknown";
+      const week = isoWeekKey(row.started_at);
+      const key = [projectId, skillKey, checkpointId, agentId, model, week].join("\u0001");
+      const metric = byKey.get(key) ?? emptySkillCheckpointMetric(projectId, skillKey, checkpointId, agentId, model, week);
+      metric.checked_count += item.checked ? 1 : 0;
+      metric.hit_count += numberValue(item.finding_count) > 0 ? 1 : 0;
+      metric.skip_count += item.skipped ? 1 : 0;
+      metric.retry_count += numberValue(item.retry_count);
+      metric.retry_hit_count += item.retry_hit ? 1 : 0;
+      metric.rejected_count += numberValue(item.rejected_count);
+      metric.duplicate_merge_count += numberValue(item.duplicate_merge_count);
+      byKey.set(key, metric);
+    }
+  }
+  return [...byKey.values()]
+    .map((item) => ({
+      ...item,
+      hit_rate: item.checked_count ? Number((item.hit_count / item.checked_count).toFixed(4)) : null,
+      skip_rate: item.checked_count ? Number((item.skip_count / item.checked_count).toFixed(4)) : null,
+      rejected_rate: item.checked_count ? Number((item.rejected_count / item.checked_count).toFixed(4)) : null,
+      retry_hit_rate: item.retry_count ? Number((item.retry_hit_count / item.retry_count).toFixed(4)) : null,
+      manual_reject_rate: item.manual_accept_count + item.manual_reject_count
+        ? Number((item.manual_reject_count / (item.manual_accept_count + item.manual_reject_count)).toFixed(4))
+        : null,
+      duplicate_rate: item.checked_count ? Number((item.duplicate_merge_count / item.checked_count).toFixed(4)) : null
+    }))
+    .sort((left, right) => (
+      String(left.week).localeCompare(String(right.week))
+      || String(left.skill_key).localeCompare(String(right.skill_key))
+      || String(left.checkpoint_id).localeCompare(String(right.checkpoint_id))
+      || String(left.agent_id).localeCompare(String(right.agent_id))
+      || String(left.model).localeCompare(String(right.model))
+    ));
 }
 
 export class ObservabilityService {
@@ -375,6 +472,75 @@ export class ObservabilityService {
         high_severity_accuracy: totals.high_published ? Number((totals.high_accepted / totals.high_published).toFixed(4)) : null
       },
       bound_rule_coverage: summarizeBoundRuleCoverage(coverageRows),
+      items
+    };
+  }
+
+  getSkillCheckpointQualityMetrics(projectId: string, since?: string | null) {
+    const runParams: unknown[] = [projectId];
+    const runSinceFilter = since ? "AND COALESCE(rr.completed_at, rr.started_at) >= $2" : "";
+    if (since) runParams.push(since);
+    const runs = this.db.prepare(`
+      SELECT rr.id, rr.started_at, rr.coverage_json
+      FROM review_runs rr
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      JOIN merge_requests mr ON mr.id = rj.merge_request_id
+      JOIN repositories r ON r.id = mr.repository_id
+      WHERE r.project_id = $1 ${runSinceFilter}
+        AND rr.coverage_json IS NOT NULL
+        AND rr.coverage_json <> '{}'
+      ORDER BY rr.started_at DESC
+      LIMIT 500
+    `).all(...runParams) as Array<{ id: string; started_at?: string | null; coverage_json?: string | null }>;
+    const modelRows = this.db.prepare(`
+      SELECT rr.id AS run_id, s.agent_id, COALESCE(string_agg(DISTINCT NULLIF(l.model, ''), ','), 'unknown') AS model
+      FROM llm_call_records l
+      JOIN agent_trace_spans s ON s.id = l.span_id
+      JOIN review_runs rr ON rr.id = s.review_run_id
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      JOIN merge_requests mr ON mr.id = rj.merge_request_id
+      JOIN repositories r ON r.id = mr.repository_id
+      WHERE r.project_id = $1 ${runSinceFilter}
+      GROUP BY rr.id, s.agent_id
+    `).all(...runParams) as Array<{ run_id: string; agent_id: string; model: string }>;
+    const modelByRunAgent = new Map(modelRows.map((row) => [`${row.run_id}:${row.agent_id}`, row.model || "unknown"]));
+    const items = summarizeSkillCheckpointMetrics(projectId, runs, modelByRunAgent);
+    const totals = items.reduce(
+      (acc, item) => {
+        acc.checked_count += item.checked_count;
+        acc.hit_count += item.hit_count;
+        acc.skip_count += item.skip_count;
+        acc.retry_count += item.retry_count;
+        acc.retry_hit_count += item.retry_hit_count;
+        acc.rejected_count += item.rejected_count;
+        acc.manual_accept_count += item.manual_accept_count;
+        acc.manual_reject_count += item.manual_reject_count;
+        acc.duplicate_merge_count += item.duplicate_merge_count;
+        return acc;
+      },
+      {
+        checked_count: 0,
+        hit_count: 0,
+        skip_count: 0,
+        retry_count: 0,
+        retry_hit_count: 0,
+        rejected_count: 0,
+        manual_accept_count: 0,
+        manual_reject_count: 0,
+        duplicate_merge_count: 0
+      }
+    );
+    return {
+      project_id: projectId,
+      since: since || null,
+      dimensions: ["project_id", "skill_key", "checkpoint_id", "agent_id", "model", "week"],
+      totals: {
+        ...totals,
+        hit_rate: totals.checked_count ? Number((totals.hit_count / totals.checked_count).toFixed(4)) : null,
+        rejected_rate: totals.checked_count ? Number((totals.rejected_count / totals.checked_count).toFixed(4)) : null,
+        retry_hit_rate: totals.retry_count ? Number((totals.retry_hit_count / totals.retry_count).toFixed(4)) : null,
+        duplicate_rate: totals.checked_count ? Number((totals.duplicate_merge_count / totals.checked_count).toFixed(4)) : null
+      },
       items
     };
   }

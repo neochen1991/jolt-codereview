@@ -11,8 +11,11 @@ from orchestration.nodes.judge_findings import (
     _critic_rejected,
     _merge_finding_metadata,
     build_quality_trace,
+    dedupe_same_line_same_issue_findings,
+    judge_candidate_findings,
     reconcile_rules_with_tool_observations,
     retain_as_needs_review,
+    should_retain_final_candidate_for_review,
     should_retain_low_precision_without_tool_support,
 )
 
@@ -209,6 +212,88 @@ def test_bound_skill_merge_does_not_add_lower_priority_skipped_rule() -> None:
     assert "SEC-INJECT-003" not in merged["skipped_rules"], merged
 
 
+def test_business_semantic_dedupe_merges_cross_layer_audit_findings() -> None:
+    service = agent_finding(
+        agent_id="refund_risk_skill_agent",
+        covered_rules=["BIZ-AUDIT-001"],
+        rule_id="BIZ-AUDIT-001",
+        file_path="src/main/java/com/acme/refund/service/RefundService.java",
+        line_start=22,
+        line_end=22,
+        title="批量审核服务方法缺少审计记录",
+        problem_description="approveBatch 使用 operator 执行批量退款审核，但没有写入审计记录。",
+        evidence="approveBatch 方法循环处理退款单；operator/reason 参与审核，未调用 RefundAuditRecord。",
+        review_batch_label="bound_skill:refund-risk-review-skill:BIZ-AUDIT-001",
+    )
+    controller = agent_finding(
+        agent_id="refund_risk_skill_agent",
+        covered_rules=["BIZ-AUDIT-001"],
+        rule_id="BIZ-AUDIT-001",
+        file_path="src/main/java/com/acme/refund/api/RefundAdminController.java",
+        line_start=16,
+        line_end=16,
+        title="批量审核接口缺少审计记录",
+        problem_description="admin batch approve 接口接收 operator/reason，但没有审计写入。",
+        evidence="@PostMapping(\"/admin/refunds/batch-approve\") 接收 operator 和 reason，未写入审计。",
+        review_batch_label="bound_skill:refund-risk-review-skill:BIZ-AUDIT-001",
+    )
+
+    merged, rejected = dedupe_same_line_same_issue_findings([controller, service])
+
+    assert len(merged) == 1, merged
+    assert len(rejected) == 1, rejected
+    assert rejected[0]["rejected_reasons"] == ["deduped_same_business_issue"], rejected
+    assert merged[0]["file_path"] == "src/main/java/com/acme/refund/service/RefundService.java", merged
+    semantic = merged[0]["quality_trace"]["semantic_dedupe"]
+    assert semantic["merged_count"] == 2, semantic
+    assert semantic["signature"].startswith("BIZ-AUDIT-001|"), semantic
+    assert semantic["related_locations"][0]["file_path"] == "src/main/java/com/acme/refund/api/RefundAdminController.java", semantic
+    assert "RefundAdminController.java:16" in merged[0]["evidence"], merged
+
+
+def test_same_root_cause_on_different_lines_is_not_deduped_lower_rank() -> None:
+    merchant_query = agent_finding(
+        dedupe_hash="sql-merchant-query",
+        covered_rules=["SEC-SQL-001"],
+        rule_id="SEC-SQL-001",
+        normalized_rule_category="SQL_INJECTION",
+        file_path="src/main/java/com/acme/refund/repository/RefundRepository.java",
+        line_start=28,
+        line_end=28,
+        title="商户退款查询 SQL 拼接存在注入风险",
+        problem_description="merchantId 直接拼接进 pending refund 查询 SQL。",
+        evidence="where merchant_id = '" + " + merchantId + " + "' and status = 'PENDING'",
+        recommendation="使用 PreparedStatement 绑定 merchantId。",
+    )
+    status_query = agent_finding(
+        dedupe_hash="sql-status-query",
+        covered_rules=["SEC-SQL-001"],
+        rule_id="SEC-SQL-001",
+        normalized_rule_category="SQL_INJECTION",
+        file_path="src/main/java/com/acme/refund/repository/RefundRepository.java",
+        line_start=96,
+        line_end=96,
+        title="状态统计 SQL 拼接存在注入风险",
+        problem_description="status 直接拼接进 count refund 查询 SQL。",
+        evidence="where status = '" + " + status + " + "' group by merchant_id",
+        recommendation="使用 PreparedStatement 绑定 status。",
+    )
+
+    final, rejected = judge_candidate_findings([merchant_query, status_query], [], max_findings=5)
+
+    assert {(item["title"], item["line_start"]) for item in final} == {
+        ("商户退款查询 SQL 拼接存在注入风险", 28),
+        ("状态统计 SQL 拼接存在注入风险", 96),
+    }, (final, rejected)
+    assert not any("deduped_lower_rank" in (item.get("rejected_reasons") or []) for item in rejected), rejected
+
+
+def test_unselected_structured_candidate_is_retained_for_review() -> None:
+    finding = agent_finding(confidence=0.62, selected=0)
+
+    assert should_retain_final_candidate_for_review(finding, reason="not_selected_final_issue", source_observations=[]) is True
+
+
 def test_low_evidence_score_downgrades_to_needs_review_instead_of_drop() -> None:
     finding = agent_finding()
     scored = apply_evidence_score_policy(finding, {"score": 0.2, "components": {}}, {"drop_below": 0.35, "downgrade_below": 0.5})
@@ -244,5 +329,8 @@ if __name__ == "__main__":
     test_bound_skill_merge_recovers_retry_label_with_colon_checkpoint()
     test_bound_skill_merge_restores_authoritative_id_when_current_rules_are_dirty()
     test_bound_skill_merge_does_not_add_lower_priority_skipped_rule()
+    test_business_semantic_dedupe_merges_cross_layer_audit_findings()
+    test_same_root_cause_on_different_lines_is_not_deduped_lower_rank()
+    test_unselected_structured_candidate_is_retained_for_review()
     test_low_evidence_score_downgrades_to_needs_review_instead_of_drop()
     test_critic_rejected_still_allows_hard_drop()

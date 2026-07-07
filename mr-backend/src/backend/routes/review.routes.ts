@@ -240,8 +240,20 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
   function skillStage(eventType: string): string {
     if (eventType === "skill_context_loaded" || eventType === "agent_profile_loaded") return "loaded";
     if (eventType === "skill_deepagents_invoked" || eventType === "deepagents_bounded_node") return "deepagents";
-    if (eventType === "skill_llm_context_used") return "llm";
+    if (eventType === "skill_llm_context_used" || eventType === "bound_skill_started" || eventType === "bound_skill_checked") return "llm";
+    if (eventType === "bound_batch_findings_rejected") return "filtered";
+    if (eventType === "bound_rule_coverage_low" || eventType === "bound_rule_coverage_retry_completed") return "retry";
     return "recorded";
+  }
+
+  function parseSkillBatchLabel(label: unknown) {
+    const raw = String(label || "");
+    const prefix = "bound_skill:";
+    if (!raw.startsWith(prefix)) return { skill_key: "", checkpoint_id: "" };
+    const body = raw.slice(prefix.length).replace(/:coverage_retry$/, "");
+    const firstColon = body.indexOf(":");
+    if (firstColon < 0) return { skill_key: body, checkpoint_id: "" };
+    return { skill_key: body.slice(0, firstColon), checkpoint_id: body.slice(firstColon + 1) };
   }
 
   function normalizeSkillCalls(events: Array<Record<string, any>>): Array<Record<string, any>> {
@@ -250,7 +262,12 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       "deepagents_bounded_node",
       "skill_context_loaded",
       "skill_deepagents_invoked",
-      "skill_llm_context_used"
+      "skill_llm_context_used",
+      "bound_skill_started",
+      "bound_skill_checked",
+      "bound_batch_findings_rejected",
+      "bound_rule_coverage_low",
+      "bound_rule_coverage_retry_completed"
     ]);
     const rows: Array<Record<string, any>> = [];
     for (const event of events) {
@@ -273,6 +290,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       }, {});
       const skillKeys = skills.length ? skills : ["skill_bundle"];
       for (const skillKey of skillKeys) {
+        const parsedLabel = parseSkillBatchLabel(payload.batch_label);
         const assetPaths = assetPathsBySkill[skillKey] || [];
         rows.push({
           id: `${String(event.id || event.event_id || event.created_at || event.timestamp || eventType)}:${skillKey}:${rows.length}`,
@@ -290,12 +308,155 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
           tools: stringList(payload.tools),
           batch_label: payload.batch_label || "",
           rule_id: payload.rule_id || "",
+          checkpoint_id: payload.checkpoint_id || parsedLabel.checkpoint_id || "",
+          rejected_count: Number(payload.rejected_count || 0),
+          rejected_reasons: stringList(payload.rejected_reasons),
+          rejected_items: Array.isArray(payload.rejected_items) ? payload.rejected_items : [],
           skill_context_chars: Number(payload.skill_context_chars || 0),
           summary: event.summary
         });
       }
     }
     return rows;
+  }
+
+  function boundReviewCoverageFromRun(run: Record<string, any> | undefined) {
+    const coverage = parseRecord(run?.coverage_json);
+    const candidateQuality = parseRecord(coverage.candidate_quality);
+    return parseRecord(candidateQuality.bound_review_coverage ?? coverage.bound_review_coverage);
+  }
+
+  function compactRejectedItems(value: unknown) {
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, 20).map((item) => {
+      const row = parseRecord(item);
+      const contract = parseRecord(row.bound_evidence_contract);
+      return {
+        title: row.title || "",
+        file_path: row.file_path || "",
+        line_start: row.line_start ?? null,
+        line_end: row.line_end ?? null,
+        covered_rules: stringList(row.covered_rules),
+        skipped_rules: stringList(row.skipped_rules),
+        rejected_reasons: stringList(row.rejected_reasons),
+        contract_status: contract.status || "",
+        false_positive_matches: stringList(contract.false_positive_matches),
+        missing_required_evidence: stringList(contract.missing_required_evidence)
+      };
+    });
+  }
+
+  function skillKeyForTraceRow(row: Record<string, any>) {
+    const payload = parseRecord(row.payload_json);
+    const parsed = parseSkillBatchLabel(payload.batch_label);
+    return String(payload.skill_key || parsed.skill_key || row.skill_key || "").trim();
+  }
+
+  function checkpointIdForTraceRow(row: Record<string, any>) {
+    const payload = parseRecord(row.payload_json);
+    const parsed = parseSkillBatchLabel(payload.batch_label);
+    return String(payload.checkpoint_id || parsed.checkpoint_id || payload.rule_id || "").trim();
+  }
+
+  function buildSkillTracePayload(run: Record<string, any>, events: Array<Record<string, any>>, llmCalls: Array<Record<string, any>>) {
+    const coverage = boundReviewCoverageFromRun(run);
+    const coverageItems = Array.isArray(coverage.items) ? coverage.items.filter((item: unknown) => parseRecord(item).type === "skill_checkpoint").map(parseRecord) : [];
+    const skills = new Map<string, Record<string, any>>();
+    const ensureSkill = (skillKey: string) => {
+      const key = skillKey || "skill_bundle";
+      if (!skills.has(key)) {
+        skills.set(key, {
+          skill_key: key,
+          checkpoint_count: 0,
+          checked_count: 0,
+          hit_count: 0,
+          skipped_count: 0,
+          rejected_count: 0,
+          retry_count: 0,
+          checkpoints: []
+        });
+      }
+      return skills.get(key)!;
+    };
+    const checkpointsByKey = new Map<string, Record<string, any>>();
+    for (const item of coverageItems) {
+      const skillKey = String(item.skill_key || "skill_bundle");
+      const checkpointId = String(item.checkpoint_id || item.rule_id || "");
+      const skill = ensureSkill(skillKey);
+      const checkpoint = {
+        agent_id: item.agent_id || "",
+        batch_label: item.batch_label || "",
+        checkpoint_id: checkpointId,
+        checked: Boolean(item.checked),
+        hit: Boolean(item.hit),
+        skipped: Boolean(item.skipped),
+        finding_count: Number(item.finding_count || 0),
+        rejected_count: Number(item.rejected_count || 0),
+        retry_count: Number(item.retry_count || 0),
+        retry_hit: Boolean(item.retry_hit),
+        events: [],
+        rejected_items: []
+      };
+      checkpointsByKey.set(`${skillKey}:${checkpointId}`, checkpoint);
+      skill.checkpoints.push(checkpoint);
+      skill.checkpoint_count += 1;
+      if (checkpoint.checked) skill.checked_count += 1;
+      if (checkpoint.hit) skill.hit_count += 1;
+      if (checkpoint.skipped) skill.skipped_count += 1;
+      skill.rejected_count += checkpoint.rejected_count;
+      skill.retry_count += checkpoint.retry_count;
+    }
+    const traceEvents = events.map((row) => {
+      const payload = parseRecord(row.payload_json);
+      const skillKey = skillKeyForTraceRow(row);
+      const checkpointId = checkpointIdForTraceRow(row);
+      const normalized = {
+        id: row.id || row.event_id || "",
+        created_at: row.created_at,
+        span_id: row.span_id,
+        span_key: row.span_key,
+        agent_id: row.agent_id,
+        event_type: row.event_type,
+        stage: skillStage(String(row.event_type || "")),
+        summary: normalizeLegacyEvidenceReasonText(row.summary),
+        skill_key: skillKey,
+        checkpoint_id: checkpointId,
+        batch_label: payload.batch_label || "",
+        rejected_count: Number(payload.rejected_count || 0),
+        rejected_reasons: stringList(payload.rejected_reasons),
+        rejected_items: compactRejectedItems(payload.rejected_items)
+      };
+      if (skillKey) ensureSkill(skillKey);
+      const checkpoint = checkpointsByKey.get(`${skillKey}:${checkpointId}`);
+      if (checkpoint) {
+        checkpoint.events.push(normalized);
+        if (normalized.rejected_items.length) checkpoint.rejected_items.push(...normalized.rejected_items);
+      }
+      return normalized;
+    });
+    const skillItems: Array<Record<string, any>> = Array.from(skills.values()).map((skill: Record<string, any>) => ({
+      ...skill,
+      checkpoints: (skill.checkpoints || []).sort((a: Record<string, any>, b: Record<string, any>) => String(a.checkpoint_id).localeCompare(String(b.checkpoint_id)))
+    }));
+    skillItems.sort((a, b) => String(a.skill_key).localeCompare(String(b.skill_key)));
+    return {
+      run_id: run.id,
+      summary: {
+        required_count: Number(coverage.required_count || 0),
+        skill_checkpoint_count: Number(coverage.skill_checkpoint_count || coverageItems.length || 0),
+        checked_count: Number(coverage.checked_count || 0),
+        hit_count: Number(coverage.hit_count || 0),
+        skipped_count: Number(coverage.skipped_count || 0),
+        rejected_count: Number(coverage.rejected_count || 0),
+        coverage_rate: Number(coverage.coverage_rate || 0),
+        resolution_rate: Number(coverage.resolution_rate || 0),
+        llm_call_count: llmCalls.length,
+        llm_success_count: llmCalls.filter((call) => ["completed", "cache_hit"].includes(String(call.status || ""))).length
+      },
+      skills: skillItems,
+      events: traceEvents,
+      llm_calls: llmCalls
+    };
   }
 
   function boundedQueryLimit(url: URL, key: string, defaultValue: number, maxValue: number) {
@@ -1064,6 +1225,50 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         ORDER BY created_at
       `, [params.runId, limit, offset]) : [];
       return { spans, events, messages, llm_calls: llmCalls, tool_calls: toolCalls, mcp_calls: mcpCalls, skill_calls: normalizeSkillCalls(events), page: { limit, offset, type } };
+    }),
+    route("GET", "/api/mr-review/review-runs/:runId/skill-trace", ({ params, req, url }) => {
+      const denied = ensureRunRead(params.runId, req);
+      if (denied) return denied;
+      const limit = boundedQueryLimit(url, "limit", 500, 1000);
+      const offset = boundedQueryOffset(url);
+      const run = get<Record<string, any>>("SELECT id, coverage_json FROM review_runs WHERE id = $1", [params.runId]);
+      if (!run) return notFound();
+      const skillEventTypes = [
+        "skill_context_loaded",
+        "skill_deepagents_invoked",
+        "skill_llm_context_used",
+        "bound_skill_started",
+        "bound_skill_checked",
+        "bound_batch_findings_rejected",
+        "bound_rule_coverage_low",
+        "bound_rule_coverage_retry_completed"
+      ];
+      const events = all<Record<string, any>>(`
+        SELECT *
+        FROM (
+          SELECT e.*, s.span_key, s.agent_id
+          FROM agent_trace_events e
+          JOIN agent_trace_spans s ON s.id = e.span_id
+          WHERE s.review_run_id = $1
+            AND e.event_type = ANY($2::text[])
+          ORDER BY e.created_at DESC
+          LIMIT $3 OFFSET $4
+        ) recent_skill_events
+        ORDER BY created_at
+      `, [params.runId, skillEventTypes, limit, offset]).map(normalizeLegacyEvidenceTraceRow);
+      const llmCalls = all<Record<string, any>>(`
+        SELECT *
+        FROM (
+          SELECT l.id, l.span_id, s.span_key, s.agent_id, l.provider, l.model, l.status, l.duration_ms, l.input_tokens, l.output_tokens, l.request_id, l.created_at
+          FROM llm_call_records l
+          JOIN agent_trace_spans s ON s.id = l.span_id
+          WHERE s.review_run_id = $1
+          ORDER BY l.created_at DESC
+          LIMIT $2 OFFSET $3
+        ) recent_skill_llm_calls
+        ORDER BY created_at
+      `, [params.runId, limit, offset]);
+      return { ...buildSkillTracePayload(run, events, llmCalls), page: { limit, offset } };
     }),
     route("GET", "/api/mr-review/review-runs/:runId/artifacts", ({ params, req, url }) => {
       const denied = ensureRunRead(params.runId, req);

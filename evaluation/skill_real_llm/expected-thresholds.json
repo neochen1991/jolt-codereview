@@ -1,0 +1,12 @@
+{
+  "min_recall": 0.9,
+  "min_true_precision": 0.85,
+  "min_precision": 0.9,
+  "max_duplicate_fp_count": 1,
+  "max_negative_fp_count": 0,
+  "required_checkpoint_ids": [
+    "BIZ-CONSISTENCY-001",
+    "BIZ-AUDIT-001",
+    "REDIS-TTL-002"
+  ]
+}

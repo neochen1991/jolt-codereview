@@ -208,8 +208,108 @@ def test_evaluate_is_stable_when_gold_order_changes() -> None:
     assert reversed_gold["false_positive_findings"] == original["false_positive_findings"], reversed_gold
 
 
+def test_evaluate_local_negative_does_not_mark_positive_mr_negative() -> None:
+    gold = [
+        {
+            "id": "gold-cache",
+            "mr_id": "mr-1",
+            "file_path": "src/RefundCache.java",
+            "line_start": 10,
+            "rule_id": "REDIS-TTL-002",
+            "evidence_keywords": ["refund:detail"],
+        },
+        {
+            "id": "gold-config-negative",
+            "mr_id": "mr-1",
+            "file_path": "src/SystemConfigCache.java",
+            "line_start": 18,
+            "rule_id": "REDIS-TTL-002",
+            "ground_truth": "negative",
+            "evidence_keywords": ["system:refund:config"],
+        },
+    ]
+    findings = [
+        {
+            "finding_id": "finding-cache",
+            "mr_id": "mr-1",
+            "file_path": "src/RefundCache.java",
+            "line_start": 10,
+            "title": "refund detail cache missing ttl",
+            "evidence": "refund:detail uses opsForValue set without TTL",
+            "covered_rules": ["REDIS-TTL-002"],
+        },
+        {
+            "finding_id": "finding-config-fp",
+            "mr_id": "mr-1",
+            "file_path": "src/SystemConfigCache.java",
+            "line_start": 18,
+            "title": "system config missing ttl",
+            "evidence": "system:refund:config permanent config key",
+            "covered_rules": ["REDIS-TTL-002"],
+        },
+    ]
+
+    report = evaluate(gold, findings, tolerance=3)
+
+    assert report["by_mr"]["mr-1"]["is_negative"] is False, report
+    assert report["tp"] == 1, report
+    assert report["fp"] == 1, report
+    assert report["negative_fp_count"] == 1, report
+    assert report["true_fp_count"] == 0, report
+    assert report["duplicate_fp_count"] == 0, report
+    assert report["negative_false_positive_count"] == 1, report
+    assert report["false_positive_findings"][0]["finding_id"] == "finding-config-fp", report
+    assert report["false_positive_findings"][0]["fp_type"] == "negative", report
+
+
+def test_evaluate_classifies_same_rule_same_root_cause_duplicate() -> None:
+    gold = [
+        {
+            "id": "gold-audit",
+            "mr_id": "mr-1",
+            "file_path": "src/RefundService.java",
+            "line_start": 22,
+            "rule_id": "BIZ-AUDIT-001",
+            "evidence_keywords": ["operator", "审计"],
+        },
+    ]
+    findings = [
+        {
+            "finding_id": "finding-service",
+            "mr_id": "mr-1",
+            "file_path": "src/RefundService.java",
+            "line_start": 22,
+            "title": "批量审核服务方法缺少审计记录",
+            "evidence": "approveBatch uses operator but does not write 审计 record",
+            "covered_rules": ["BIZ-AUDIT-001"],
+        },
+        {
+            "finding_id": "finding-controller-duplicate",
+            "mr_id": "mr-1",
+            "file_path": "src/RefundAdminController.java",
+            "line_start": 16,
+            "title": "批量审核接口缺少审计记录",
+            "evidence": "admin batch approve accepts operator reason but lacks audit record",
+            "covered_rules": ["BIZ-AUDIT-001"],
+        },
+    ]
+
+    report = evaluate(gold, findings, tolerance=3)
+
+    assert report["tp"] == 1, report
+    assert report["fp"] == 1, report
+    assert report["duplicate_fp_count"] == 1, report
+    assert report["true_fp_count"] == 0, report
+    assert report["false_positive_findings"][0]["fp_type"] == "duplicate", report
+    assert report["false_positive_findings"][0]["matched_gold_id"] == "gold-audit", report
+    action_types = {(item["type"], item.get("subtype")) for item in report["action_items"]}
+    assert ("precision_gap", "duplicate") in action_types, report
+
+
 if __name__ == "__main__":
     test_evaluate_uses_one_finding_for_one_gold_match()
     test_evaluate_reports_rule_level_precision_and_recall()
     test_evaluate_reports_mr_level_and_actionable_quality_gaps()
     test_evaluate_is_stable_when_gold_order_changes()
+    test_evaluate_local_negative_does_not_mark_positive_mr_negative()
+    test_evaluate_classifies_same_rule_same_root_cause_duplicate()

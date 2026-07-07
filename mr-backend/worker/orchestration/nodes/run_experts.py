@@ -1033,6 +1033,19 @@ def make_run_experts_node(
                                 "checkpoint_id": batch.get("checkpoint_id") or "",
                                 "rejected_count": len(rejected_batch_items),
                                 "rejected_reasons": sorted({reason for item in rejected_batch_items for reason in (item.get("rejected_reasons") or [])}),
+                                "rejected_items": [
+                                    {
+                                        "title": item.get("title") or "",
+                                        "file_path": item.get("file_path") or "",
+                                        "line_start": item.get("line_start"),
+                                        "line_end": item.get("line_end"),
+                                        "covered_rules": item.get("covered_rules") or [],
+                                        "skipped_rules": item.get("skipped_rules") or [],
+                                        "rejected_reasons": item.get("rejected_reasons") or [],
+                                        "bound_evidence_contract": item.get("bound_evidence_contract") or {},
+                                    }
+                                    for item in rejected_batch_items[:20]
+                                ],
                             },
                         )
                     if batch["rule_id"]:

@@ -571,7 +571,8 @@ def _semantic_dedupe_key(finding: dict[str, Any]) -> tuple[str, str, int]:
         ]
         if part
     )
-    root_line_bucket = line_bucket(item.get("line_start")) if root_cause in {"REQUEST_BODY_VALIDATION"} else 0
+    file_level_root_causes = {"DEPENDENCY_FASTJSON_CVE"}
+    root_line_bucket = 0 if root_cause in file_level_root_causes else line_bucket(item.get("line_start"))
     return (
         root_cause or typed_signature or _selection_category_key(item),
         str(item.get("file_path") or ""),
@@ -645,6 +646,109 @@ def _typed_issue_signature(finding: dict[str, Any]) -> str:
     return ""
 
 
+def _primary_finding_rule(finding: dict[str, Any]) -> str:
+    rules = [str(rule) for rule in (finding.get("covered_rules") or []) if str(rule or "").strip()]
+    if rules:
+        return sorted(rules)[0]
+    return str(finding.get("rule_id") or finding.get("tool_rule_id") or "").strip()
+
+
+def _business_issue_signature(finding: dict[str, Any]) -> str:
+    trace = finding.get("quality_trace") if isinstance(finding.get("quality_trace"), dict) else {}
+    semantic = trace.get("semantic_dedupe") if isinstance(trace.get("semantic_dedupe"), dict) else {}
+    explicit = str(semantic.get("signature") or finding.get("business_issue_signature") or "").strip()
+    if explicit:
+        return explicit
+    item = normalize_tool_finding(finding)
+    rule = _primary_finding_rule(item)
+    text = _text_blob(item)
+    root = ""
+    if rule.endswith("AUDIT-001") or "审计" in text or "audit" in text:
+        root = "missing_audit"
+    elif rule.endswith("CONSISTENCY-001") or any(marker in text for marker in ["一致性", "补偿", "副作用", "consistency", "outbox"]):
+        root = "missing_consistency_boundary"
+    elif rule == "REDIS-TTL-002" or "ttl" in text or "过期" in text:
+        root = "missing_ttl"
+    if not root or not rule:
+        return ""
+    action_parts: list[str] = []
+    if any(marker in text for marker in ["batch", "批量", "list<"]):
+        action_parts.append("batch")
+    if any(marker in text for marker in ["approve", "审核", "通过"]):
+        action_parts.append("approve")
+    if "refund" in text or "退款" in text:
+        action_parts.append("refund")
+    if any(marker in text for marker in ["cache", "缓存"]):
+        action_parts.append("cache")
+    action = "_".join(dict.fromkeys(action_parts))
+    entity = "refund" if ("refund" in text or "退款" in text) else ""
+    if not action and not entity:
+        return ""
+    return "|".join(part for part in [rule, action, root, entity] if part)
+
+
+def _same_business_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    left_signature = _business_issue_signature(left)
+    return bool(left_signature and left_signature == _business_issue_signature(right))
+
+
+def _business_location_rank(finding: dict[str, Any]) -> int:
+    path = str(finding.get("file_path") or "").replace("\\", "/").lower()
+    if "/domain/" in path:
+        return 5
+    if "/service/" in path or path.endswith("service.java"):
+        return 4
+    if "/application/" in path:
+        return 3
+    if "/api/" in path or "controller" in path:
+        return 2
+    if "/infra/" in path or "/config/" in path:
+        return 1
+    return 0
+
+
+def _prefer_business_primary(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    left_rank = _business_location_rank(left)
+    right_rank = _business_location_rank(right)
+    if left_rank != right_rank:
+        return left if left_rank > right_rank else right
+    return left if _priority_sort_key(left) >= _priority_sort_key(right) else right
+
+
+def _location_summary(finding: dict[str, Any], *, reason: str) -> dict[str, Any]:
+    return {
+        "file_path": str(finding.get("file_path") or ""),
+        "line_start": finding.get("line_start"),
+        "line_end": finding.get("line_end"),
+        "title": str(finding.get("title") or ""),
+        "reason": reason,
+    }
+
+
+def _merge_semantic_dedupe_trace(primary: dict[str, Any], secondary: dict[str, Any]) -> None:
+    signature = _business_issue_signature(primary) or _business_issue_signature(secondary)
+    if not signature:
+        return
+    trace = primary.get("quality_trace") if isinstance(primary.get("quality_trace"), dict) else {}
+    semantic = trace.get("semantic_dedupe") if isinstance(trace.get("semantic_dedupe"), dict) else {}
+    related = [item for item in (semantic.get("related_locations") or []) if isinstance(item, dict)]
+    secondary_location = _location_summary(secondary, reason="merged_business_issue")
+    if secondary_location["file_path"] and not any(
+        item.get("file_path") == secondary_location["file_path"] and item.get("line_start") == secondary_location["line_start"]
+        for item in related
+    ):
+        related.append(secondary_location)
+    semantic.update(
+        {
+            "signature": signature,
+            "merged_count": max(int(semantic.get("merged_count") or 1) + 1, 2),
+            "related_locations": related,
+        }
+    )
+    trace["semantic_dedupe"] = semantic
+    primary["quality_trace"] = trace
+
+
 def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
     covered = set(primary.get("covered_rules") or [])
     bound_ids: set[str] = set()
@@ -694,6 +798,8 @@ def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) 
             current = str(primary.get(field) or "").strip()
             if secondary_summary not in current:
                 primary[field] = f"{current}\n合并证据：{secondary_summary}".strip()[:1600]
+    if _same_business_issue(primary, secondary):
+        _merge_semantic_dedupe_trace(primary, secondary)
     return primary
 
 
@@ -799,7 +905,7 @@ def _nearby_same_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
 
 
 def _duplicate_same_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    return _same_line_same_issue(left, right) or _nearby_same_issue(left, right)
+    return _same_business_issue(left, right) or _same_line_same_issue(left, right) or _nearby_same_issue(left, right)
 
 
 def dedupe_same_line_same_issue_findings(findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -812,11 +918,18 @@ def dedupe_same_line_same_issue_findings(findings: list[dict[str, Any]]) -> tupl
             merged.append(item)
             continue
         existing = merged[target_index]
-        if _priority_sort_key(item) > _priority_sort_key(existing):
-            rejected.append({**existing, "rejected_reasons": ["deduped_same_line_same_issue"]})
+        is_business_duplicate = _same_business_issue(existing, item)
+        rejected_reason = "deduped_same_business_issue" if is_business_duplicate else "deduped_same_line_same_issue"
+        if is_business_duplicate:
+            primary = _prefer_business_primary(existing, item)
+            secondary = item if primary is existing else existing
+            rejected.append({**secondary, "rejected_reasons": [rejected_reason]})
+            merged[target_index] = _merge_finding_metadata(primary, secondary)
+        elif _priority_sort_key(item) > _priority_sort_key(existing):
+            rejected.append({**existing, "rejected_reasons": [rejected_reason]})
             merged[target_index] = _merge_finding_metadata(item, existing)
         else:
-            rejected.append({**item, "rejected_reasons": ["deduped_same_line_same_issue"]})
+            rejected.append({**item, "rejected_reasons": [rejected_reason]})
             merged[target_index] = _merge_finding_metadata(existing, item)
     return merged, rejected
 
@@ -3271,6 +3384,39 @@ def should_retain_low_precision_without_tool_support(finding: dict[str, Any], so
     return bool(covered)
 
 
+def should_retain_final_candidate_for_review(
+    finding: dict[str, Any],
+    *,
+    reason: str,
+    source_observations: list[dict[str, Any]] | None = None,
+) -> bool:
+    soft_reasons = {
+        "not_selected_final_issue",
+        "evidence_contract_not_satisfied",
+        "evidence_score_below_drop_threshold",
+        "not_selected_after_quality_calibration",
+    }
+    if reason not in soft_reasons:
+        return False
+    flags = {str(flag) for flag in (finding.get("verification_flags") or [])}
+    if "invalid_suggested_code" in flags:
+        return False
+    observations = source_observations or []
+    if should_retain_low_precision_without_tool_support(finding, observations):
+        return True
+    has_agent = _has_text(finding.get("agent_id"))
+    has_location = _has_text(finding.get("file_path")) and bool(_as_int(finding.get("line_start")))
+    has_rule = bool([rule for rule in (finding.get("covered_rules") or []) if str(rule or "").strip()] or _has_text(finding.get("rule_id")) or _has_text(finding.get("tool_rule_id")))
+    has_problem = _has_text(finding.get("title")) and (_has_text(finding.get("problem_description")) or _has_text(finding.get("evidence")))
+    has_source_context = _has_text(finding.get("evidence")) or bool(observations)
+    has_recommendation = _has_text(finding.get("recommendation"))
+    try:
+        confidence = float(finding.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return has_agent and has_location and has_rule and has_problem and has_source_context and has_recommendation and confidence >= 0.55
+
+
 def retain_as_needs_review(
     finding: dict[str, Any],
     *,
@@ -3643,6 +3789,22 @@ def make_judge_findings_node(
             if item.get("selected", 0):
                 final_selected_findings.append(item)
                 continue
+            if should_retain_final_candidate_for_review(item, reason="not_selected_final_issue", source_observations=[]):
+                retained = retain_as_needs_review(
+                    item,
+                    reason="not_selected_final_issue",
+                    quality_trace=build_quality_trace(item, []),
+                    source_observations=[],
+                    tool_provenance=[],
+                )
+                final_selected_findings.append(retained)
+                recorder.event(
+                    judge_span,
+                    "finding_retained_for_review",
+                    f"{item.get('title', 'candidate')} 被保留为 needs_review：not_selected_final_issue",
+                    {"dedupe_hash": item.get("dedupe_hash"), "rules": item.get("covered_rules") or []},
+                )
+                continue
             judge_rejections.append({**item, "rejected_reasons": ["not_selected_final_issue"]})
         final_findings = final_selected_findings
         final_findings, same_line_rejections = dedupe_same_line_same_issue_findings(final_findings)
@@ -3792,7 +3954,11 @@ def make_judge_findings_node(
                 "consensus_agents": evidence_score.get("consensus_agents") or [],
                 "matched_suppression_hint": evidence_score.get("matched_suppression_hint"),
             }
-            if finding.get("judge_adjustment") == "evidence_score_below_drop_threshold" and should_retain_low_precision_without_tool_support(finding, source_observations):
+            if finding.get("judge_adjustment") == "evidence_score_below_drop_threshold" and should_retain_final_candidate_for_review(
+                finding,
+                reason="evidence_score_below_drop_threshold",
+                source_observations=source_observations,
+            ):
                 finding = retain_as_needs_review(
                     finding,
                     reason="evidence_score_below_drop_threshold",
@@ -3810,7 +3976,11 @@ def make_judge_findings_node(
                 continue
             if not is_publishable_evidence_contract(quality_trace):
                 contract = quality_trace.get("evidence_contract") if isinstance(quality_trace, dict) else {}
-                if should_retain_low_precision_without_tool_support(finding, source_observations):
+                if should_retain_final_candidate_for_review(
+                    finding,
+                    reason="evidence_contract_not_satisfied",
+                    source_observations=source_observations,
+                ):
                     retained = retain_as_needs_review(
                         finding,
                         reason="evidence_contract_not_satisfied",
@@ -3878,12 +4048,37 @@ def make_judge_findings_node(
                 quality_selected_findings.append(finding)
                 continue
             if not bool(finding.get("selected", 1)) or finding.get("judge_adjustment") == "evidence_score_below_drop_threshold":
-                rejected = {**finding, "rejected_reasons": ["evidence_score_below_drop_threshold"]}
+                reason = "evidence_score_below_drop_threshold" if finding.get("judge_adjustment") == "evidence_score_below_drop_threshold" else "not_selected_after_quality_calibration"
+                if should_retain_final_candidate_for_review(
+                    finding,
+                    reason=reason,
+                    source_observations=finding.get("source_observations") if isinstance(finding.get("source_observations"), list) else [],
+                ):
+                    retained = retain_as_needs_review(
+                        finding,
+                        reason=reason,
+                        quality_trace=finding.get("quality_trace") if isinstance(finding.get("quality_trace"), dict) else build_quality_trace(finding, []),
+                        source_observations=finding.get("source_observations") if isinstance(finding.get("source_observations"), list) else [],
+                        tool_provenance=finding.get("tool_provenance") if isinstance(finding.get("tool_provenance"), list) else [],
+                    )
+                    quality_selected_findings.append(retained)
+                    recorder.event(
+                        judge_span,
+                        "finding_retained_for_review",
+                        f"{finding.get('title', 'candidate')} 被保留为 needs_review：{reason}",
+                        {
+                            "dedupe_hash": finding.get("dedupe_hash"),
+                            "evidence_score": finding.get("evidence_score"),
+                            "judge_adjustment": finding.get("judge_adjustment"),
+                        },
+                    )
+                    continue
+                rejected = {**finding, "rejected_reasons": [reason]}
                 judge_rejections.append(rejected)
                 recorder.event(
                     judge_span,
                     "finding_dropped",
-                    f"{finding.get('title', 'candidate')} 被 Judge 过滤：evidence_score_below_drop_threshold",
+                    f"{finding.get('title', 'candidate')} 被 Judge 过滤：{reason}",
                     {
                         "dedupe_hash": finding.get("dedupe_hash"),
                         "evidence_score": finding.get("evidence_score"),

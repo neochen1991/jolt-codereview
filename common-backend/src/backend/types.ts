@@ -1,5 +1,13 @@
 export interface AppConfig {
   [key: string]: unknown;
+  github?: {
+    default_endpoint?: string;
+    default_token_env?: string;
+  };
+  codehub?: {
+    default_endpoint?: string;
+    default_token_env?: string;
+  };
   llm?: {
     default_provider?: string;
     default_base_url?: string;
@@ -34,4 +42,19 @@ export interface AppConfig {
     max_total_mb?: number;
     max_log_file_mb?: number;
   };
+}
+
+export type VcsProviderName = "github" | "codehub";
+
+export interface RepositoryConfig {
+  endpoint?: string;
+  owner?: string;
+  repo?: string;
+  git_url?: string;
+  git_host?: string;
+  full_name?: string;
+  project_key?: string;
+  repo_id?: string;
+  token_env?: string;
+  [key: string]: unknown;
 }

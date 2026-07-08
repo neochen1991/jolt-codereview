@@ -104,14 +104,15 @@ export class MergeRequestRepository {
     riskScore: number;
     latestHeadSha: string;
     htmlUrl: string;
+    createdAt?: string;
     metadata: Record<string, unknown>;
   }) {
     this.db.prepare(`
       INSERT INTO merge_requests (
         id, repository_id, external_mr_id, number, title, author, source_branch, target_branch,
-        review_status, risk_score, latest_head_sha, html_url, metadata_json, updated_at
+        review_status, risk_score, latest_head_sha, html_url, metadata_json, created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
       ON CONFLICT(repository_id, external_mr_id) DO UPDATE SET
         title = excluded.title,
         author = excluded.author,
@@ -139,7 +140,8 @@ export class MergeRequestRepository {
       input.riskScore,
       input.latestHeadSha,
       input.htmlUrl,
-      JSON.stringify(input.metadata)
+      JSON.stringify(input.metadata),
+      input.createdAt ?? null
     );
   }
 

@@ -37,6 +37,7 @@ const commonProjectPathPatterns = [
   /^\/api\/projects\/join-by-invite$/,
   /^\/api\/projects\/[^/]+$/,
   /^\/api\/projects\/[^/]+\/members(?:\/|$)/,
+  /^\/api\/projects\/[^/]+\/repositories(?:\/|$)/,
   /^\/api\/projects\/[^/]+\/settings(?:\/|$)/,
   /^\/api\/projects\/[^/]+\/effective-config$/,
   /^\/api\/projects\/[^/]+\/join-requests(?:\/|$)/,

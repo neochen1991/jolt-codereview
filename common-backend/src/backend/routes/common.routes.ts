@@ -3,6 +3,7 @@ import type { AppConfig } from "../types.js";
 import type { Db } from "../db.js";
 import { AuditRepository } from "../repositories/AuditRepository.js";
 import { ProjectRepository } from "../repositories/ProjectRepository.js";
+import { RepositoryRepository } from "../repositories/RepositoryRepository.js";
 import { ProjectConfigService } from "../services/ProjectConfigService.js";
 import type { BackendRouteContext } from "./context.js";
 import { createAuthRoutes } from "./auth.routes.js";
@@ -10,6 +11,7 @@ import { createHealthRoutes } from "./health.routes.js";
 import { createModelRoutes } from "./models.routes.js";
 import { createPermissionRoutes } from "./permissions.routes.js";
 import { createProjectRoutes } from "./projects.routes.js";
+import { createRepositoryRoutes } from "./repositories.routes.js";
 import { createSystemRoutes } from "./system.routes.js";
 
 function projectRoleRank(role: string): number {
@@ -18,6 +20,7 @@ function projectRoleRank(role: string): number {
 
 export function createCommonRoutes(config: AppConfig, db: Db): Route[] {
   const projectRepository = new ProjectRepository(db);
+  const repositoryRepository = new RepositoryRepository(db);
   const auditRepository = new AuditRepository(db);
   const projectConfigService = new ProjectConfigService(db);
 
@@ -91,6 +94,7 @@ export function createCommonRoutes(config: AppConfig, db: Db): Route[] {
     config,
     db,
     projectRepository,
+    repositoryRepository,
     auditRepository,
     projectConfigService,
     all,
@@ -107,6 +111,7 @@ export function createCommonRoutes(config: AppConfig, db: Db): Route[] {
     ...createAuthRoutes(ctx),
     ...createPermissionRoutes(ctx),
     ...createProjectRoutes(ctx),
+    ...createRepositoryRoutes(ctx),
     ...createSystemRoutes(ctx),
     ...createModelRoutes(ctx)
   ];

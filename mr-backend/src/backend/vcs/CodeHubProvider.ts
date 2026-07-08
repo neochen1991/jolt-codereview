@@ -25,6 +25,7 @@ export class CodeHubProvider implements VcsProvider {
         targetBranch: String(mr.target_branch ?? ""),
         headSha: String(mr.head_sha ?? mr.sha ?? ""),
         htmlUrl: String(mr.html_url ?? mr.web_url ?? ""),
+        createdAt: mr.created_at,
         additions: Number(mr.additions ?? 0),
         deletions: Number(mr.deletions ?? 0),
         changedFiles: Number(mr.changed_files ?? 0),

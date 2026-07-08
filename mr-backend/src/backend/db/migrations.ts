@@ -42,6 +42,7 @@ export function migrate(db: Db) {
       latest_head_sha TEXT NOT NULL,
       html_url TEXT NOT NULL,
       metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(repository_id, external_mr_id)
     );
@@ -668,6 +669,7 @@ export function migrate(db: Db) {
   addColumnIfMissing(db, "agent_configs", "requires_deepagents", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "review_jobs", "pr_summary", "TEXT NOT NULL DEFAULT '{}'");
   addColumnIfMissing(db, "review_jobs", "requested_by", "TEXT");
+  addColumnIfMissing(db, "merge_requests", "created_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
   addColumnIfMissing(db, "rule_precision_history", "recent_accepted_count", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "rule_precision_history", "recent_rejected_count", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "review_runs", "coverage_json", "TEXT NOT NULL DEFAULT '{}'");

@@ -180,6 +180,7 @@ export class MrSyncService {
       riskScore: score,
       latestHeadSha: mergeRequest.headSha,
       htmlUrl: mergeRequest.htmlUrl,
+      createdAt: mergeRequest.createdAt,
       metadata: mergeRequest.metadata
     });
     if (existing && existing.latest_head_sha !== mergeRequest.headSha) {

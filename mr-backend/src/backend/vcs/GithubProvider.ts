@@ -20,6 +20,7 @@ export class GithubProvider implements VcsProvider {
       targetBranch: String(pull.base?.ref ?? ""),
       headSha: String(pull.head?.sha ?? ""),
       htmlUrl: String(pull.html_url ?? ""),
+      createdAt: pull.created_at,
       additions: Number(pull.additions ?? 0),
       deletions: Number(pull.deletions ?? 0),
       changedFiles: Number(pull.changed_files ?? 0),

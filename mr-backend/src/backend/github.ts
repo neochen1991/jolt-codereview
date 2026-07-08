@@ -12,6 +12,7 @@ export interface GitHubPull {
   user: { login: string };
   head: { ref: string; sha: string };
   base: { ref: string; sha: string };
+  created_at?: string;
   updated_at: string;
   additions?: number;
   deletions?: number;

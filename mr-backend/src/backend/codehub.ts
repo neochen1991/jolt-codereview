@@ -13,6 +13,7 @@ export interface CodeHubMergeRequest {
   target_branch?: string;
   head_sha?: string;
   sha?: string;
+  created_at?: string;
   updated_at?: string;
   additions?: number;
   deletions?: number;

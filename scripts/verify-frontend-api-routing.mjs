@@ -42,6 +42,7 @@ const cases = [
   ["/api/projects/discover", bases.commonBase],
   ["/api/projects/project_default", bases.commonBase],
   ["/api/projects/project_default/members", bases.commonBase],
+  ["/api/projects/project_default/repositories", bases.commonBase],
   ["/api/projects/project_default/settings", bases.commonBase],
   ["/api/projects/project_default/settings/llm/test", bases.commonBase],
   ["/api/projects/project_default/effective-config", bases.commonBase],
@@ -49,7 +50,6 @@ const cases = [
   ["/api/mr-review/projects/project_default/merge-requests", bases.mrBase],
   ["/api/full-review/projects/project_default/jobs", bases.mrBase],
   ["/api/vcs/project_default/capabilities", bases.mrBase],
-  ["/api/projects/project_default/repositories", bases.mrBase],
   ["/api/projects/project_default/agents", bases.mrBase],
   ["/api/projects/project_default/expert-skill-bindings", bases.mrBase],
   ["/api/projects/project_default/expert-skill-bindings/skill_binding_123", bases.mrBase]

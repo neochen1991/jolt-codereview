@@ -173,14 +173,6 @@ Frontend 通过 `VITE_MR_API_BASE` 调用 MR Backend。
 | `POST` | `/api/projects/:projectId/invitations` | 创建邀请码 |
 | `POST` | `/api/projects/join-by-invite` | 使用邀请码加入项目 |
 
-### Repositories
-
-| Method | Path | 说明 |
-| --- | --- | --- |
-| `GET` | `/api/projects/:projectId/repositories` | 项目仓库列表 |
-| `POST` | `/api/projects/:projectId/repositories` | 绑定 GitHub / CodeHub 仓库 |
-| `DELETE` | `/api/projects/:projectId/repositories/:repositoryId` | 删除仓库绑定 |
-
 ### Rules, Skills and Agents
 
 | Method | Path | 说明 |

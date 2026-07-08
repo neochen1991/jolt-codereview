@@ -153,7 +153,7 @@ Common Backend 路径：
 | MR 详情 | - | `/api/mr-review/merge-requests/:mrId`、`/review-runs/:runId/*`、`/review-findings/:findingId` |
 | Full Review | - | `/api/full-review/*` |
 | 规则与专家 | - | `/api/projects/:projectId/rule-*`、`/custom-skills`、`/agents`、`/expert-*` |
-| 项目设置 | `/api/models/*` | `/api/projects/:projectId/settings/*`、`/repositories` |
+| 项目设置 | `/api/models/*`、`/api/projects/:projectId/settings/*`、`/api/projects/:projectId/repositories` | - |
 | 用户权限 | `/api/permissions/*` | `/api/projects/:projectId/members`、`/join-requests`、`/invitations` |
 | 系统设置 | `/api/system/*` | - |
 

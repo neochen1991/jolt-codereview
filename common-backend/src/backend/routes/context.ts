@@ -2,12 +2,14 @@ import type { Db } from "../db.js";
 import type { AppConfig } from "../types.js";
 import type { AuditRepository } from "../repositories/AuditRepository.js";
 import type { ProjectRepository } from "../repositories/ProjectRepository.js";
+import type { RepositoryRepository } from "../repositories/RepositoryRepository.js";
 import type { ProjectConfigService } from "../services/ProjectConfigService.js";
 
 export interface BackendRouteContext {
   config: AppConfig;
   db: Db;
   projectRepository: ProjectRepository;
+  repositoryRepository: RepositoryRepository;
   auditRepository: AuditRepository;
   projectConfigService: ProjectConfigService;
   all<T>(sql: string, params?: any[]): T[];

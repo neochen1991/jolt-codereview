@@ -28,7 +28,6 @@ import { createFullReviewRoutes } from "./full-review.routes.js";
 import { createHealthRoutes } from "./health.routes.js";
 import { createObservabilityRoutes } from "./observability.routes.js";
 import { createQualityRoutes } from "./quality.routes.js";
-import { createRepositoryRoutes } from "./repositories.routes.js";
 import { createReviewRoutes } from "./review.routes.js";
 import { createRuleRoutes } from "./rules.routes.js";
 import { createVcsProxyRoutes } from "./vcs-proxy.routes.js";
@@ -489,7 +488,6 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     ...createHealthRoutes(ctx, { serviceName: "jolt-mr-backend" }),
     ...createRuleRoutes(ctx),
     ...createAgentRoutes(ctx),
-    ...createRepositoryRoutes(ctx),
     ...createObservabilityRoutes(ctx),
     ...createWebhookRoutes(ctx),
     ...createReviewRoutes(ctx),

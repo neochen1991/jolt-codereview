@@ -233,6 +233,7 @@ Common Backend 默认端口 `9022`，只承载公共平台能力。
 | 当前用户 | `GET /api/me`、`PATCH /api/me/profile`、`GET /api/me/settings`、`PATCH /api/me/settings/:key` |
 | 权限 | `GET /api/permissions/roles`、`GET /api/permissions/me`、`GET /api/permissions/projects/:projectId/members`、`PATCH /api/permissions/projects/:projectId/members/:memberId` |
 | 模型配置 | `GET /api/models/effective-config`、`PATCH /api/models/projects/:projectId` |
+| 仓库 | `GET/POST /api/projects/:projectId/repositories`、`DELETE /api/projects/:projectId/repositories/:repositoryId` |
 | 系统存储 | `GET /api/system/storage`、`POST /api/system/storage/test`、`POST /api/system/storage/init-postgres`、`POST /api/system/storage/switch` |
 | 内部鉴权 | `GET /internal/auth/introspect` |
 | 内部模型配置 | `GET /internal/models/effective-config` |
@@ -246,9 +247,6 @@ MR Backend 默认端口 `9021`，承载项目和检视业务能力。
 | 功能 | 主要 API |
 | --- | --- |
 | 健康检查 | `GET /api/health` |
-| 项目与成员 | `GET/POST /api/projects`、`GET/PATCH /api/projects/:projectId`、`GET/POST /api/projects/:projectId/members`、`PATCH/DELETE /api/projects/:projectId/members/:memberId` |
-| 项目配置 | `GET /api/projects/:projectId/settings`、`GET /api/projects/:projectId/effective-config`、`PATCH /api/projects/:projectId/settings/:key`、`POST /api/projects/:projectId/settings/llm/test` |
-| 仓库 | `GET/POST /api/projects/:projectId/repositories`、`DELETE /api/projects/:projectId/repositories/:repositoryId` |
 | 规则与 Skill | `/api/projects/:projectId/rule-sets`、`/rule-documents`、`/rule-details`、`/expert-rule-bindings`、`/custom-skills`、`/custom-skill-assets`、`/expert-skill-bindings`、`/review-policy` |
 | 专家 Agent | `GET /api/projects/:projectId/agents`、`GET/POST /api/projects/:projectId/expert-profiles`、`PATCH /api/projects/:projectId/expert-profiles/:agentKey`、`GET/POST /api/projects/:projectId/expert-tool-bindings` |
 | MR 队列 | `GET /api/mr-review/projects/:projectId/merge-requests`、`POST /api/mr-review/projects/:projectId/sync`、`POST /api/mr-review/projects/:projectId/merge-requests/status-refresh`、`GET /api/mr-review/projects/:projectId/dead-letters` |

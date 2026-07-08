@@ -25,9 +25,10 @@ const pgPort = process.env.SPLIT_REGRESSION_PG_PORT
   : await choosePortBlock(55432, 1);
 const commonPort = process.env.SPLIT_REGRESSION_COMMON_PORT
   ? Number(process.env.SPLIT_REGRESSION_COMMON_PORT)
-  : await choosePortBlock(18110, 3);
+  : await choosePortBlock(18110, 4);
 const mrPort = commonPort + 1;
 const frontendPort = commonPort + 2;
+const vitePort = commonPort + 3;
 const dbName = "jolt_split_regression";
 const pgUrl = `postgresql://neochen@127.0.0.1:${pgPort}/${dbName}`;
 const internalToken = `split-regression-${randomBytes(8).toString("hex")}`;
@@ -154,7 +155,7 @@ function apiBaseForPath(value) {
     value === "/api/projects/discover" ||
     value === "/api/projects/join-by-invite" ||
     /^\/api\/projects\/[^/]+$/.test(value) ||
-    /^\/api\/projects\/[^/]+\/(members|settings|effective-config|join-requests|invitations|audit-logs)(?:\/|$)/.test(value)
+    /^\/api\/projects\/[^/]+\/(members|repositories|settings|effective-config|join-requests|invitations|audit-logs)(?:\/|$)/.test(value)
   ) {
     return `http://127.0.0.1:${commonPort}`;
   }
@@ -274,10 +275,10 @@ async function seedReviewFixture(mrRepoDir) {
     await client.query(`
       INSERT INTO merge_requests (
         id, repository_id, external_mr_id, number, title, author, source_branch, target_branch,
-        review_status, risk_score, latest_head_sha, html_url, metadata_json, updated_at
+        review_status, risk_score, latest_head_sha, html_url, metadata_json, created_at, updated_at
       )
       VALUES ($1, $2, '9901', 9901, 'Split full regression fixture', 'fixture-user', 'feature/split-full', 'main',
-        'queued', 98, $3, 'https://github.com/jolt-fixture/split-full-regression/pull/9901', $4, CURRENT_TIMESTAMP)
+        'queued', 98, $3, 'https://github.com/jolt-fixture/split-full-regression/pull/9901', $4, CURRENT_TIMESTAMP - INTERVAL '1 day', CURRENT_TIMESTAMP)
       ON CONFLICT(repository_id, external_mr_id) DO UPDATE SET
         review_status = 'queued',
         latest_head_sha = EXCLUDED.latest_head_sha,
@@ -367,6 +368,8 @@ async function main() {
   start("frontend", npmCommand, ["run", "dev", "--", "--host", "127.0.0.1", "--port", String(frontendPort), "--strictPort"], {
     cwd: frontendDir,
     env: {
+      JOLT_FRONTEND_PORT: String(frontendPort),
+      JOLT_VITE_PORT: String(vitePort),
       VITE_COMMON_API_BASE: `http://127.0.0.1:${commonPort}`,
       VITE_MR_API_BASE: `http://127.0.0.1:${mrPort}`,
       VITE_API_BASE: `http://127.0.0.1:${mrPort}`
@@ -495,12 +498,18 @@ async function main() {
   await http(`/api/projects/${projectId}/repositories`, { headers: auth });
   await http(`/api/projects/${projectId}/settings`, { headers: auth });
   await http(`http://127.0.0.1:${mrPort}/api/projects/${projectId}/settings`, { headers: auth }, 404);
+  await http(`http://127.0.0.1:${mrPort}/api/projects/${projectId}/repositories`, { headers: auth }, 404);
   await http(`/api/projects/${projectId}/effective-config`, { headers: auth });
   await http(`/api/projects/${projectId}/agents`, { headers: auth });
   await http(`/api/projects/${projectId}/expert-profiles`, { headers: auth });
   await http(`/api/projects/${projectId}/rule-sets`, { headers: auth });
   await http(`/api/projects/${projectId}/rule-documents`, { headers: auth });
   await http(`/api/projects/${projectId}/custom-skills`, { headers: auth });
+  await http(`/api/projects/${projectId}/review-policy`, {
+    method: "PATCH",
+    headers: auth,
+    body: JSON.stringify({ policy: { mode: "split-regression", min_severity: "medium" } })
+  });
   await http(`/api/projects/${projectId}/review-policy`, { headers: auth });
   await http(`/api/projects/${projectId}/queue/summary`, { headers: auth });
   await http(`/api/projects/${projectId}/toolchain/status`, { headers: auth });

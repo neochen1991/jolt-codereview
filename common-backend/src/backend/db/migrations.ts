@@ -43,6 +43,23 @@ export function migrate(db: Db) {
       UNIQUE(project_id, settings_key)
     );
 
+    CREATE TABLE IF NOT EXISTS repositories (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      external_repo_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      default_branch TEXT NOT NULL,
+      status TEXT NOT NULL,
+      provider_config_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(project_id, provider, external_repo_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_repositories_project_status_created
+      ON repositories(project_id, status, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS system_settings (
       id TEXT PRIMARY KEY,
       settings_key TEXT NOT NULL UNIQUE,

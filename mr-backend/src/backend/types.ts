@@ -109,6 +109,7 @@ export interface MergeRequestRow {
   latest_head_sha: string;
   html_url: string;
   metadata_json: string;
+  created_at: string;
   updated_at: string;
 }
 

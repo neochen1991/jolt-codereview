@@ -329,6 +329,9 @@ Common 是用户、项目、权限、项目设置、系统设置的唯一公共�
 | 可发现项目 | `GET /api/projects/discover` | Bearer | 可申请加入项目和申请状态 | 项目加入页 |
 | 项目详情 | `GET /api/projects/:projectId` | observer+ | 项目名称、描述、data policy 等 | 业务后台 |
 | 项目成员 | `GET /api/projects/:projectId/members` | project_admin+ | 成员、用户、角色列表 | 用户权限页 |
+| 项目仓库 | `GET /api/projects/:projectId/repositories` | observer+ | 项目绑定仓库列表 | 项目维护页、MR Backend 同步前置数据 |
+| 绑定仓库 | `POST /api/projects/:projectId/repositories` | project_admin+ | 绑定 GitHub / CodeHub 仓库并保存 provider 配置 | 项目维护页 |
+| 删除仓库绑定 | `DELETE /api/projects/:projectId/repositories/:repositoryId` | project_admin+ | 软删除仓库绑定，并取消该仓库排队中的 MR/job | 项目维护页 |
 | 角色定义 | `GET /api/permissions/roles` | 无 | 全局角色、项目角色说明 | 前端、业务后台 |
 | 当前用户权限 | `GET /api/permissions/me` | Bearer | 当前用户和项目 membership | 前端权限判断 |
 | 项目 settings | `GET /api/projects/:projectId/settings` | observer+ | 项目 settings，敏感字段脱敏 | 项目设置页 |

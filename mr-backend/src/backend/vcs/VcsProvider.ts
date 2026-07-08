@@ -9,6 +9,7 @@ export interface NormalizedMergeRequest {
   targetBranch: string;
   headSha: string;
   htmlUrl: string;
+  createdAt?: string;
   additions: number;
   deletions: number;
   changedFiles: number;

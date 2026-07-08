@@ -330,7 +330,12 @@ def _audit_bound_evidence_contract(finding: dict[str, Any], contract_source: dic
     false_positive_clauses = _contract_clauses(false_positive_patterns)
     matched_required = [clause for clause in required_clauses if _contract_clause_matches(clause, finding_text, allow_concepts=True)]
     missing_required = [clause for clause in required_clauses if clause not in matched_required]
-    false_positive_matches = [clause for clause in false_positive_clauses if _contract_clause_matches(clause, finding_text, allow_concepts=False)]
+    false_positive_text = _finding_contract_text(finding, include_fix_fields=False)
+    false_positive_matches = [
+        clause
+        for clause in false_positive_clauses
+        if _false_positive_clause_matches(clause, false_positive_text)
+    ]
     if false_positive_matches:
         status = "false_positive_pattern_matched"
     elif missing_required and matched_required:
@@ -352,14 +357,14 @@ def _audit_bound_evidence_contract(finding: dict[str, Any], contract_source: dic
     }
 
 
-def _finding_contract_text(finding: dict[str, Any]) -> str:
+def _finding_contract_text(finding: dict[str, Any], *, include_fix_fields: bool = True) -> str:
     parts = [
         finding.get("title"),
         finding.get("problem_description"),
         finding.get("evidence"),
-        finding.get("recommendation"),
-        finding.get("suggested_code"),
     ]
+    if include_fix_fields:
+        parts.extend([finding.get("recommendation"), finding.get("suggested_code")])
     return "\n".join(str(part or "") for part in parts)
 
 
@@ -392,6 +397,45 @@ def _contract_clause_matches(clause: str, text: str, *, allow_concepts: bool) ->
         return False
     matched = sum(1 for part in parts if _contract_normalize(part) in normalized_text)
     return matched >= max(1, len(parts) - 1)
+
+
+def _false_positive_clause_matches(clause: str, text: str) -> bool:
+    if not _contract_clause_matches(clause, text, allow_concepts=False):
+        return False
+    return not _contract_clause_negated_in_text(clause, text)
+
+
+def _contract_clause_negated_in_text(clause: str, text: str) -> bool:
+    normalized_text = _contract_normalize(text)
+    terms = [
+        _contract_normalize(part)
+        for part in re.split(r"\s+|,|，|、|/|或|和|及", clause)
+        if len(_contract_normalize(part)) >= 2
+    ]
+    generic_terms = {
+        "代码",
+        "紧随其后",
+        "调用",
+        "设置",
+        "明确",
+        "等价",
+        "key",
+        "配置",
+    }
+    negations = ("缺少", "缺失", "未", "没有", "无", "不包含", "不存在", "missing", "without", "no")
+    for term in terms:
+        if term in generic_terms:
+            continue
+        start = 0
+        while True:
+            index = normalized_text.find(term, start)
+            if index < 0:
+                break
+            window = normalized_text[max(0, index - 18): index + len(term) + 4]
+            if any(negation in window for negation in negations):
+                return True
+            start = index + len(term)
+    return False
 
 
 def _concept_clause_matches(clause: str, normalized_text: str) -> bool:

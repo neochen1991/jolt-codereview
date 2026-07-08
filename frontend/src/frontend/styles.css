@@ -843,7 +843,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .project-skill-quality-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(150px, 1.15fr) minmax(180px, 1.25fr) 86px 64px 74px 74px 86px;
+  grid-template-columns: minmax(150px, 1.15fr) minmax(180px, 1.25fr) 86px 64px 74px 74px 82px 86px;
   gap: 8px;
   align-items: center;
   padding: 9px 10px;
@@ -6262,7 +6262,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .project-skill-quality-head { grid-template-columns: minmax(0, 1fr); }
   .project-skill-quality-totals { justify-content: flex-start; }
   .project-skill-quality-table { overflow-x: auto; }
-  .project-skill-quality-row { min-width: 760px; }
+  .project-skill-quality-row { min-width: 840px; }
   .content-grid {
     grid-template-columns: 1fr;
     height: 100%;

@@ -145,6 +145,10 @@ function emptySkillCheckpointMetric(
   };
 }
 
+function skillCheckpointMetricKey(item: Pick<SkillCheckpointMetric, "project_id" | "skill_key" | "checkpoint_id" | "agent_id" | "model" | "week">) {
+  return [item.project_id, item.skill_key, item.checkpoint_id, item.agent_id, item.model, item.week].join("\u0001");
+}
+
 export function summarizeBoundRuleCoverageByAgent(rows: Array<{ coverage_json?: string | null }>) {
   const byAgent = new Map<string, ReturnType<typeof emptyAgentCoverage>>();
   for (const row of rows) {
@@ -202,7 +206,7 @@ export function summarizeSkillCheckpointMetrics(
       if (!skillKey || !checkpointId || !agentId) continue;
       const model = modelByRunAgent.get(`${row.id}:${agentId}`) || "unknown";
       const week = isoWeekKey(row.started_at);
-      const key = [projectId, skillKey, checkpointId, agentId, model, week].join("\u0001");
+      const key = skillCheckpointMetricKey({ project_id: projectId, skill_key: skillKey, checkpoint_id: checkpointId, agent_id: agentId, model, week });
       const metric = byKey.get(key) ?? emptySkillCheckpointMetric(projectId, skillKey, checkpointId, agentId, model, week);
       metric.checked_count += item.checked ? 1 : 0;
       metric.hit_count += numberValue(item.finding_count) > 0 ? 1 : 0;
@@ -505,7 +509,111 @@ export class ObservabilityService {
     `).all(...runParams) as Array<{ run_id: string; agent_id: string; model: string }>;
     const modelByRunAgent = new Map(modelRows.map((row) => [`${row.run_id}:${row.agent_id}`, row.model || "unknown"]));
     const items = summarizeSkillCheckpointMetrics(projectId, runs, modelByRunAgent);
-    const totals = items.reduce(
+    const metricByKey = new Map<string, SkillCheckpointMetric>();
+    for (const item of items) metricByKey.set(skillCheckpointMetricKey(item), item);
+    const checkpointByRunAgentRule = new Map<string, Pick<SkillCheckpointMetric, "project_id" | "skill_key" | "checkpoint_id" | "agent_id" | "model" | "week">>();
+    for (const row of runs) {
+      const payload = coveragePayload(row);
+      const coverageItems = Array.isArray(payload?.items) ? payload.items : [];
+      for (const rawItem of coverageItems) {
+        if (typeof rawItem !== "object" || !rawItem) continue;
+        const item = rawItem as Record<string, unknown>;
+        if (String(item.type || "") !== "skill_checkpoint") continue;
+        const skillKey = String(item.skill_key || "skill_bundle").trim();
+        const checkpointId = String(item.checkpoint_id || item.rule_id || "").trim();
+        const agentId = String(item.agent_id || "").trim();
+        if (!skillKey || !checkpointId || !agentId) continue;
+        const model = modelByRunAgent.get(`${row.id}:${agentId}`) || "unknown";
+        const week = isoWeekKey(row.started_at);
+        checkpointByRunAgentRule.set(`${row.id}\u0001${agentId}\u0001${checkpointId}`, {
+          project_id: projectId,
+          skill_key: skillKey,
+          checkpoint_id: checkpointId,
+          agent_id: agentId,
+          model,
+          week
+        });
+      }
+    }
+    const feedbackParams: unknown[] = [projectId];
+    const feedbackSinceFilter = since ? "AND rf.created_at >= $2" : "";
+    if (since) feedbackParams.push(since);
+    const feedbackRows = this.db.prepare(`
+      SELECT
+        rr.id AS run_id,
+        rr.started_at,
+        rf.agent_id,
+        rf.covered_rules_json,
+        rf.lifecycle_state,
+        COALESCE(fb.accepted, 0) AS feedback_accepted,
+        COALESCE(fb.false_positive, 0) AS feedback_false_positive,
+        COALESCE(fb.dismissed, 0) AS feedback_dismissed
+      FROM review_findings rf
+      JOIN review_runs rr ON rr.id = rf.review_run_id
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      JOIN merge_requests mr ON mr.id = rj.merge_request_id
+      JOIN repositories r ON r.id = mr.repository_id
+      LEFT JOIN (
+        SELECT
+          finding_id,
+          MAX(CASE WHEN feedback_type = 'accepted' THEN 1 ELSE 0 END) AS accepted,
+          MAX(CASE WHEN feedback_type = 'false_positive' THEN 1 ELSE 0 END) AS false_positive,
+          MAX(CASE WHEN feedback_type = 'dismissed' THEN 1 ELSE 0 END) AS dismissed
+        FROM user_feedback
+        GROUP BY finding_id
+      ) fb ON fb.finding_id = rf.id
+      WHERE r.project_id = $1 ${feedbackSinceFilter}
+    `).all(...feedbackParams) as Array<{
+      run_id: string;
+      started_at?: string | null;
+      agent_id: string;
+      covered_rules_json?: string | null;
+      lifecycle_state: string;
+      feedback_accepted: number;
+      feedback_false_positive: number;
+      feedback_dismissed: number;
+    }>;
+    for (const row of feedbackRows) {
+      const rules = parseJson(row.covered_rules_json);
+      const coveredRules = Array.isArray(rules) ? rules.map((rule) => String(rule || "").trim()).filter(Boolean) : [];
+      const rejected = ["false_positive", "dismissed"].includes(String(row.lifecycle_state || "")) || Number(row.feedback_false_positive || 0) > 0 || Number(row.feedback_dismissed || 0) > 0;
+      const accepted = String(row.lifecycle_state || "") === "accepted" || Number(row.feedback_accepted || 0) > 0;
+      if (!rejected && !accepted) continue;
+      for (const ruleId of coveredRules) {
+        const dimensions = checkpointByRunAgentRule.get(`${row.run_id}\u0001${row.agent_id}\u0001${ruleId}`);
+        if (!dimensions) continue;
+        const key = skillCheckpointMetricKey(dimensions);
+        const metric = metricByKey.get(key) ?? emptySkillCheckpointMetric(
+          dimensions.project_id,
+          dimensions.skill_key,
+          dimensions.checkpoint_id,
+          dimensions.agent_id,
+          dimensions.model,
+          dimensions.week || isoWeekKey(row.started_at)
+        );
+        if (rejected) metric.manual_reject_count += 1;
+        else if (accepted) metric.manual_accept_count += 1;
+        metricByKey.set(key, metric);
+      }
+    }
+    const finalItems = [...metricByKey.values()].map((item) => ({
+      ...item,
+      hit_rate: item.checked_count ? Number((item.hit_count / item.checked_count).toFixed(4)) : null,
+      skip_rate: item.checked_count ? Number((item.skip_count / item.checked_count).toFixed(4)) : null,
+      rejected_rate: item.checked_count ? Number((item.rejected_count / item.checked_count).toFixed(4)) : null,
+      retry_hit_rate: item.retry_count ? Number((item.retry_hit_count / item.retry_count).toFixed(4)) : null,
+      manual_reject_rate: item.manual_accept_count + item.manual_reject_count
+        ? Number((item.manual_reject_count / (item.manual_accept_count + item.manual_reject_count)).toFixed(4))
+        : null,
+      duplicate_rate: item.checked_count ? Number((item.duplicate_merge_count / item.checked_count).toFixed(4)) : null
+    })).sort((left, right) => (
+      String(left.week).localeCompare(String(right.week))
+      || String(left.skill_key).localeCompare(String(right.skill_key))
+      || String(left.checkpoint_id).localeCompare(String(right.checkpoint_id))
+      || String(left.agent_id).localeCompare(String(right.agent_id))
+      || String(left.model).localeCompare(String(right.model))
+    ));
+    const totals = finalItems.reduce(
       (acc, item) => {
         acc.checked_count += item.checked_count;
         acc.hit_count += item.hit_count;
@@ -538,10 +646,13 @@ export class ObservabilityService {
         ...totals,
         hit_rate: totals.checked_count ? Number((totals.hit_count / totals.checked_count).toFixed(4)) : null,
         rejected_rate: totals.checked_count ? Number((totals.rejected_count / totals.checked_count).toFixed(4)) : null,
+        manual_reject_rate: totals.manual_accept_count + totals.manual_reject_count
+          ? Number((totals.manual_reject_count / (totals.manual_accept_count + totals.manual_reject_count)).toFixed(4))
+          : null,
         retry_hit_rate: totals.retry_count ? Number((totals.retry_hit_count / totals.retry_count).toFixed(4)) : null,
         duplicate_rate: totals.checked_count ? Number((totals.duplicate_merge_count / totals.checked_count).toFixed(4)) : null
       },
-      items
+      items: finalItems
     };
   }
 }

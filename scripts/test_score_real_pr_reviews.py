@@ -306,6 +306,70 @@ def test_evaluate_classifies_same_rule_same_root_cause_duplicate() -> None:
     assert ("precision_gap", "duplicate") in action_types, report
 
 
+def test_evaluate_matches_cross_layer_business_evidence_when_source_mentions_gold_file() -> None:
+    gold = [
+        {
+            "id": "gold-audit-controller",
+            "mr_id": "mr-1",
+            "file_path": "src/main/java/com/acme/refund/api/RefundAdminController.java",
+            "line_start": 15,
+            "rule_id": "BIZ-AUDIT-001",
+            "evidence_keywords": ["/admin/refunds/batch-approve", "operator", "reason"],
+        },
+    ]
+    findings = [
+        {
+            "finding_id": "finding-audit-service",
+            "mr_id": "mr-1",
+            "file_path": "src/main/java/com/acme/refund/service/RefundService.java",
+            "line_start": 32,
+            "title": "批量退款审批缺少审计记录",
+            "problem_description": "RefundAdminController 的 /admin/refunds/batch-approve 接口调用 RefundService.approveBatch。",
+            "evidence": "controller 传入 operator 和 reason，但 service 成功和失败路径都没有写入审计记录。",
+            "covered_rules": ["BIZ-AUDIT-001"],
+        },
+    ]
+
+    report = evaluate(gold, findings, tolerance=3)
+
+    assert report["tp"] == 1, report
+    assert report["fp"] == 0, report
+    assert report["fn"] == 0, report
+    assert report["precision"] == 1.0, report
+    assert report["recall"] == 1.0, report
+
+
+def test_evaluate_uses_finding_line_range_for_gold_match() -> None:
+    gold = [
+        {
+            "id": "gold-consistency",
+            "mr_id": "mr-1",
+            "file_path": "src/RefundService.java",
+            "line_start": 27,
+            "rule_id": "BIZ-CONSISTENCY-001",
+            "evidence_keywords": ["paymentGateway.refund", "stockService.releaseStock"],
+        },
+    ]
+    findings = [
+        {
+            "finding_id": "finding-consistency",
+            "mr_id": "mr-1",
+            "file_path": "src/RefundService.java",
+            "line_start": 16,
+            "line_end": 26,
+            "title": "批量退款缺少事务边界",
+            "evidence": "paymentGateway.refund and stockService.releaseStock are both called in the same method without transaction boundary.",
+            "covered_rules": ["BIZ-CONSISTENCY-001"],
+        },
+    ]
+
+    report = evaluate(gold, findings, tolerance=3)
+
+    assert report["tp"] == 1, report
+    assert report["fp"] == 0, report
+    assert report["fn"] == 0, report
+
+
 if __name__ == "__main__":
     test_evaluate_uses_one_finding_for_one_gold_match()
     test_evaluate_reports_rule_level_precision_and_recall()
@@ -313,3 +377,5 @@ if __name__ == "__main__":
     test_evaluate_is_stable_when_gold_order_changes()
     test_evaluate_local_negative_does_not_mark_positive_mr_negative()
     test_evaluate_classifies_same_rule_same_root_cause_duplicate()
+    test_evaluate_matches_cross_layer_business_evidence_when_source_mentions_gold_file()
+    test_evaluate_uses_finding_line_range_for_gold_match()

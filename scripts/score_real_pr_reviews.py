@@ -43,6 +43,13 @@ def line_number(item: dict[str, Any]) -> int:
         return 0
 
 
+def line_end_number(item: dict[str, Any]) -> int:
+    try:
+        return int(item.get("line_end") or item.get("line_start") or item.get("line") or 0)
+    except (TypeError, ValueError):
+        return line_number(item)
+
+
 def gold_sort_key(gold: dict[str, Any]) -> tuple[str, str, int, str, str]:
     return (
         norm(gold.get("mr_id")),
@@ -64,10 +71,13 @@ def finding_sort_key(finding: dict[str, Any]) -> tuple[str, str, int, str]:
 
 def line_distance(gold: dict[str, Any], finding: dict[str, Any]) -> int:
     gold_line = line_number(gold)
-    finding_line = line_number(finding)
-    if not gold_line or not finding_line:
+    finding_start = line_number(finding)
+    finding_end = max(finding_start, line_end_number(finding))
+    if not gold_line or not finding_start:
         return 0
-    return abs(gold_line - finding_line)
+    if finding_start <= gold_line <= finding_end:
+        return 0
+    return min(abs(gold_line - finding_start), abs(gold_line - finding_end))
 
 
 def quality_trace(finding: dict[str, Any]) -> dict[str, Any]:
@@ -109,6 +119,15 @@ def finding_text(finding: dict[str, Any]) -> str:
         norm(finding.get(key))
         for key in ["title", "problem_description", "evidence", "recommendation"]
     ).lower()
+
+
+def file_basename(path: str) -> str:
+    return path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+
+
+def file_stem(path: str) -> str:
+    basename = file_basename(path)
+    return basename.rsplit(".", 1)[0] if "." in basename else basename
 
 
 def primary_rule_id(item: dict[str, Any]) -> str:
@@ -200,10 +219,13 @@ def matches(gold: dict[str, Any], finding: dict[str, Any], tolerance: int) -> bo
     gold_file = norm(gold.get("file") or gold.get("file_path"))
     finding_file = norm(finding.get("file_path") or finding.get("file"))
     if gold_file and finding_file != gold_file:
-        return False
+        basename = file_basename(gold_file)
+        stem = file_stem(gold_file)
+        text = finding_text(finding)
+        if not ((basename and basename in text) or (stem and stem in text)):
+            return False
     gold_line = int(gold.get("line") or gold.get("line_start") or 0)
-    finding_line = int(finding.get("line_start") or finding.get("line") or 0)
-    if gold_line and finding_line and abs(gold_line - finding_line) > tolerance:
+    if gold_file == finding_file and gold_line and line_number(finding) and line_distance(gold, finding) > tolerance:
         return False
     expected_rule = norm(gold.get("rule_id"))
     if expected_rule and expected_rule not in rule_ids(finding):

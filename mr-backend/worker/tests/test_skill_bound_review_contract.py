@@ -382,6 +382,40 @@ def test_skill_checkpoint_batch_rejects_markdown_section_false_positive_pattern(
     assert rejected[0]["bound_evidence_contract"]["false_positive_matches"] == ["固定常量命令"], rejected
 
 
+def test_skill_checkpoint_false_positive_pattern_does_not_match_missing_expire_evidence() -> None:
+    kept, rejected = _enforce_bound_batch_findings(
+        {
+            "label": "bound_skill:refund-risk-review-skill:REDIS-TTL-002",
+            "rule_id": "",
+            "skill_key": "refund-risk-review-skill",
+            "checkpoint_id": "REDIS-TTL-002",
+            "agent": {
+                "skill_checkpoints": [
+                    {
+                        "checkpoint_id": "REDIS-TTL-002",
+                        "required_evidence": "使用 redisTemplate.opsForValue().set；key 属于退款详情业务缓存；缺少 Duration、expire、setEx 或等价过期时间",
+                        "false_positive_patterns": "代码紧随其后调用 expire 设置过期时间",
+                    }
+                ]
+            },
+        },
+        [
+            {
+                "title": "退款详情业务缓存未设置 TTL",
+                "problem_description": "cacheRefundDetail 方法将退款详情写入 Redis 时未设置过期时间。",
+                "evidence": "redisTemplate.opsForValue().set(\"refund:detail:\" + refundId, value); 缺少 Duration、expire、setEx 等过期时间参数。",
+                "recommendation": "为业务缓存设置合理的 TTL。",
+                "suggested_code": "redisTemplate.opsForValue().set(\"refund:detail:\" + refundId, value, Duration.ofHours(2));",
+                "covered_rules": ["REDIS-TTL-002"],
+            }
+        ],
+    )
+
+    assert rejected == [], rejected
+    assert len(kept) == 1, kept
+    assert kept[0]["bound_evidence_contract"]["false_positive_matches"] == [], kept
+
+
 def test_skill_checkpoint_batch_flags_missing_required_evidence_without_dropping() -> None:
     kept, rejected = _enforce_bound_batch_findings(
         {
@@ -613,6 +647,7 @@ if __name__ == "__main__":
     test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_scope()
     test_skill_checkpoint_batch_rejects_explicit_false_positive_pattern()
     test_skill_checkpoint_batch_rejects_markdown_section_false_positive_pattern()
+    test_skill_checkpoint_false_positive_pattern_does_not_match_missing_expire_evidence()
     test_skill_checkpoint_batch_flags_missing_required_evidence_without_dropping()
     test_bound_rule_batch_filters_explicitly_mismatched_rule()
     test_bound_skill_skip_marker_is_audited_without_becoming_finding()

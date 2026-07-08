@@ -49,9 +49,12 @@ type SkillCheckpointMetric = {
   skip_count?: number;
   retry_count?: number;
   rejected_count?: number;
+  manual_accept_count?: number;
+  manual_reject_count?: number;
   duplicate_merge_count?: number;
   hit_rate?: number | null;
   rejected_rate?: number | null;
+  manual_reject_rate?: number | null;
   retry_hit_rate?: number | null;
   duplicate_rate?: number | null;
 };
@@ -739,6 +742,7 @@ export function ProjectCard({
                       <span>检查 {numberMetric(skillQualityTotals.checked_count)}</span>
                       <span>命中 {formatRate(skillQualityTotals.hit_rate)}</span>
                       <span>过滤 {formatRate(skillQualityTotals.rejected_rate)}</span>
+                      <span>人工误报 {formatRate(skillQualityTotals.manual_reject_rate)}</span>
                       <span>重复 {formatRate(skillQualityTotals.duplicate_rate)}</span>
                     </div>
                   </div>
@@ -750,6 +754,7 @@ export function ProjectCard({
                       <span>检查</span>
                       <span>命中率</span>
                       <span>过滤率</span>
+                      <span>人工误报</span>
                       <span>重试命中</span>
                     </div>
                     {skillQualityItems.map((item, index) => (
@@ -762,6 +767,7 @@ export function ProjectCard({
                         <span>{numberMetric(item.checked_count)}</span>
                         <span>{formatRate(item.hit_rate)}</span>
                         <span>{formatRate(item.rejected_rate)}</span>
+                        <span>{formatRate(item.manual_reject_rate)}</span>
                         <span>{formatRate(item.retry_hit_rate)}</span>
                       </div>
                     ))}

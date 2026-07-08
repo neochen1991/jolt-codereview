@@ -14,6 +14,9 @@ const serviceSnippets = [
   "retry_hit_count",
   "duplicate_merge_count",
   "manual_reject_count",
+  "feedback_false_positive",
+  "feedback_dismissed",
+  "manual_reject_rate",
   "dimensions: [\"project_id\", \"skill_key\", \"checkpoint_id\", \"agent_id\", \"model\", \"week\"]"
 ];
 
@@ -27,6 +30,8 @@ const frontendSnippets = [
   "skillQualityMetrics",
   "Skill Checkpoint 质量",
   "checkpoint_id",
+  "人工误报",
+  "manual_reject_rate",
   "retry_hit_rate"
 ];
 

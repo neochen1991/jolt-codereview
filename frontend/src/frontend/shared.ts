@@ -473,6 +473,42 @@ export function readableFileSize(bytes: number) {
   return `${Math.round(bytes / 1024 / 102.4) / 10} MB`;
 }
 
+export async function buildSkillBundleAssets(files: File[]) {
+  const filtered = files.filter((file) => file.size >= 0 && !uploadRelativePath(file).split("/").some((segment) => segment === ".DS_Store"));
+  const assets = filtered
+    .map((file) => ({ file, assetPath: normalizeSkillBundleAssetPath(file) }))
+    .filter((item) => item.assetPath && !item.assetPath.includes("..") && isStandardSkillAssetPath(item.assetPath));
+  return Promise.all(
+    assets.map(async (asset) => ({
+      file: asset.file,
+      asset_path: asset.assetPath,
+      content: await readUploadText(asset.file),
+      executable: asset.assetPath.startsWith("scripts/")
+    }))
+  );
+}
+
+export async function validateSkillBundle(input: {
+  projectId: string;
+  skillName: string;
+  skillKey: string;
+  content?: string;
+  files?: File[];
+}) {
+  const assets = input.files?.length
+    ? (await buildSkillBundleAssets(input.files)).map((asset) => ({ asset_path: asset.asset_path, content: asset.content }))
+    : [{ asset_path: "SKILL.md", content: input.content || "" }];
+  return api<Record<string, unknown>>(`/api/projects/${input.projectId}/custom-skills/validate`, {
+    method: "POST",
+    body: JSON.stringify({
+      skill_key: input.skillKey.trim() || input.skillName.trim(),
+      name: input.skillName.trim(),
+      content: input.content || "",
+      assets
+    })
+  });
+}
+
 export async function uploadSkillBundleToProject(input: {
   projectId: string;
   agentKey: string;
@@ -480,15 +516,14 @@ export async function uploadSkillBundleToProject(input: {
   skillKey: string;
   files: File[];
 }) {
-  const files = input.files.filter((file) => file.size >= 0 && !uploadRelativePath(file).split("/").some((segment) => segment === ".DS_Store"));
-  if (!files.length) throw new Error("请选择标准 Skill 文件夹");
-  const assets = files
-    .map((file) => ({ file, assetPath: normalizeSkillBundleAssetPath(file) }))
-    .filter((item) => item.assetPath && !item.assetPath.includes("..") && isStandardSkillAssetPath(item.assetPath));
-  const skillMd = assets.find((item) => item.assetPath === "SKILL.md");
+  if (!input.files.length) throw new Error("请选择标准 Skill 文件夹");
+  const validation = await validateSkillBundle({ projectId: input.projectId, skillName: input.skillName, skillKey: input.skillKey, files: input.files });
+  if (!validation.ok) throw new Error(`Skill 校验未通过：${JSON.stringify(validation.failures || [], null, 2)}`);
+  const assets = await buildSkillBundleAssets(input.files);
+  const skillMd = assets.find((item) => item.asset_path === "SKILL.md");
   if (!skillMd) throw new Error("Skill 文件夹必须包含 SKILL.md");
-  const skillContent = await readUploadText(skillMd.file);
-  const rootName = skillRootNameFromFiles(files);
+  const skillContent = skillMd.content;
+  const rootName = skillRootNameFromFiles(input.files);
   const skillName = input.skillName.trim() || rootName || "项目自定义 Skill";
   const skillKey = input.skillKey.trim() || rootName || skillName;
   const skill = await api<Record<string, unknown>>(`/api/projects/${input.projectId}/custom-skills`, {
@@ -504,14 +539,13 @@ export async function uploadSkillBundleToProject(input: {
   });
   const createdSkillKey = String(skill.skill_key || skillKey);
   for (const asset of assets) {
-    const content = await readUploadText(asset.file);
     await api(`/api/projects/${input.projectId}/custom-skill-assets`, {
       method: "POST",
       body: JSON.stringify({
         skill_key: createdSkillKey,
-        asset_path: asset.assetPath,
-        content,
-        executable: asset.assetPath.startsWith("scripts/")
+        asset_path: asset.asset_path,
+        content: asset.content,
+        executable: asset.executable
       })
     });
   }
@@ -521,7 +555,7 @@ export async function uploadSkillBundleToProject(input: {
       body: JSON.stringify({ agent_key: input.agentKey, skill_key: createdSkillKey, priority: 100, enabled: true })
     });
   }
-  return { skillKey: createdSkillKey, assetCount: assets.length };
+  return { skillKey: createdSkillKey, assetCount: assets.length, validation };
 }
 
 export function normalizeMrChangedFiles(value: unknown): MrChangedFile[] {

@@ -42,6 +42,7 @@ import {
   readUploadText,
   readableFileSize,
   uploadSkillBundleToProject,
+  validateSkillBundle,
   splitCsv,
   clampLlmTimeout,
   clampLlmOutputTokens,
@@ -172,23 +173,36 @@ export function ConfigWorkspace({
   const [skillAgentKey, setSkillAgentKey] = useState("team_custom_agent");
   const [skillBundleFiles, setSkillBundleFiles] = useState<File[]>([]);
   const [skillBundleInfo, setSkillBundleInfo] = useState("");
+  const [skillValidationReport, setSkillValidationReport] = useState<Record<string, unknown> | null>(null);
   const [skillAssetPath, setSkillAssetPath] = useState("references/team-rules.md");
   const [skillAssetSkillKey, setSkillAssetSkillKey] = useState("team-custom-review");
   const [skillAssetContent, setSkillAssetContent] = useState("## TEAM-RULE-001 团队自定义规范\n\n### 规范说明\n在这里填写团队规则说明。\n\n### 检查点\n- 检查点 1。\n- 检查点 2。\n\n### 如何检查\n1. 读取当前 MR diff。\n2. 对照规则逐条检查。\n\n### 反例\n```java\n// bad example\n```\n\n### 正例\n```java\n// good example\n```\n");
   const [skillContent, setSkillContent] = useState([
+    "---",
+    "name: team-custom-review",
+    "description: 团队自定义代码检视 Skill",
+    "---",
+    "",
     "# 团队自定义检视 Skill",
     "",
-    "## 角色增强",
-    "你熟悉本团队业务、工程约束和代码规范。",
+    "## TEAM-RULE-001 团队自定义规范完整性检查",
+    "- severity: medium",
+    "- applies_to: **/*",
     "",
-    "## 必读参考",
-    "- references/team-rules.md",
+    "### 检查点",
+    "当前 MR 违反团队业务、工程约束或代码规范时，必须指出具体规则、源码位置和影响。",
     "",
-    "## 检视步骤",
-    "1. 调用 read_skill_asset 读取 references 下的团队规范。",
-    "2. 按参考文档中的规则逐条检查当前 MR diff。",
-    "3. 只输出当前 MR 新增/修改行上的高置信问题。",
-    "4. 每个 finding 必须包含 covered_rules、精确行号和 suggested_code。"
+    "### 证据要求",
+    "- 精确文件和新增/修改行号",
+    "- 命中的团队规则 ID",
+    "- 源码片段能直接证明问题",
+    "",
+    "### 误报模式",
+    "- 仅测试样例或演示代码",
+    "- 规则已由同一变更中的统一封装满足",
+    "",
+    "### 修复建议",
+    "按团队规范补齐实现，并增加必要的回归测试。"
   ].join("\n"));
   const [memberName, setMemberName] = useState("");
   const currentSettingsKey = `${projectId}:settings`;
@@ -475,6 +489,7 @@ export function ConfigWorkspace({
         files: skillBundleFiles
       });
       setSkillKey(result.skillKey);
+      setSkillValidationReport(result.validation || null);
       setSkillBundleFiles([]);
       setSkillBundleInfo("");
       setMessage(`Skill 文件夹已上传并绑定，资源 ${result.assetCount} 个`);
@@ -482,6 +497,12 @@ export function ConfigWorkspace({
       return;
     }
     if (!skillName.trim() || !skillContent.trim()) return;
+    const validation = await validateSkillBundle({ projectId, skillName, skillKey, content: skillContent });
+    setSkillValidationReport(validation);
+    if (!validation.ok) {
+      setMessage("Skill 校验未通过，请先修正解析错误");
+      return;
+    }
     const skill = await api<Record<string, unknown>>(`/api/projects/${projectId}/custom-skills`, {
       method: "POST",
       body: JSON.stringify({
@@ -527,6 +548,7 @@ export function ConfigWorkspace({
       .filter((path) => path && !path.includes("..") && isStandardSkillAssetPath(path));
     const hasSkillMd = assetPaths.some((path) => path === "SKILL.md");
     setSkillBundleFiles(files);
+    setSkillValidationReport(null);
     setSkillBundleInfo(`${rootName || "已选择文件"} · 有效资源 ${assetPaths.length}/${files.length} 个 · ${readableFileSize(totalSize)}${hasSkillMd ? "" : " · 缺少 SKILL.md"}`);
     setMessage(hasSkillMd ? "Skill 文件夹已选择，可上传并绑定" : "Skill 文件夹缺少 SKILL.md，请重新选择");
   }
@@ -979,6 +1001,28 @@ export function ConfigWorkspace({
     return Number.isFinite(parsed) ? `${Math.round(parsed * 100)}%` : "--";
   }
 
+  function skillValidationPreview() {
+    if (!skillValidationReport) return null;
+    const failures = Array.isArray(skillValidationReport.failures) ? skillValidationReport.failures as Record<string, unknown>[] : [];
+    const warnings = Array.isArray(skillValidationReport.warnings) ? skillValidationReport.warnings as Record<string, unknown>[] : [];
+    const checkpoints = Array.isArray(skillValidationReport.checkpoints) ? skillValidationReport.checkpoints as Record<string, unknown>[] : [];
+    return (
+      <div className={`skill-validation-preview ${skillValidationReport.ok ? "ok" : "error"}`}>
+        <strong>{skillValidationReport.ok ? "Skill 校验通过" : "Skill 校验未通过"}</strong>
+        <span>{checkpoints.length} 个 checkpoint · {warnings.length} 个警告 · {failures.length} 个错误</span>
+        {failures.slice(0, 4).map((item, index) => (
+          <p key={`failure-${index}`}>{String(item.path || "Skill")}：{String(item.message || "校验失败")}</p>
+        ))}
+        {warnings.slice(0, 4).map((item, index) => (
+          <p key={`warning-${index}`}>{String(item.path || "Skill")}：{String(item.message || "需要确认")}</p>
+        ))}
+        {checkpoints.slice(0, 6).map((item, index) => (
+          <p key={`checkpoint-${index}`}>{String(item.checkpoint_id || "--")} · {String(item.source_path || "SKILL.md")} · {String(item.false_positive_patterns || "未解析到误报模式").slice(0, 96)}</p>
+        ))}
+      </div>
+    );
+  }
+
   if (view === "full" || view === "issues") {
     return (
       <section className="config-workspace">
@@ -1078,6 +1122,7 @@ export function ConfigWorkspace({
                     <span>{ruleDocUploadInfo || "选择 .md 规范文档"}</span>
                     <input type="file" accept=".md,text/markdown,text/plain" onChange={handleRuleMarkdownFile} disabled={!canEdit} />
                   </label>
+                  {skillValidationPreview()}
                   <details className="compact-preview">
                     <summary>查看或微调规范内容</summary>
                     <textarea value={ruleContent} onChange={(event) => setRuleContent(event.target.value)} disabled={!canEdit} />

@@ -4,6 +4,7 @@ import path from "node:path";
 const root = process.cwd();
 const service = readFileSync(path.join(root, "mr-backend", "src", "backend", "services", "ObservabilityService.ts"), "utf8");
 const routes = readFileSync(path.join(root, "mr-backend", "src", "backend", "routes", "observability.routes.ts"), "utf8");
+const projectViews = readFileSync(path.join(root, "frontend", "src", "frontend", "components", "ProjectViews.tsx"), "utf8");
 
 const serviceSnippets = [
   "summarizeSkillCheckpointMetrics",
@@ -21,12 +22,23 @@ const routeSnippets = [
   "getSkillCheckpointQualityMetrics"
 ];
 
+const frontendSnippets = [
+  "/api/projects/${project.id}/skill-checkpoints/quality",
+  "skillQualityMetrics",
+  "Skill Checkpoint 质量",
+  "checkpoint_id",
+  "retry_hit_rate"
+];
+
 const failures = [];
 for (const snippet of serviceSnippets) {
   if (!service.includes(snippet)) failures.push(`ObservabilityService.ts missing ${snippet}`);
 }
 for (const snippet of routeSnippets) {
   if (!routes.includes(snippet)) failures.push(`observability.routes.ts missing ${snippet}`);
+}
+for (const snippet of frontendSnippets) {
+  if (!projectViews.includes(snippet)) failures.push(`ProjectViews.tsx missing ${snippet}`);
 }
 
 if (failures.length) {

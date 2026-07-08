@@ -106,6 +106,30 @@ function skillAssetSummary(row: Record<string, unknown>) {
   return count ? `${count} 个资源文件` : "--";
 }
 
+function skillCheckpointSummary(row: Record<string, unknown>) {
+  const checkpoint = String(row.checkpoint_id || row.rule_id || "").trim();
+  const rejectedCount = Number(row.rejected_count || 0);
+  const reasons = arrayStrings(row.rejected_reasons);
+  const parts = [
+    checkpoint ? `Checkpoint ${checkpoint}` : "",
+    rejectedCount ? `过滤 ${rejectedCount}` : "",
+    reasons.length ? reasons.slice(0, 2).join(", ") : ""
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function skillRejectedEvidenceSummary(row: Record<string, unknown>) {
+  const rejectedItems = Array.isArray(row.rejected_items) ? row.rejected_items as Record<string, unknown>[] : [];
+  const summaries = rejectedItems.flatMap((item) => {
+    const falsePositiveMatches = arrayStrings(item.false_positive_matches);
+    const missingRequired = arrayStrings(item.missing_required_evidence);
+    if (falsePositiveMatches.length) return [`误报模式: ${falsePositiveMatches.slice(0, 2).join(", ")}`];
+    if (missingRequired.length) return [`缺少证据: ${missingRequired.slice(0, 2).join(", ")}`];
+    return [];
+  });
+  return summaries[0] || "";
+}
+
 export function MrQueue({
   items,
   activeMrId,
@@ -870,7 +894,8 @@ export function ProcessTimeline({ detail }: { detail: Detail }) {
               </div>
               <em className={`skill-stage ${String(row.stage || "recorded").replace(/[^a-z0-9_-]/gi, "_")}`}>{skillStageText(row.stage)}</em>
               <time>{formatDateTime(recordTimestamp(row))}</time>
-              <p>{String(row.batch_label || row.summary || skillStatusText(row.status))}</p>
+              <p>{skillCheckpointSummary(row) || String(row.batch_label || row.summary || skillStatusText(row.status))}</p>
+              {skillRejectedEvidenceSummary(row) && <p>{skillRejectedEvidenceSummary(row)}</p>}
               <small title={skillAssetSummary(row)}>{skillAssetSummary(row)}</small>
             </article>
           ))}

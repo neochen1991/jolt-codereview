@@ -38,6 +38,38 @@ const DEFAULT_LLM_FORM: LlmSettingsForm = {
   enable_stream: true
 };
 
+type SkillCheckpointMetric = {
+  skill_key?: string;
+  checkpoint_id?: string;
+  agent_id?: string;
+  model?: string;
+  week?: string;
+  checked_count?: number;
+  hit_count?: number;
+  skip_count?: number;
+  retry_count?: number;
+  rejected_count?: number;
+  duplicate_merge_count?: number;
+  hit_rate?: number | null;
+  rejected_rate?: number | null;
+  retry_hit_rate?: number | null;
+  duplicate_rate?: number | null;
+};
+
+type SkillCheckpointQuality = {
+  totals?: SkillCheckpointMetric;
+  items?: SkillCheckpointMetric[];
+};
+
+function formatRate(value: unknown) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "--";
+  return `${Math.round(value * 100)}%`;
+}
+
+function numberMetric(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 export function ProjectSelectionPage({
   user,
   projects,
@@ -354,6 +386,7 @@ export function ProjectCard({
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmSaving, setLlmSaving] = useState(false);
   const [llmTest, setLlmTest] = useState<LlmTestState>({ status: "idle", message: "" });
+  const [skillQualityMetrics, setSkillQualityMetrics] = useState<SkillCheckpointQuality>({ items: [], totals: {} });
 
   async function loadRepos() {
     setRepos(await api<Repo[]>(`/api/projects/${project.id}/repositories`));
@@ -362,10 +395,12 @@ export function ProjectCard({
   async function loadProjectLlmSettings() {
     setLlmLoading(true);
     try {
-      const [settings, effective] = await Promise.all([
+      const [settings, effective, skillQuality] = await Promise.all([
         api<Record<string, unknown>>(`/api/projects/${project.id}/settings`),
-        api<Record<string, unknown>>(`/api/projects/${project.id}/effective-config`)
+        api<Record<string, unknown>>(`/api/projects/${project.id}/effective-config`),
+        api<SkillCheckpointQuality>(`/api/projects/${project.id}/skill-checkpoints/quality`).catch(() => ({ items: [], totals: {} }))
       ]);
+      setSkillQualityMetrics(skillQuality);
       const settingsMap = recordValue((settings as Record<string, unknown>).settings);
       const effectiveRoot = recordValue((effective as Record<string, unknown>).effective_config);
       const llm = { ...recordValue(effectiveRoot.llm), ...recordValue(settingsMap.llm_policy) };
@@ -383,6 +418,7 @@ export function ProjectCard({
       setLlmTest({ status: "idle", message: "" });
     } catch (error) {
       setLlmTest({ status: "failed", message: error instanceof Error ? error.message : String(error) });
+      setSkillQualityMetrics({ items: [], totals: {} });
     } finally {
       setLlmLoading(false);
     }
@@ -501,6 +537,9 @@ export function ProjectCard({
       setBusy(false);
     }
   }
+
+  const skillQualityItems = (skillQualityMetrics.items || []).slice(0, 8);
+  const skillQualityTotals = skillQualityMetrics.totals || {};
 
   return (
     <article className="project-card">
@@ -690,6 +729,45 @@ export function ProjectCard({
                   </button>
                 </div>
                 {llmTest.message && <p className={`llm-test-result ${llmTest.status}`}>{llmTest.message}</p>}
+                <div className="project-skill-quality-panel">
+                  <div className="project-skill-quality-head">
+                    <div>
+                      <strong>Skill Checkpoint 质量</strong>
+                      <span>按项目、Skill、Checkpoint、Agent、模型和周聚合最近 500 次检视。</span>
+                    </div>
+                    <div className="project-skill-quality-totals">
+                      <span>检查 {numberMetric(skillQualityTotals.checked_count)}</span>
+                      <span>命中 {formatRate(skillQualityTotals.hit_rate)}</span>
+                      <span>过滤 {formatRate(skillQualityTotals.rejected_rate)}</span>
+                      <span>重复 {formatRate(skillQualityTotals.duplicate_rate)}</span>
+                    </div>
+                  </div>
+                  <div className="project-skill-quality-table" aria-label="Skill checkpoint 质量指标">
+                    <div className="project-skill-quality-row head">
+                      <span>Checkpoint</span>
+                      <span>Agent / 模型</span>
+                      <span>周</span>
+                      <span>检查</span>
+                      <span>命中率</span>
+                      <span>过滤率</span>
+                      <span>重试命中</span>
+                    </div>
+                    {skillQualityItems.map((item, index) => (
+                      <div className="project-skill-quality-row" key={`${item.skill_key || "skill"}-${item.checkpoint_id || "checkpoint"}-${item.agent_id || "agent"}-${item.model || "model"}-${item.week || index}`}>
+                        <strong title={`${item.skill_key || "skill"} / ${item.checkpoint_id || "checkpoint"}`}>
+                          {item.checkpoint_id || "未命名 checkpoint"}
+                        </strong>
+                        <span title={`${item.agent_id || "unknown"} / ${item.model || "unknown"}`}>{item.agent_id || "unknown"} / {item.model || "unknown"}</span>
+                        <span>{item.week || "--"}</span>
+                        <span>{numberMetric(item.checked_count)}</span>
+                        <span>{formatRate(item.hit_rate)}</span>
+                        <span>{formatRate(item.rejected_rate)}</span>
+                        <span>{formatRate(item.retry_hit_rate)}</span>
+                      </div>
+                    ))}
+                    {!skillQualityItems.length && <div className="config-table-empty">暂无 Skill checkpoint 指标</div>}
+                  </div>
+                </div>
               </section>
             </div>
           </section>

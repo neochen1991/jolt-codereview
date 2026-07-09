@@ -5,6 +5,7 @@ import {
   GitBranch,
   Link2,
   Plus,
+  Search,
   Settings,
   Trash2,
   UserRound,
@@ -100,7 +101,12 @@ export function ProjectSelectionPage({
   const [joinReason, setJoinReason] = useState("");
   const [joiningProjectId, setJoiningProjectId] = useState("");
   const [inviteCode, setInviteCode] = useState("");
+  const [projectSearch, setProjectSearch] = useState("");
   const canCreateProject = isRootUser(user);
+  const projectSearchText = projectSearch.trim().toLowerCase();
+  const visibleProjects = projectSearchText
+    ? projects.filter((project) => project.name.toLowerCase().includes(projectSearchText))
+    : projects;
 
   async function loadDiscoverProjects() {
     const result = await api<{ items: Project[] }>("/api/projects/discover");
@@ -198,13 +204,18 @@ export function ProjectSelectionPage({
         <ProjectUserMenu user={user} logout={logout} updateProfile={updateProfile} />
       </header>
       <section className="project-home-heading">
-        <h1>选择项目</h1>
-        <p>项目隔离仓库、规则、专家 Agent、模型配置和检视队列。进入项目后只展示该项目的 MR 工作台。</p>
+        <h1>搜索项目</h1>
+        <label className="project-search-box">
+          <Search size={18} />
+          <input
+            value={projectSearch}
+            onChange={(event) => setProjectSearch(event.target.value)}
+            placeholder="输入项目名称"
+            aria-label="搜索项目名称"
+          />
+        </label>
       </section>
       <section className="project-card-grid">
-        {projects.map((project) => (
-          <ProjectCard key={project.id} project={project} user={user} refreshProjects={refreshProjects} enterProject={enterProject} />
-        ))}
         {canCreateProject && (
           <button className="project-create-card" type="button" onClick={() => setCreateOpen(true)}>
             <span><Plus size={22} /></span>
@@ -212,7 +223,11 @@ export function ProjectSelectionPage({
             <em>创建项目后可立即绑定 Git 仓库，并进入独立 MR 工作台。</em>
           </button>
         )}
+        {visibleProjects.map((project) => (
+          <ProjectCard key={project.id} project={project} user={user} refreshProjects={refreshProjects} enterProject={enterProject} />
+        ))}
         {!projects.length && <div className="config-table-empty">暂无可访问项目</div>}
+        {Boolean(projectSearchText && projects.length && !visibleProjects.length) && <div className="config-table-empty">没有匹配的项目</div>}
       </section>
       {!isRootUser(user) && <section className="project-join-panel">
         <div>

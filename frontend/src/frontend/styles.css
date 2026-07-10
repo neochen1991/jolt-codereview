@@ -2081,6 +2081,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 0 10px;
 }
 
+.agent-binding-upload-panel .template-action-row button,
+.agent-binding-upload-panel .template-action-row a {
+  border-color: #c9d6e5;
+  background: #fff;
+  color: #315fb8;
+}
+
 .agent-binding-editor-columns {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2211,6 +2218,34 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   color: #60728b;
   font-size: 12px;
   line-height: 1.35;
+}
+
+.template-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.template-action-row button,
+.template-action-row a {
+  min-height: 30px;
+  border: 1px solid #c9d6e5;
+  border-radius: 5px;
+  background: #fff;
+  color: #315fb8;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.template-action-row button:hover,
+.template-action-row a:hover {
+  border-color: var(--blue);
+  background: var(--blue-soft);
 }
 
 .rule-upload-form {

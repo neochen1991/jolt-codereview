@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import {
   Check,
   Circle,
+  ClipboardList,
   FileCode2,
   Folder,
   Loader2,
@@ -61,6 +62,129 @@ import {
   statusLabel,
   providerLabel
 } from "../shared";
+
+const RULE_DOCUMENT_TEMPLATE_NAME = "安全检视规范模板.md";
+const RULE_DOCUMENT_TEMPLATE = `# 安全检视规范模板
+
+## SEC-AUTH-001 管理接口鉴权检查
+
+### 规范说明
+管理端、运营端、批量处理、资金或敏感数据接口必须做身份认证和权限校验。新增或修改接口时，如果能修改业务状态、导出敏感数据、执行审批或触发补偿任务，必须明确校验当前用户权限。
+
+### 证据要求
+- 新增或修改 Controller、Handler、RPC 接口、定时任务触发入口或管理 API
+- 接口涉及审批、退款、配置、导出、用户权限、资金或敏感数据
+- 源码中缺少权限注解、权限服务调用、角色校验或统一鉴权链路证据
+
+### 误报模式
+- 普通只读健康检查、公开元数据查询或静态资源接口
+- 权限由统一网关或切面处理，且代码中能看到明确注解、拦截器或路由配置
+- 测试代码、demo 代码或本地调试入口
+
+### 修复建议
+在入口处增加认证和授权校验；使用统一权限组件校验角色、资源范围和操作类型；补充未授权访问测试和审计记录。`;
+
+const SKILL_TEMPLATE_NAME = "安全检视 Skill 模板";
+const SKILL_TEMPLATE_KEY = "security-review-skill-template";
+const SKILL_MD_TEMPLATE = `---
+name: security-review-skill-template
+description: Review backend merge requests for authentication, sensitive data, and Redis cache safety risks.
+---
+
+# Security Review Skill Template
+
+Use this Skill for backend Java or TypeScript service changes involving APIs, authorization, sensitive data, or cache writes.
+
+The reviewer must inspect every checkpoint from \`references/security-review-rules.md\` independently. When a checkpoint is hit, the finding must use the checkpoint id exactly as defined in the reference document. Do not replace a Skill checkpoint id with a nearby platform rule, bound standard, expert persona rule, or free-form category.
+
+Priority order for conflicting guidance:
+
+1. Skill checkpoint
+2. Bound project standard
+3. Expert persona
+
+If the source does not satisfy a checkpoint's required evidence, return no finding for that checkpoint. If the source matches a false positive pattern, return no finding for that checkpoint.`;
+
+const SKILL_REFERENCE_TEMPLATE_PATH = "references/security-review-rules.md";
+const SKILL_REFERENCE_TEMPLATE = `# Security Review Rules
+
+## SEC-AUTH-001 管理接口鉴权检查
+- severity: high
+- applies_to: src/main/java/**,src/**/*.ts
+
+### 检查点
+管理端、运营端、批量处理、资金或敏感数据接口必须做身份认证和权限校验。新增或修改接口时，如果能修改业务状态、导出敏感数据、执行审批或触发补偿任务，必须明确校验当前用户权限。
+
+### 证据要求
+- 新增或修改 Controller、Handler、RPC 接口、定时任务触发入口或管理 API
+- 接口涉及审批、退款、配置、导出、用户权限、资金或敏感数据
+- 源码中缺少权限注解、权限服务调用、角色校验或统一鉴权链路证据
+
+### 误报模式
+- 普通只读健康检查、公开元数据查询或静态资源接口
+- 权限由统一网关或切面处理，且代码中能看到明确注解、拦截器或路由配置
+- 测试代码、demo 代码或本地调试入口
+
+### 修复建议
+在入口处增加认证和授权校验；使用统一权限组件校验角色、资源范围和操作类型；补充未授权访问测试和审计记录。
+
+## SEC-DATA-002 敏感数据输出检查
+- severity: high
+- applies_to: src/main/java/**,src/**/*.ts
+
+### 检查点
+接口响应、日志、异常消息、导出文件和异步消息不能直接输出手机号、身份证号、银行卡、token、密钥、密码、个人地址等敏感字段。必须脱敏、过滤或只返回必要字段。
+
+### 证据要求
+- 代码读取或返回 user、customer、account、token、secret、password、mobile、idCard、bankCard 等敏感字段
+- 字段进入响应 DTO、日志、异常、导出内容或消息体
+- 缺少脱敏函数、字段白名单、权限过滤或安全审计说明
+
+### 误报模式
+- 字段已经经过 mask、desensitize、redact、encrypt 或等价处理
+- 仅内部测试 fixture 或模拟数据
+- 日志只记录不可逆 hash、traceId 或非敏感业务 id
+
+### 修复建议
+使用响应白名单和脱敏工具；日志中只保留必要的 traceId、业务 id 或不可逆摘要；为敏感字段输出增加单元测试。
+
+## REDIS-TTL-002 Redis 业务缓存 TTL 检查
+- severity: medium
+- applies_to: src/main/java/**,src/**/*.ts
+
+### 检查点
+业务缓存写入 Redis 时必须设置过期时间。永久配置 key、feature flag、灰度开关、系统配置 key 不属于本检查点。
+
+### 证据要求
+- 使用 redisTemplate.opsForValue().set、set、hset 或等价 Redis 写入
+- key 属于用户状态、订单详情、审批状态、任务进度或业务结果缓存
+- 缺少 Duration、expire、setEx、EX 参数或等价过期时间
+
+### 误报模式
+- 永久配置 key，例如 system:feature:config
+- feature flag、灰度开关、系统配置等明确永久 key
+- 代码紧随其后调用 expire 设置过期时间
+
+### 修复建议
+为业务缓存设置合理 TTL；永久 key 必须用常量命名并注释说明 permanent/config 语义；补充缓存过期行为测试。`;
+
+function formatValidationFailures(report: Record<string, unknown>) {
+  const failures = Array.isArray(report.failures) ? report.failures : [];
+  if (!failures.length) return "Skill 校验未通过";
+  return failures
+    .map((item) => {
+      if (!item || typeof item !== "object") return String(item);
+      const row = item as Record<string, unknown>;
+      return [row.path, row.checkpoint_id, row.message].filter(Boolean).join(" · ");
+    })
+    .join("\n");
+}
+
+function skillReferenceTemplateAssets(content: string) {
+  return content.includes(SKILL_REFERENCE_TEMPLATE_PATH)
+    ? [{ asset_path: SKILL_REFERENCE_TEMPLATE_PATH, content: SKILL_REFERENCE_TEMPLATE }]
+    : [];
+}
 
 export function ConfigWorkspace({
   view,
@@ -155,8 +279,8 @@ export function ConfigWorkspace({
   const [invitations, setInvitations] = useState<Record<string, unknown>[]>([]);
   const [inviteRole, setInviteRole] = useState("developer");
   const [agentTab, setAgentTab] = useState<"create" | "list">("create");
-  const [ruleContent, setRuleContent] = useState("只报告有证据、有行号、可修复的高置信问题。");
-  const [ruleDocName, setRuleDocName] = useState("项目代码规范.md");
+  const [ruleContent, setRuleContent] = useState(RULE_DOCUMENT_TEMPLATE);
+  const [ruleDocName, setRuleDocName] = useState(RULE_DOCUMENT_TEMPLATE_NAME);
   const [ruleDocAgentKey, setRuleDocAgentKey] = useState("security_agent");
   const [customAgentKey, setCustomAgentKey] = useState("team_custom_agent");
   const [customAgentName, setCustomAgentName] = useState("团队自定义 Agent");
@@ -177,33 +301,7 @@ export function ConfigWorkspace({
   const [skillAssetPath, setSkillAssetPath] = useState("references/team-rules.md");
   const [skillAssetSkillKey, setSkillAssetSkillKey] = useState("team-custom-review");
   const [skillAssetContent, setSkillAssetContent] = useState("## TEAM-RULE-001 团队自定义规范\n\n### 规范说明\n在这里填写团队规则说明。\n\n### 检查点\n- 检查点 1。\n- 检查点 2。\n\n### 如何检查\n1. 读取当前 MR diff。\n2. 对照规则逐条检查。\n\n### 反例\n```java\n// bad example\n```\n\n### 正例\n```java\n// good example\n```\n");
-  const [skillContent, setSkillContent] = useState([
-    "---",
-    "name: team-custom-review",
-    "description: 团队自定义代码检视 Skill",
-    "---",
-    "",
-    "# 团队自定义检视 Skill",
-    "",
-    "## TEAM-RULE-001 团队自定义规范完整性检查",
-    "- severity: medium",
-    "- applies_to: **/*",
-    "",
-    "### 检查点",
-    "当前 MR 违反团队业务、工程约束或代码规范时，必须指出具体规则、源码位置和影响。",
-    "",
-    "### 证据要求",
-    "- 精确文件和新增/修改行号",
-    "- 命中的团队规则 ID",
-    "- 源码片段能直接证明问题",
-    "",
-    "### 误报模式",
-    "- 仅测试样例或演示代码",
-    "- 规则已由同一变更中的统一封装满足",
-    "",
-    "### 修复建议",
-    "按团队规范补齐实现，并增加必要的回归测试。"
-  ].join("\n"));
+  const [skillContent, setSkillContent] = useState(SKILL_MD_TEMPLATE);
   const [memberName, setMemberName] = useState("");
   const currentSettingsKey = `${projectId}:settings`;
   const settingsReady = view !== "settings" || settingsLoadedKey === currentSettingsKey;
@@ -404,6 +502,26 @@ export function ConfigWorkspace({
     loadConfigView().catch((error) => setMessage((error as Error).message));
   }, [view, projectId]);
 
+  function applyRuleTemplate() {
+    setRuleDocName(RULE_DOCUMENT_TEMPLATE_NAME);
+    setRuleContent(RULE_DOCUMENT_TEMPLATE);
+    setRuleDocUploadInfo("已填入规范模板，可按团队规则修改");
+    setMessage("已填入规范模板");
+  }
+
+  function applySkillTemplate() {
+    setSkillName(SKILL_TEMPLATE_NAME);
+    setSkillKey(SKILL_TEMPLATE_KEY);
+    setSkillContent(SKILL_MD_TEMPLATE);
+    setSkillBundleFiles([]);
+    setSkillBundleInfo("已填入 SKILL.md 和 references/security-review-rules.md 模板");
+    setSkillAssetPath(SKILL_REFERENCE_TEMPLATE_PATH);
+    setSkillAssetContent(SKILL_REFERENCE_TEMPLATE);
+    setSkillAssetSkillKey(SKILL_TEMPLATE_KEY);
+    setSkillValidationReport(null);
+    setMessage("已填入 Skill 模板：SKILL.md 和 references/security-review-rules.md");
+  }
+
   async function createRule() {
     await api(`/api/projects/${projectId}/rule-sets`, {
       method: "POST",
@@ -497,10 +615,11 @@ export function ConfigWorkspace({
       return;
     }
     if (!skillName.trim() || !skillContent.trim()) return;
-    const validation = await validateSkillBundle({ projectId, skillName, skillKey, content: skillContent });
+    const templateAssets = skillReferenceTemplateAssets(skillContent);
+    const validation = await validateSkillBundle({ projectId, skillName, skillKey, content: skillContent, assets: templateAssets });
     setSkillValidationReport(validation);
     if (!validation.ok) {
-      setMessage("Skill 校验未通过，请先修正解析错误");
+      setMessage(formatValidationFailures(validation));
       return;
     }
     const skill = await api<Record<string, unknown>>(`/api/projects/${projectId}/custom-skills`, {
@@ -525,6 +644,18 @@ export function ConfigWorkspace({
         executable: false
       })
     });
+    for (const asset of templateAssets) {
+      await api(`/api/projects/${projectId}/custom-skill-assets`, {
+        method: "POST",
+        body: JSON.stringify({
+          skill_key: createdSkillKey,
+          asset_path: asset.asset_path,
+          asset_type: "reference",
+          content: asset.content,
+          executable: false
+        })
+      });
+    }
     if (skillAgentKey) {
       await api(`/api/projects/${projectId}/expert-skill-bindings`, {
         method: "POST",
@@ -1107,6 +1238,13 @@ export function ConfigWorkspace({
                     <strong>上传 Markdown 规范</strong>
                     <span>选择 `.md` 文档后自动读取内容，再绑定到指定专家。</span>
                   </div>
+                  <div className="template-action-row">
+                    <button type="button" onClick={applyRuleTemplate} disabled={!canEdit}>
+                      <ClipboardList size={14} />
+                      使用规范模板
+                    </button>
+                    <a href="/templates/rule-document-template.md" target="_blank" rel="noreferrer">查看模板文件</a>
+                  </div>
                   <div className="rule-upload-form compact-upload-form">
                     <input value={ruleDocName} onChange={(event) => setRuleDocName(event.target.value)} disabled={!canEdit} />
                     <select value={ruleDocAgentKey} onChange={(event) => setRuleDocAgentKey(event.target.value)} disabled={!canEdit}>
@@ -1132,6 +1270,14 @@ export function ConfigWorkspace({
                   <div>
                     <strong>上传标准 Skill 文件夹</strong>
                     <span>文件夹需包含 `SKILL.md`，支持 `references/`、`scripts/`、`assets/`。</span>
+                  </div>
+                  <div className="template-action-row">
+                    <button type="button" onClick={applySkillTemplate} disabled={!canEdit}>
+                      <ClipboardList size={14} />
+                      使用 Skill 模板
+                    </button>
+                    <a href="/templates/security-review-skill-template/SKILL.md" target="_blank" rel="noreferrer">SKILL.md</a>
+                    <a href="/templates/security-review-skill-template/references/security-review-rules.md" target="_blank" rel="noreferrer">references 规范</a>
                   </div>
                   <div className="rule-upload-form compact-upload-form">
                     <input value={skillName} onChange={(event) => setSkillName(event.target.value)} placeholder="Skill 名称" disabled={!canEdit} />
@@ -2363,6 +2509,22 @@ export function AgentBindingEditorModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  function applyModalRuleTemplate() {
+    setNewRuleName(RULE_DOCUMENT_TEMPLATE_NAME);
+    setNewRuleContent(RULE_DOCUMENT_TEMPLATE);
+    setNewRuleFileInfo("已填入规范模板，可按团队规则修改");
+    setError("");
+  }
+
+  function applyModalSkillTemplate() {
+    setNewSkillName(SKILL_TEMPLATE_NAME);
+    setNewSkillKey(SKILL_TEMPLATE_KEY);
+    setNewSkillContent(SKILL_MD_TEMPLATE);
+    setNewSkillBundleFiles([]);
+    setNewSkillBundleInfo("已填入 SKILL.md 和 references/security-review-rules.md 模板");
+    setError("");
+  }
+
   function assetsForSkill(skillKey: string) {
     return options.skillAssets
       .filter((asset) => String(asset.skill_key) === skillKey)
@@ -2455,6 +2617,13 @@ export function AgentBindingEditorModal({
     setSaving(true);
     setError("");
     try {
+      const templateAssets = skillReferenceTemplateAssets(content);
+      const validation = await validateSkillBundle({ projectId, skillName: name, skillKey: newSkillKey, content, assets: templateAssets });
+      if (!validation.ok) {
+        setError(formatValidationFailures(validation));
+        setSaving(false);
+        return;
+      }
       const skill = await api<Record<string, unknown>>(`/api/projects/${projectId}/custom-skills`, {
         method: "POST",
         body: JSON.stringify({
@@ -2477,6 +2646,18 @@ export function AgentBindingEditorModal({
           executable: false
         })
       });
+      for (const asset of templateAssets) {
+        await api(`/api/projects/${projectId}/custom-skill-assets`, {
+          method: "POST",
+          body: JSON.stringify({
+            skill_key: createdSkillKey,
+            asset_path: asset.asset_path,
+            asset_type: "reference",
+            content: asset.content,
+            executable: false
+          })
+        });
+      }
       await api(`/api/projects/${projectId}/expert-skill-bindings`, {
         method: "POST",
         body: JSON.stringify({ agent_key: agentKey, skill_key: createdSkillKey, priority: 100, enabled: true })
@@ -2581,6 +2762,13 @@ export function AgentBindingEditorModal({
         <div className="agent-binding-upload-grid">
           <div className="agent-binding-upload-panel">
             <strong>上传 Markdown 规范</strong>
+            <div className="template-action-row">
+              <button type="button" onClick={applyModalRuleTemplate} disabled={saving}>
+                <ClipboardList size={14} />
+                使用规范模板
+              </button>
+              <a href="/templates/rule-document-template.md" target="_blank" rel="noreferrer">查看模板文件</a>
+            </div>
             <label className="file-upload-dropzone compact">
               <FileCode2 size={18} />
               <span>{newRuleFileInfo || "选择 .md 文件"}</span>
@@ -2598,6 +2786,14 @@ export function AgentBindingEditorModal({
           </div>
           <div className="agent-binding-upload-panel">
             <strong>上传 Skill 文件夹</strong>
+            <div className="template-action-row">
+              <button type="button" onClick={applyModalSkillTemplate} disabled={saving}>
+                <ClipboardList size={14} />
+                使用 Skill 模板
+              </button>
+              <a href="/templates/security-review-skill-template/SKILL.md" target="_blank" rel="noreferrer">SKILL.md</a>
+              <a href="/templates/security-review-skill-template/references/security-review-rules.md" target="_blank" rel="noreferrer">references 规范</a>
+            </div>
             <label className="file-upload-dropzone compact">
               <Folder size={18} />
               <span>{newSkillBundleInfo || "选择包含 SKILL.md 的文件夹"}</span>

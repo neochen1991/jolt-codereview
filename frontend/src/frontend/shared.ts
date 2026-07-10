@@ -494,10 +494,11 @@ export async function validateSkillBundle(input: {
   skillKey: string;
   content?: string;
   files?: File[];
+  assets?: Array<{ asset_path: string; content: string }>;
 }) {
   const assets = input.files?.length
     ? (await buildSkillBundleAssets(input.files)).map((asset) => ({ asset_path: asset.asset_path, content: asset.content }))
-    : [{ asset_path: "SKILL.md", content: input.content || "" }];
+    : [{ asset_path: "SKILL.md", content: input.content || "" }, ...(input.assets ?? [])];
   return api<Record<string, unknown>>(`/api/projects/${input.projectId}/custom-skills/validate`, {
     method: "POST",
     body: JSON.stringify({

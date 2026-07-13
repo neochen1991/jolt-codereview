@@ -76,6 +76,7 @@ export interface AppConfig {
     daily_token_limit?: number;
     max_duration_seconds?: number;
     retention_days?: number;
+    debug_job_max_concurrency?: number;
   };
   publish_policy?: Record<string, unknown>;
   data_policy?: Record<string, unknown>;

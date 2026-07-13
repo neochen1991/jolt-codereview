@@ -193,7 +193,8 @@ export function ConfigWorkspace({
   reload,
   setMessage,
   canEdit,
-  canManageSystem
+  canManageSystem,
+  skillDeveloperOnly = false
 }: {
   view: ViewKey;
   projectId: string;
@@ -202,6 +203,7 @@ export function ConfigWorkspace({
   setMessage: (value: string) => void;
   canEdit: boolean;
   canManageSystem: boolean;
+  skillDeveloperOnly?: boolean;
 }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [toolchain, setToolchain] = useState<Record<string, unknown> | null>(null);
@@ -320,6 +322,19 @@ export function ConfigWorkspace({
     try {
       if (view === "rules") setRows(await api<Record<string, unknown>[]>(`/api/projects/${projectId}/rule-sets`));
       else if (view === "agents") {
+        if (skillDeveloperOnly) {
+          const [profiles, skills, assets, expertSkillBindings] = await Promise.all([
+            api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-profiles`),
+            api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/custom-skills`),
+            api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/custom-skill-assets`),
+            api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-skill-bindings`)
+          ]);
+          setRows(listItems(profiles));
+          setCustomSkills(listItems(skills));
+          setSkillAssets(listItems(assets));
+          setSkillBindings(listItems(expertSkillBindings));
+          return;
+        }
         const [profiles, rules, bindings, expertRuleBindings, skills, assets, expertSkillBindings, qualityData, qualityMetrics] = await Promise.all([
           api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/expert-profiles`),
           api<Record<string, unknown>[] | { items: Record<string, unknown>[] }>(`/api/projects/${projectId}/rule-documents`),
@@ -700,7 +715,7 @@ export function ConfigWorkspace({
         skill_key: targetSkillKey,
         asset_path: skillAssetPath.trim(),
         content: skillAssetContent,
-        executable: skillAssetPath.trim().startsWith("scripts/")
+        executable: false
       })
     });
     setMessage("Skill 资源已保存");
@@ -1276,7 +1291,7 @@ export function ConfigWorkspace({
                 <div className="rule-upload-panel compact-upload-card">
                   <div>
                     <strong>上传标准 Skill 文件夹</strong>
-                    <span>文件夹需包含 `SKILL.md`，支持 `references/`、`scripts/`、`assets/`。</span>
+                    <span>文件夹需包含 `SKILL.md`，支持 `references/`、`scripts/`、`assets/`；`scripts/` 仅作为只读脚本资源，不会执行。</span>
                   </div>
                   <div className="template-action-row">
                     <button type="button" onClick={applySkillTemplate} disabled={!canEdit}>
@@ -1440,6 +1455,7 @@ export function ConfigWorkspace({
                     <option value="reviewer">reviewer</option>
                     <option value="observer">observer</option>
                     {canManageSystem && <option value="project_admin">project_admin</option>}
+                    <option value="skill_developer">skill_developer</option>
                   </select>
                   <button type="button" onClick={createInvitation} disabled={!canEdit}>创建邀请码</button>
                 </div>
@@ -1517,6 +1533,7 @@ export function ConfigWorkspace({
                               <option value="developer">developer</option>
                               <option value="reviewer">reviewer</option>
                               <option value="project_admin">project_admin</option>
+                              <option value="skill_developer">skill_developer</option>
                             </select>
                             <button
                               type="button"
@@ -3135,7 +3152,7 @@ export function AgentBindingDetailModal({ detail, onClose }: { detail: AgentBind
               {detail.assets.map((asset) => (
                 <span key={`${asset.path}-${asset.type}`}>
                   <b>{asset.path}</b>
-                  <em>{asset.type}{asset.executable ? " · 可执行" : ""}</em>
+                  <em>{asset.type}{asset.type === "script" ? " · 只读脚本资源" : ""}</em>
                 </span>
               ))}
             </div>

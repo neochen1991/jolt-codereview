@@ -15,6 +15,7 @@ export class SkillDebugPolicyService {
       daily_token_limit: Math.max(1, Number(value.daily_token_limit ?? 1_000_000)),
       max_duration_seconds: Math.max(60, Number(value.max_duration_seconds ?? 1800)),
       retention_days: Math.max(1, Number(value.retention_days ?? 14))
+      ,debug_job_max_concurrency: Math.max(1, Number(value.debug_job_max_concurrency ?? 1))
     };
   }
 

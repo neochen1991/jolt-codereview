@@ -93,6 +93,7 @@ export interface BackendRouteContext {
   currentUserId(req: { headers: Record<string, any> }): string;
   ensureProjectRole(projectId: string, userId: string, minRole: string): { statusCode: number; error: string; message: string } | null;
   ensureProjectWrite(projectId: string, userId?: string): { statusCode: number; error: string; message: string } | null;
+  ensureProjectCapability(projectId: string, userId: string, capability: "manage_skill_drafts" | "run_skill_debug"): { statusCode: number; error: string; message: string } | null;
   ensureRoot(userId: string): { statusCode: number; error: string; message: string } | null;
   auditLog(input: {
     userId?: string;

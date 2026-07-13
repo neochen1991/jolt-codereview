@@ -44,15 +44,15 @@ export class SkillDebugSessionRepository {
     return this.db.prepare("SELECT * FROM skill_debug_sessions WHERE id = $1").get(sessionId);
   }
 
-  listByProject(projectId: string, limit = 50) {
+  listByProject(projectId: string, limit = 50, requestedBy?: string) {
     return this.db.prepare(`
       SELECT s.*, mr.title AS mr_title
       FROM skill_debug_sessions s
       JOIN merge_requests mr ON mr.id = s.merge_request_id
-      WHERE s.project_id = $1
+      WHERE s.project_id = $1 AND ($3 = '' OR s.requested_by = $3)
       ORDER BY s.created_at DESC
       LIMIT $2
-    `).all(projectId, limit);
+    `).all(projectId, limit, requestedBy || "");
   }
 
   attachJobs(sessionId: string, baselineJobId: string | null, candidateJobId: string) {

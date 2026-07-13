@@ -153,14 +153,19 @@ Copy-Item frontend/.env.example frontend/.env
     "daily_session_limit": 20,
     "daily_token_limit": 1000000,
     "max_duration_seconds": 1800,
-    "retention_days": 14
+    "retention_days": 14,
+    "debug_job_max_concurrency": 1
   }
 }
 ```
 
 Token 和 API Key 可以直接写入 `config.json`，例如 `default_token`、`default_api_key`，但多人调试和内网环境不建议这么做，避免把密钥提交到 Git。推荐在配置里写 `*_env`，再由每台机器设置自己的环境变量。
 
-`skill_debug_policy` 只影响 Skill 调试会话，不改变正式 MR 检视并发。超过项目/用户并发、每日次数或 Token 上限时接口返回 429；`max_duration_seconds` 会由 Worker 在节点边界执行超时检查，`retention_days` 控制调试快照、诊断和导出的保留时间。Skill 调试快照不会保存真实 Token/API Key，只保留环境变量引用或脱敏值。
+`skill_debug_policy` 只影响 Skill 调试会话，不改变正式 MR 检视并发。`debug_job_max_concurrency` 限制实际调试 Job 数；正式任务排队时 Worker 不再领取新的调试 Job。超过项目/用户并发、每日次数或 Token 上限时接口返回 429；`max_duration_seconds` 会由 Worker 在节点边界执行超时检查，`retention_days` 控制调试快照、诊断和导出的保留时间。Skill 调试快照不会保存真实 Token/API Key，只保留环境变量引用或脱敏值。
+
+Skill 新版本统一保存为 draft，不能直接进入正式检视。服务端会强制校验 Bundle；同一 Bundle 哈希必须分别取得有效的“定向 A/B”和“严格生产路由”证据后，项目管理员才能激活。`degraded` 或 `inconclusive` 结果不满足激活门禁。`skill_developer` 可以创建草稿、绑定 Skill 并查看自己发起的调试，但不能激活版本或修改项目密钥与发布配置。
+
+上传到 `scripts/` 的文件当前只作为只读参考资源。平台会记录调用意图并返回 `blocked_by_policy`，不会直接执行上传脚本；需要可执行脚本时必须另行部署具备网络、凭据、CPU、内存和超时隔离的沙箱。
 
 如果配置文件不在默认位置，可以分别指定服务配置路径：
 

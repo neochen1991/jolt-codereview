@@ -69,6 +69,7 @@ export function Sidebar({
   activeProjectRole: string;
 }) {
   const canManageProject = isProjectAdminRole(activeProjectRole, user);
+  const canDevelopSkills = activeProjectRole === "skill_developer";
   const canManageSystem = isRootUser(user);
   return (
     <aside className="sidebar">
@@ -88,7 +89,7 @@ export function Sidebar({
       <nav className="nav">
         <NavItem icon={<GitBranch />} label="MR 队列" active={activeView === "mr"} onClick={() => setActiveView("mr")} />
         <NavItem icon={<UserRound />} label="个人设置" active={activeView === "personal"} onClick={() => setActiveView("personal")} />
-        {canManageProject && <NavItem icon={<Bot />} label="专家与规则" active={activeView === "agents"} onClick={() => setActiveView("agents")} />}
+        {(canManageProject || canDevelopSkills) && <NavItem icon={<Bot />} label={canDevelopSkills ? "Skill 开发" : "专家与规则"} active={activeView === "agents"} onClick={() => setActiveView("agents")} />}
         {canManageProject && <NavItem icon={<Clock3 />} label="队列运维" active={activeView === "queue"} onClick={() => setActiveView("queue")} />}
         {canManageProject && <NavItem icon={<LockKeyhole />} label="用户权限" active={activeView === "users"} onClick={() => setActiveView("users")} />}
         {canManageProject && <NavItem icon={<Settings />} label="项目设置" active={activeView === "settings"} onClick={() => setActiveView("settings")} />}
@@ -110,4 +111,3 @@ export function NavItem({ icon, label, active, muted, onClick }: { icon: React.R
     </button>
   );
 }
-

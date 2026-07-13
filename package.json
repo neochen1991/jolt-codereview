@@ -31,6 +31,8 @@
     "verify:skill-debug-validity": "node scripts/verify-skill-debug-validity.mjs",
     "verify:skill-debug-attribution": "node scripts/verify-skill-debug-attribution.mjs",
     "verify:skill-debug-input-replay": "node scripts/verify-skill-debug-input-replay.mjs",
+    "verify:skill-developer-authorization": "node scripts/verify-skill-developer-authorization.mjs",
+    "verify:skill-script-contract": "node scripts/verify-skill-script-contract.mjs",
     "verify:skill-debug-integration": "node scripts/verify-skill-debug-integration.mjs",
     "verify:skill-quality-metrics": "node scripts/verify-skill-quality-metrics.mjs",
     "verify:bound-rule-skill-full-read": "node scripts/verify-bound-rule-skill-full-read.mjs",

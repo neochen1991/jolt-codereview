@@ -724,13 +724,14 @@ export function App() {
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
   const activeProjectRole = String(activeProject?.role || "");
   const canManageProject = isProjectAdminRole(activeProjectRole, user);
+  const canDevelopSkills = activeProjectRole === "skill_developer";
   const canManageSystem = isRootUser(user);
 
   useEffect(() => {
     if (!user) return;
     if (activeView === "system" && !canManageSystem) setActiveView("personal");
-    if (canAccessProjectAdminView(activeView) && !canManageProject) setActiveView("mr");
-  }, [activeView, canManageProject, canManageSystem, user]);
+    if (canAccessProjectAdminView(activeView) && !canManageProject && !(canDevelopSkills && activeView === "agents")) setActiveView("mr");
+  }, [activeView, canDevelopSkills, canManageProject, canManageSystem, user]);
 
   async function login(username: string, password: string) {
     const result = await api<{ token: string; user: User }>("/api/auth/login", {
@@ -994,8 +995,9 @@ export function App() {
               repos={repos}
               reload={loadAll}
               setMessage={setMessage}
-              canEdit={canManageProject}
+              canEdit={canManageProject || canDevelopSkills}
               canManageSystem={canManageSystem}
+              skillDeveloperOnly={canDevelopSkills && !canManageProject}
             />
           )
         )}

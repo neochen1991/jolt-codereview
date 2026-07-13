@@ -176,6 +176,9 @@ function validateSkillBundlePayload(raw: Record<string, unknown>) {
   }
   const failures: Array<Record<string, unknown>> = [];
   const warnings: Array<Record<string, unknown>> = [];
+  for (const asset of assets.filter((item) => item.asset_path.startsWith("scripts/"))) {
+    warnings.push({ path: asset.asset_path, code: "non_executable_resource", message: "Uploaded scripts are read-only Skill resources and are never executed without a future sandbox policy." });
+  }
   if (!assets.length) failures.push({ path: "", message: "no skill assets provided" });
   const skillMd = assets.find((asset) => asset.asset_path === "SKILL.md");
   if (!skillMd) {
@@ -314,6 +317,7 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
     currentUserId,
     ensureProjectRole,
     ensureProjectWrite,
+    ensureProjectCapability,
     ensureRoot,
     auditLog,
     syncProject,
@@ -452,25 +456,25 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
     }),
     route("GET", "/api/projects/:projectId/custom-skills", ({ params, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      const denied = ensureProjectCapability(params.projectId, actorId, "manage_skill_drafts");
       if (denied) return denied;
       return ruleDocumentRepository.listCustomSkills(params.projectId);
     }),
     route("GET", "/api/projects/:projectId/custom-skills/:skillKey/versions", ({ params, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      const denied = ensureProjectCapability(params.projectId, actorId, "manage_skill_drafts");
       if (denied) return denied;
       return ruleDocumentRepository.listCustomSkillVersions(params.projectId, params.skillKey);
     }),
     route("POST", "/api/projects/:projectId/custom-skills/validate", ({ params, body, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      const denied = ensureProjectCapability(params.projectId, actorId, "manage_skill_drafts");
       if (denied) return denied;
       return validateSkillBundlePayload((body as Record<string, unknown>) || {});
     }),
     route("POST", "/api/projects/:projectId/custom-skills", ({ params, body, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectWrite(params.projectId, actorId);
+      const denied = ensureProjectCapability(params.projectId, actorId, "manage_skill_drafts");
       if (denied) return denied;
       const input = body as Record<string, unknown>;
       const skillKey = normalizeSkillKey(String(input.skill_key ?? input.name ?? ""));
@@ -533,13 +537,13 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
     }),
     route("GET", "/api/projects/:projectId/expert-skill-bindings", ({ params, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      const denied = ensureProjectCapability(params.projectId, actorId, "manage_skill_drafts");
       if (denied) return denied;
       return ruleDocumentRepository.listExpertSkillBindings(params.projectId);
     }),
     route("POST", "/api/projects/:projectId/expert-skill-bindings", ({ params, body, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectWrite(params.projectId, actorId);
+      const denied = ensureProjectCapability(params.projectId, actorId, "manage_skill_drafts");
       if (denied) return denied;
       const input = body as Record<string, unknown>;
       const agentKey = String(input.agent_key ?? "");
@@ -567,13 +571,13 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
     }),
     route("GET", "/api/projects/:projectId/custom-skill-assets", ({ params, url, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      const denied = ensureProjectCapability(params.projectId, actorId, "manage_skill_drafts");
       if (denied) return denied;
       return ruleDocumentRepository.listCustomSkillAssets(params.projectId, url.searchParams.get("skill_key") ?? undefined);
     }),
     route("POST", "/api/projects/:projectId/custom-skill-assets", ({ params, body, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectWrite(params.projectId, actorId);
+      const denied = ensureProjectCapability(params.projectId, actorId, "manage_skill_drafts");
       if (denied) return denied;
       const input = body as Record<string, unknown>;
       const skillKey = normalizeSkillKey(String(input.skill_key ?? ""));
@@ -602,7 +606,7 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
             assetPath,
             assetType,
             content,
-            executable: Boolean(input.executable ?? assetType === "script")
+            executable: false
           });
           if (!versioned) return notFound();
           auditLog({ userId: actorId, projectId: params.projectId, action: "custom_skill_versions.asset_upsert", resourceType: "custom_skill_version", resourceId: `${skillKey}:${version}:${assetPath}`, summary: `upsert draft skill asset ${skillKey}/${assetPath}` });
@@ -618,7 +622,7 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
         assetPath,
         assetType,
         content,
-        executable: Boolean(input.executable ?? assetType === "script")
+        executable: false
       });
       auditLog({ userId: actorId, projectId: params.projectId, action: "custom_skill_assets.upsert", resourceType: "custom_skill_asset", resourceId: `${skillKey}:${assetPath}`, summary: `upsert custom skill asset ${skillKey}/${assetPath}` });
       return asset;

@@ -4478,6 +4478,12 @@ def project_mr_concurrency(config: dict[str, Any], conn: Any, project_id: str) -
     return positive_int(queue_policy.get("max_concurrency"), 1)
 
 
+def project_debug_job_concurrency(config: dict[str, Any], conn: Any, project_id: str) -> int:
+    project_config = effective_project_config(config, conn, project_id)
+    policy = project_config.get("skill_debug_policy") or {}
+    return positive_int(policy.get("debug_job_max_concurrency"), 1)
+
+
 def lock_project_claim_if_needed(conn: Any, project_id: str) -> None:
     if getattr(conn, "dialect", "postgres") != "postgres":
         return
@@ -4510,7 +4516,8 @@ def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
             JOIN repositories queued_repo ON queued_repo.id = queued_mr.repository_id
             WHERE queued.status = 'queued'
               AND queued.attempt < %s
-            ORDER BY queued_mr.created_at ASC, queued.created_at ASC
+            ORDER BY CASE WHEN queued.execution_kind = 'production_review' THEN 0 ELSE 1 END,
+                     queued_mr.created_at ASC, queued.created_at ASC
             LIMIT 100
             """,
             (MAX_ATTEMPTS,),
@@ -4520,6 +4527,29 @@ def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
             project_id = str(candidate["project_id"])
             max_concurrency = project_mr_concurrency(config, conn, project_id)
             lock_project_claim_if_needed(conn, project_id)
+            if is_debug_job(candidate):
+                queued_production_count = int(conn.execute(
+                    """
+                    SELECT COUNT(*) AS count FROM review_jobs queued_production
+                    JOIN merge_requests qpmr ON qpmr.id = queued_production.merge_request_id
+                    JOIN repositories qpr ON qpr.id = qpmr.repository_id
+                    WHERE qpr.project_id = %s AND queued_production.status = 'queued'
+                      AND queued_production.execution_kind = 'production_review'
+                    """,
+                    (project_id,),
+                ).fetchone()["count"] or 0)
+                active_debug_count = int(conn.execute(
+                    f"""
+                    SELECT COUNT(*) AS count FROM review_jobs active_debug
+                    JOIN merge_requests admr ON admr.id = active_debug.merge_request_id
+                    JOIN repositories adr ON adr.id = admr.repository_id
+                    WHERE adr.project_id = %s AND active_debug.status IN ({active_placeholders})
+                      AND active_debug.execution_kind LIKE 'skill_debug_%%'
+                    """,
+                    (project_id, *ACTIVE_STATUSES),
+                ).fetchone()["count"] or 0)
+                if queued_production_count > 0 or active_debug_count >= project_debug_job_concurrency(config, conn, project_id):
+                    continue
             changed = conn.execute(
                 f"""
                 UPDATE review_jobs

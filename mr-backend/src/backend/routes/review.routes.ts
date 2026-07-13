@@ -25,6 +25,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     bearerToken,
     currentUserId,
     ensureProjectRole,
+    ensureProjectCapability,
     ensureProjectWrite,
     auditLog,
     syncProject,
@@ -770,6 +771,14 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     }) as Record<string, unknown>;
   }
 
+  function ensureSkillDebugSessionAccess(session: Record<string, any>, actorId: string) {
+    if (!ensureProjectRole(session.project_id, actorId, "project_admin")) return null;
+    const denied = ensureProjectCapability(session.project_id, actorId, "run_skill_debug");
+    if (denied) return denied;
+    if (session.requested_by !== actorId) return { statusCode: 403, error: "forbidden", message: "Skill developers can only access their own debug sessions" };
+    return null;
+  }
+
   async function createSkillDebugSession(input: Record<string, unknown>, actorId: string, forcedProjectId?: string, frozenSnapshot?: Record<string, any>, frozenInputArtifact?: Record<string, any>) {
     skillDebugSessionRepository.expireDue();
     const mrId = String(input.mr_id || "").trim();
@@ -777,7 +786,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     if (!mr) return notFound();
     const repo = repositoryRepository.findById(mr.repository_id) as Record<string, any> | undefined;
     if (!repo || (forcedProjectId && repo.project_id !== forcedProjectId)) return notFound();
-    const denied = ensureProjectRole(repo.project_id, actorId, "project_admin");
+    const denied = ensureProjectCapability(repo.project_id, actorId, "run_skill_debug");
     if (denied) return denied;
     const skillKey = String(input.skill_key || frozenSnapshot?.skill?.skill_key || "").trim();
     const skillVersion = String(input.skill_version || frozenSnapshot?.skill?.version || "").trim();
@@ -862,23 +871,24 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
   const routes: Route[] = [
     route("POST", "/api/mr-review/projects/:projectId/skill-debug-sessions", async ({ params, body, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      const denied = ensureProjectCapability(params.projectId, actorId, "run_skill_debug");
       if (denied) return denied;
       return createSkillDebugSession((body || {}) as Record<string, unknown>, actorId, params.projectId);
     }),
     route("GET", "/api/mr-review/projects/:projectId/skill-debug-sessions", ({ params, req, url }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      const denied = ensureProjectCapability(params.projectId, actorId, "run_skill_debug");
       if (denied) return denied;
       skillDebugSessionRepository.expireDue();
       const limit = boundedQueryLimit(url, "limit", 50, 200);
-      return { items: skillDebugSessionRepository.listByProject(params.projectId, limit) };
+      const isAdmin = !ensureProjectRole(params.projectId, actorId, "project_admin");
+      return { items: skillDebugSessionRepository.listByProject(params.projectId, limit, isAdmin ? undefined : actorId) };
     }),
     route("GET", "/api/mr-review/skill-debug-sessions/:sessionId", ({ params, req }) => {
       const session = skillDebugSessionRepository.findById(params.sessionId) as Record<string, any> | undefined;
       if (!session) return notFound();
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(session.project_id, actorId, "project_admin");
+      const denied = ensureSkillDebugSessionAccess(session, actorId);
       if (denied) return denied;
       auditLog({ userId: actorId, projectId: session.project_id, action: "skill_debug.session_view", resourceType: "skill_debug_session", resourceId: session.id, summary: "view skill debug session" });
       return debugSessionDetail(session);
@@ -887,7 +897,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const session = skillDebugSessionRepository.findById(params.sessionId) as Record<string, any> | undefined;
       if (!session) return notFound();
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(session.project_id, actorId, "project_admin");
+      const denied = ensureSkillDebugSessionAccess(session, actorId);
       if (denied) return denied;
       db.prepare(`
         UPDATE review_jobs SET status = 'cancelled', locked_at = NULL, locked_by = NULL, heartbeat_at = NULL, updated_at = CURRENT_TIMESTAMP
@@ -901,7 +911,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const session = skillDebugSessionRepository.findById(params.sessionId) as Record<string, any> | undefined;
       if (!session) return notFound();
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(session.project_id, actorId, "project_admin");
+      const denied = ensureSkillDebugSessionAccess(session, actorId);
       if (denied) return denied;
       const snapshot = parseJsonValue(session.snapshot_json) as Record<string, any>;
       return createSkillDebugSession({
@@ -921,7 +931,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const session = skillDebugSessionRepository.findById(params.sessionId) as Record<string, any> | undefined;
       if (!session) return notFound();
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(session.project_id, actorId, "project_admin");
+      const denied = ensureSkillDebugSessionAccess(session, actorId);
       if (denied) return denied;
       return createSkillDebugSession({
         mr_id: session.merge_request_id, skill_key: session.skill_key, skill_version: session.skill_version,
@@ -933,7 +943,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const session = skillDebugSessionRepository.findById(params.sessionId) as Record<string, any> | undefined;
       if (!session) return notFound();
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(session.project_id, actorId, "project_admin");
+      const denied = ensureSkillDebugSessionAccess(session, actorId);
       if (denied) return denied;
       const detail = sensitiveDataRedactionService.redact(debugSessionDetail(session));
       auditLog({ userId: actorId, projectId: session.project_id, action: "skill_debug.session_export", resourceType: "skill_debug_session", resourceId: session.id, summary: "export redacted skill debug diagnostics" });

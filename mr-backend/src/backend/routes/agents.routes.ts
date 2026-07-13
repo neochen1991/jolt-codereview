@@ -38,6 +38,7 @@ export function createAgentRoutes(ctx: BackendRouteContext): Route[] {
     bearerToken,
     currentUserId,
     ensureProjectRole,
+    ensureProjectCapability,
     ensureProjectWrite,
     auditLog,
     syncProject,
@@ -61,7 +62,7 @@ export function createAgentRoutes(ctx: BackendRouteContext): Route[] {
     }),
     route("GET", "/api/projects/:projectId/expert-profiles", ({ params, req }) => {
       const actorId = currentUserId(req);
-      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      const denied = ensureProjectCapability(params.projectId, actorId, "manage_skill_drafts");
       if (denied) return denied;
       return agentConfigService.listExpertProfiles(params.projectId);
     }),

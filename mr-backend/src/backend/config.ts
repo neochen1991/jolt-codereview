@@ -80,6 +80,7 @@ const DEFAULT_CONFIG: AppConfig = {
     daily_token_limit: 1000000,
     max_duration_seconds: 1800,
     retention_days: 14
+    ,debug_job_max_concurrency: 1
   },
   token_usage: {
     enabled: false,

@@ -235,7 +235,7 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
   }
   
   function projectRoleRank(role: string): number {
-    return { system_admin: 5, project_admin: 4, reviewer: 3, developer: 2, observer: 1 }[role] ?? 0;
+    return { system_admin: 5, project_admin: 4, reviewer: 3, developer: 2, skill_developer: 2, observer: 1 }[role] ?? 0;
   }
   
   function bearerToken(req: { headers: Record<string, any> }) {
@@ -267,6 +267,16 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
   
   function ensureProjectWrite(projectId: string, userId = "") {
     return ensureProjectRole(projectId, userId, "project_admin");
+  }
+
+  function ensureProjectCapability(projectId: string, userId: string, capability: "manage_skill_drafts" | "run_skill_debug") {
+    if (!userId) return { statusCode: 401, error: "unauthorized", message: "login is required" };
+    const auth = commonClient.authForUser(userId);
+    if (auth?.user?.is_root) return null;
+    const role = String(auth?.memberships.find((item) => item.project_id === projectId)?.role || "");
+    const allowed = new Set(["system_admin", "project_admin", "skill_developer"]);
+    if (!allowed.has(role)) return { statusCode: 403, error: "forbidden", message: `${capability} capability is required` };
+    return null;
   }
 
   function ensureRoot(userId: string) {
@@ -499,6 +509,7 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     currentUserId,
     ensureProjectRole,
     ensureProjectWrite,
+    ensureProjectCapability,
     ensureRoot,
     auditLog,
     syncProject,

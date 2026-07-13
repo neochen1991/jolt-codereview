@@ -6,8 +6,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from skill_debug import (
     apply_debug_execution_controls,
     apply_debug_snapshot,
+    is_non_production_job,
+    is_shadow_job,
     production_side_effects_allowed,
     redact_snapshot,
+    shadow_context_engine,
 )
 from context.context_planner import plan_context_units
 from context.skill_requirements import collect_skill_context_requirements
@@ -23,6 +26,18 @@ def test_debug_side_effect_policy_disables_production_mutations() -> None:
 def test_production_side_effect_policy_keeps_production_mutations() -> None:
     assert production_side_effects_allowed({"execution_kind": "production_review"}) is True
     assert production_side_effects_allowed({}) is True
+
+
+def test_shadow_jobs_are_non_production_and_engine_is_explicit() -> None:
+    for engine in ("v1", "v2"):
+        job = {"execution_kind": f"quality_shadow_{engine}"}
+        assert is_shadow_job(job) is True
+        assert is_non_production_job(job) is True
+        assert production_side_effects_allowed(job) is False
+        assert shadow_context_engine(job) == engine
+
+    assert is_shadow_job({"execution_kind": "quality_shadow"}) is False
+    assert shadow_context_engine({"execution_kind": "production_review"}) is None
 
 
 def _snapshot() -> dict:
@@ -139,6 +154,7 @@ def test_debug_and_production_share_context_and_judge_contract() -> None:
 if __name__ == "__main__":
     test_debug_side_effect_policy_disables_production_mutations()
     test_production_side_effect_policy_keeps_production_mutations()
+    test_shadow_jobs_are_non_production_and_engine_is_explicit()
     test_targeted_baseline_removes_only_target_skill()
     test_targeted_candidate_keeps_target_skill()
     test_targeted_baseline_removes_target_skill_manifest()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any, Callable
-from skill_debug import production_side_effects_allowed
+from skill_debug import is_debug_job, production_side_effects_allowed
 from orchestration.skill_runtime_facts import seal_skill_runtime_facts
 
 
@@ -312,7 +312,7 @@ def make_finalize_node(
             (status, summary, json.dumps(budget_used, ensure_ascii=False), json.dumps(coverage, ensure_ascii=False), run_id),
         )
         conn.execute("UPDATE review_jobs SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (status, job["id"]))
-        if not production_side_effects_allowed(job):
+        if is_debug_job(job):
             conn.execute(
                 """
                 UPDATE skill_debug_sessions

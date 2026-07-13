@@ -5,7 +5,9 @@ required = {
     "production-first ordering": "CASE WHEN queued.execution_kind = 'production_review' THEN 0 ELSE 1 END",
     "debug concurrency function": "project_debug_job_concurrency",
     "production queue reservation": "queued_production_count",
-    "debug active job count": "active_debug_count",
+    "non-production queue classification": "is_non_production_job(candidate)",
+    "shared non-production concurrency": "active_non_production_count",
+    "shadow failure does not mutate MR": "if production_side_effects_allowed(job):",
 }
 missing = [label for label, snippet in required.items() if snippet not in source]
 if missing:

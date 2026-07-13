@@ -59,7 +59,9 @@ from skill_debug import (
     debug_skill_summary,
     debug_variant,
     is_debug_job,
+    is_non_production_job,
     load_debug_context,
+    production_side_effects_allowed,
 )
 from prompts.builder import build_prompt, redact_untrusted
 from rules.rule_loader import load_bound_rules
@@ -4660,7 +4662,7 @@ def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
             project_id = str(candidate["project_id"])
             max_concurrency = project_mr_concurrency(config, conn, project_id)
             lock_project_claim_if_needed(conn, project_id)
-            if is_debug_job(candidate):
+            if is_non_production_job(candidate):
                 queued_production_count = int(conn.execute(
                     """
                     SELECT COUNT(*) AS count FROM review_jobs queued_production
@@ -4671,17 +4673,17 @@ def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
                     """,
                     (project_id,),
                 ).fetchone()["count"] or 0)
-                active_debug_count = int(conn.execute(
+                active_non_production_count = int(conn.execute(
                     f"""
-                    SELECT COUNT(*) AS count FROM review_jobs active_debug
-                    JOIN merge_requests admr ON admr.id = active_debug.merge_request_id
+                    SELECT COUNT(*) AS count FROM review_jobs active_non_production
+                    JOIN merge_requests admr ON admr.id = active_non_production.merge_request_id
                     JOIN repositories adr ON adr.id = admr.repository_id
-                    WHERE adr.project_id = %s AND active_debug.status IN ({active_placeholders})
-                      AND active_debug.execution_kind LIKE 'skill_debug_%%'
+                    WHERE adr.project_id = %s AND active_non_production.status IN ({active_placeholders})
+                      AND active_non_production.execution_kind <> 'production_review'
                     """,
                     (project_id, *ACTIVE_STATUSES),
                 ).fetchone()["count"] or 0)
-                if queued_production_count > 0 or active_debug_count >= project_debug_job_concurrency(config, conn, project_id):
+                if queued_production_count > 0 or active_non_production_count >= project_debug_job_concurrency(config, conn, project_id):
                     continue
             changed = conn.execute(
                 f"""
@@ -4706,7 +4708,7 @@ def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
         if not job:
             conn.commit()
             return None
-        if not is_debug_job(job):
+        if production_side_effects_allowed(job):
             conn.execute(
                 "UPDATE merge_requests SET review_status = 'fetching' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
                 (job["merge_request_id"],),
@@ -4854,7 +4856,7 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
         )
         if is_debug_job(job):
             conn.execute("UPDATE skill_debug_sessions SET status = 'failed', failure_reason = 'mr_too_large', updated_at = CURRENT_TIMESTAMP WHERE id = %s", (job.get("debug_session_id"),))
-        else:
+        elif production_side_effects_allowed(job):
             conn.execute(
                 "UPDATE merge_requests SET review_status = 'too_large' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
                 (job["merge_request_id"],),
@@ -5166,7 +5168,7 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
         )
         if is_debug_job(job):
             conn.execute("UPDATE skill_debug_sessions SET status = 'failed', failure_reason = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (str(exc), job.get("debug_session_id")))
-        else:
+        elif production_side_effects_allowed(job):
             conn.execute(
                 "UPDATE merge_requests SET review_status = %s WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
                 (mr_status, mr["id"]),

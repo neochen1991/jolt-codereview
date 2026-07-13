@@ -18,12 +18,27 @@ def is_debug_job(job: dict[str, Any] | Any) -> bool:
     return kind.startswith("skill_debug_")
 
 
+def is_shadow_job(job: dict[str, Any] | Any) -> bool:
+    kind = str((job.get("execution_kind") if hasattr(job, "get") else "") or "production_review")
+    return kind in {"quality_shadow_v1", "quality_shadow_v2"}
+
+
+def is_non_production_job(job: dict[str, Any] | Any) -> bool:
+    return is_debug_job(job) or is_shadow_job(job)
+
+
+def shadow_context_engine(job: dict[str, Any] | Any) -> str | None:
+    if not is_shadow_job(job):
+        return None
+    return str(job.get("execution_kind")).removeprefix("quality_shadow_")
+
+
 def debug_variant(job: dict[str, Any] | Any) -> str:
     return str((job.get("debug_variant") if hasattr(job, "get") else "") or "candidate")
 
 
 def production_side_effects_allowed(job: dict[str, Any] | Any) -> bool:
-    return not is_debug_job(job)
+    return not is_non_production_job(job)
 
 
 def redact_snapshot(value: Any, key: str = "") -> Any:

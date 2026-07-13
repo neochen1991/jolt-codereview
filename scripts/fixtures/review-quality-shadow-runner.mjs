@@ -4,6 +4,9 @@ const snapshot = JSON.parse(input || "{}");
 const v2 = snapshot.context_engine === "v2";
 console.log(JSON.stringify({
   case_id: snapshot.case_id,
+  execution_kind: snapshot.execution_kind,
+  context_engine: snapshot.context_engine,
+  input_artifact_sha256: snapshot.input_artifact_sha256,
   expected_count: 2,
   true_positive_count: v2 ? 2 : 1,
   finding_count: 2,

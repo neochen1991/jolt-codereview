@@ -43,13 +43,17 @@ const snapshots = readFileSync(resolve(snapshotsPath), "utf8").split(/\r?\n/).fi
 const results = { v1: [], v2: [] };
 for (const snapshot of snapshots) {
   if (!snapshot.head_sha || !snapshot.input_artifact_sha256) throw new Error("every shadow case requires frozen head_sha and input_artifact_sha256");
+  const frozenSnapshotSha256 = createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
   for (const engine of ["v1", "v2"]) {
-    const input = JSON.stringify({ ...snapshot, execution_kind: "quality_shadow", context_engine: engine, publish_allowed: false });
+    const executionKind = `quality_shadow_${engine}`;
+    const input = JSON.stringify({ ...snapshot, execution_kind: executionKind, context_engine: engine, publish_allowed: false });
     const child = spawnSync(runner, { shell: true, input, encoding: "utf8", env: { ...process.env, JOLT_QUALITY_SHADOW: "1", JOLT_CONTEXT_ENGINE: engine, JOLT_PUBLISH_ALLOWED: "0" } });
     if (child.status !== 0) throw new Error(`${engine} shadow runner failed: ${child.stderr || child.stdout}`);
     const row = JSON.parse(String(child.stdout || "{}").trim());
     if (Number(row.publish_attempt_count || 0) !== 0) throw new Error(`${engine} shadow run attempted a production publish`);
-    results[engine].push({ ...row, snapshot_sha256: createHash("sha256").update(input).digest("hex") });
+    if (row.execution_kind !== executionKind || row.context_engine !== engine) throw new Error(`${engine} shadow runner returned a mismatched execution contract`);
+    if (row.input_artifact_sha256 !== snapshot.input_artifact_sha256) throw new Error(`${engine} shadow runner returned a mismatched input artifact`);
+    results[engine].push({ ...row, snapshot_sha256: frozenSnapshotSha256 });
   }
 }
 const report = { schema_version: "review_quality_shadow_v1", rollout_stage: stage, minimum_valid_mrs: 30, stage_ready_for_gate: snapshots.length >= 30, generated_at: new Date().toISOString(), baseline: summarize("v1", results.v1), candidate: summarize("v2", results.v2), cases: results };

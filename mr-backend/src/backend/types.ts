@@ -69,6 +69,14 @@ export interface AppConfig {
   agent_policy?: Record<string, unknown>;
   tool_policy?: Record<string, unknown>;
   queue_policy?: Record<string, unknown>;
+  skill_debug_policy?: {
+    project_max_concurrency?: number;
+    user_max_concurrency?: number;
+    daily_session_limit?: number;
+    daily_token_limit?: number;
+    max_duration_seconds?: number;
+    retention_days?: number;
+  };
   publish_policy?: Record<string, unknown>;
   data_policy?: Record<string, unknown>;
 }

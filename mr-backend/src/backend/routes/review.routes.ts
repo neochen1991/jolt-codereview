@@ -40,6 +40,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     auditRepository,
     reviewQueueService,
     skillDebugSnapshotService,
+    skillDebugPolicyService,
     effectiveConfig,
     feedbackLearningService
   } = ctx;
@@ -768,6 +769,13 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     const effortLevel = String(input.effort_level || "standard");
     if (!skillKey || !agentKey) return badRequest("skill_key and agent_key are required");
     if (!["targeted", "production_route"].includes(mode)) return badRequest("mode must be targeted or production_route");
+    const projectEffectiveConfig = await effectiveConfig(repo.project_id);
+    const policyDenied = skillDebugPolicyService.checkCreate(repo.project_id, actorId, projectEffectiveConfig);
+    if (policyDenied) {
+      auditLog({ userId: actorId, projectId: repo.project_id, action: "skill_debug.quota_rejected", resourceType: "skill_debug_session", summary: policyDenied.error });
+      return policyDenied;
+    }
+    const debugPolicy = skillDebugPolicyService.resolve(projectEffectiveConfig);
     let snapshotResult: { snapshot: Record<string, unknown>; snapshot_sha256: string };
     try {
       snapshotResult = frozenSnapshot
@@ -779,13 +787,13 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
             skillKey,
             skillVersion,
             agentKey,
-            effectiveConfig: await effectiveConfig(repo.project_id)
+            effectiveConfig: projectEffectiveConfig
           });
     } catch (error) {
       return badRequest((error as Error).message);
     }
     const sessionId = id("skill_debug");
-    const expiresAt = new Date(Date.now() + 14 * 86400_000).toISOString();
+    const expiresAt = new Date(Date.now() + debugPolicy.retention_days * 86400_000).toISOString();
     const session = skillDebugSessionRepository.create({
       id: sessionId,
       projectId: repo.project_id,
@@ -807,7 +815,9 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       skill_key: skillKey, skill_version: session.skill_version, agent_key: agentKey,
       mr_id: mr.id, head_sha: mr.latest_head_sha, requested_by: actorId,
       publish_allowed: false, consistency_contract: "production_review_pipeline_v1",
-      snapshot_sha256: snapshotResult.snapshot_sha256, snapshot: snapshotResult.snapshot
+      snapshot_sha256: snapshotResult.snapshot_sha256, snapshot: snapshotResult.snapshot,
+      max_duration_seconds: debugPolicy.max_duration_seconds,
+      expires_at: expiresAt
     };
     const baseline = mode === "targeted" ? reviewQueueService.enqueueDebug({
       mergeRequestId: mr.id, headSha: mr.latest_head_sha, priority: Number(mr.risk_score || 0), effortLevel,

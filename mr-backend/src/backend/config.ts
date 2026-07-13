@@ -73,6 +73,14 @@ const DEFAULT_CONFIG: AppConfig = {
     max_worker_pool_size: 20,
     worker_reconcile_seconds: 30
   },
+  skill_debug_policy: {
+    project_max_concurrency: 2,
+    user_max_concurrency: 1,
+    daily_session_limit: 20,
+    daily_token_limit: 1000000,
+    max_duration_seconds: 1800,
+    retention_days: 14
+  },
   token_usage: {
     enabled: false,
     endpoint: "",
@@ -105,6 +113,7 @@ function mergeConfig(base: AppConfig, override: AppConfig): AppConfig {
     agent_policy: { ...base.agent_policy, ...override.agent_policy },
     tool_policy: { ...base.tool_policy, ...override.tool_policy },
     queue_policy: { ...base.queue_policy, ...override.queue_policy },
+    skill_debug_policy: { ...base.skill_debug_policy, ...override.skill_debug_policy },
     publish_policy: { ...base.publish_policy, ...override.publish_policy },
     data_policy: { ...base.data_policy, ...override.data_policy },
     token_usage: { ...base.token_usage, ...override.token_usage },

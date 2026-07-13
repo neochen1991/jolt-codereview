@@ -146,11 +146,21 @@ Copy-Item frontend/.env.example frontend/.env
     "worker_pool_size": 1,
     "max_worker_pool_size": 20,
     "worker_reconcile_seconds": 30
+  },
+  "skill_debug_policy": {
+    "project_max_concurrency": 2,
+    "user_max_concurrency": 1,
+    "daily_session_limit": 20,
+    "daily_token_limit": 1000000,
+    "max_duration_seconds": 1800,
+    "retention_days": 14
   }
 }
 ```
 
 Token 和 API Key 可以直接写入 `config.json`，例如 `default_token`、`default_api_key`，但多人调试和内网环境不建议这么做，避免把密钥提交到 Git。推荐在配置里写 `*_env`，再由每台机器设置自己的环境变量。
+
+`skill_debug_policy` 只影响 Skill 调试会话，不改变正式 MR 检视并发。超过项目/用户并发、每日次数或 Token 上限时接口返回 429；`max_duration_seconds` 会由 Worker 在节点边界执行超时检查，`retention_days` 控制调试快照、诊断和导出的保留时间。Skill 调试快照不会保存真实 Token/API Key，只保留环境变量引用或脱敏值。
 
 如果配置文件不在默认位置，可以分别指定服务配置路径：
 

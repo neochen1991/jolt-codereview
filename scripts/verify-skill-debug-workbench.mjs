@@ -9,6 +9,7 @@ const repository = read("mr-backend", "src", "backend", "repositories", "ReviewJ
 const sessionRepository = read("mr-backend", "src", "backend", "repositories", "SkillDebugSessionRepository.ts");
 const skillRepository = read("mr-backend", "src", "backend", "repositories", "RuleDocumentRepository.ts");
 const snapshotService = read("mr-backend", "src", "backend", "services", "SkillDebugSnapshotService.ts");
+const policyService = read("mr-backend", "src", "backend", "services", "SkillDebugPolicyService.ts");
 const ruleRoutes = read("mr-backend", "src", "backend", "routes", "rules.routes.ts");
 const worker = read("mr-backend", "worker", "review_runtime.py");
 const debugWorker = read("mr-backend", "worker", "skill_debug.py");
@@ -30,6 +31,9 @@ const checks = [
   [snapshotService, "class SkillDebugSnapshotService", "server-side snapshot builder"],
   [snapshotService, "snapshot_sha256", "deterministic snapshot hash"],
   [snapshotService, "stableStringify", "stable snapshot serialization"],
+  [policyService, "project_max_concurrency", "project debug concurrency quota"],
+  [policyService, "daily_token_limit", "daily debug token quota"],
+  [policyService, "max_duration_seconds", "debug timeout policy"],
   [ruleRoutes, "/api/projects/:projectId/custom-skills/:skillKey/versions/:version/activate", "audited skill activation"],
   [routes, "/api/mr-review/projects/:projectId/skill-debug-sessions", "debug session create and history routes"],
   [routes, "/api/mr-review/skill-debug-sessions/:sessionId", "stable debug session detail route"],

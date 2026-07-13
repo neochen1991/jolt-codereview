@@ -54,6 +54,14 @@
     "max_worker_pool_size": 20,
     "worker_reconcile_seconds": 30
   },
+  "skill_debug_policy": {
+    "project_max_concurrency": 2,
+    "user_max_concurrency": 1,
+    "daily_session_limit": 20,
+    "daily_token_limit": 1000000,
+    "max_duration_seconds": 1800,
+    "retention_days": 14
+  },
   "token_usage": {
     "enabled": false,
     "endpoint": "",

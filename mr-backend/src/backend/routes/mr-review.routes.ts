@@ -20,6 +20,7 @@ import { ObservabilityService } from "../services/ObservabilityService.js";
 import { ReviewQueueService } from "../services/ReviewQueueService.js";
 import { StaticToolAvailabilityService } from "../services/StaticToolAvailabilityService.js";
 import { SkillDebugSnapshotService } from "../services/SkillDebugSnapshotService.js";
+import { SkillDebugPolicyService } from "../services/SkillDebugPolicyService.js";
 import { CommonBackendClient } from "../services/CommonBackendClient.js";
 import { queuedReviewWorkerCapacity } from "../services/WorkerLaunchPolicy.js";
 import { spawnWorkerOnce as launchWorkerOnce, type WorkerProcessLogger } from "../services/WorkerProcessLauncher.js";
@@ -61,6 +62,7 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
   const observabilityService = new ObservabilityService(db);
   const staticToolAvailabilityService = new StaticToolAvailabilityService();
   const skillDebugSnapshotService = new SkillDebugSnapshotService(db);
+  const skillDebugPolicyService = new SkillDebugPolicyService(db);
 
   function all<T>(sql: string, params: any[] = []): T[] {
     return db.prepare(sql).all(...params) as T[];
@@ -468,6 +470,7 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     observabilityService,
     staticToolAvailabilityService,
     skillDebugSnapshotService,
+    skillDebugPolicyService,
     reviewQueueService,
     effectiveConfig,
     all,

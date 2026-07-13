@@ -471,3 +471,14 @@ MR_API_BASE=http://127.0.0.1:9021
 旧的 `VITE_COMMON_API_BASE`、`VITE_MR_API_BASE`、`VITE_API_BASE` 只保留给浏览器直连后端的历史部署，默认不要设置。
 
 详细说明见 [frontend/README.md](frontend/README.md)。
+
+## Skill Debug PostgreSQL 集成验证
+
+使用一个可丢弃的 PostgreSQL 数据库执行权限、配额、独立 Job、快照、取消、`stale_head`、发布保护和正式数据隔离验证：
+
+```bash
+TEST_POSTGRES_URL=postgresql://localhost:5432/jolt_skill_debug_test \
+npm run verify:skill-debug-integration
+```
+
+该命令会在独立端口启动临时 Common/MR 服务，并向指定数据库写入带唯一后缀的测试数据。不要把生产数据库配置给 `TEST_POSTGRES_URL`。

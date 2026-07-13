@@ -740,7 +740,8 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     const active = statuses.some((status) => ["queued", "fetching", "pre_scanning", "reviewing", "judging", "running"].includes(status));
     const failed = statuses.some((status) => ["failed", "dead_letter"].includes(status));
     const cancelled = statuses.length > 0 && statuses.every((status) => status === "cancelled");
-    const derivedStatus = session.status === "cancelled" ? "cancelled" : active ? "running" : failed ? "failed" : cancelled ? "cancelled" : statuses.length ? "completed" : session.status;
+    const preservedTerminalStatus = ["stale_head", "timed_out", "expired"].includes(String(session.status)) ? String(session.status) : null;
+    const derivedStatus = session.status === "cancelled" ? "cancelled" : preservedTerminalStatus || (active ? "running" : failed ? "failed" : cancelled ? "cancelled" : statuses.length ? "completed" : session.status);
     if (derivedStatus !== session.status) skillDebugSessionRepository.updateStatus(session.id, derivedStatus);
     const diagnostics = skillDebugDiagnosticService.build({ ...session, status: derivedStatus }, baseline, candidate);
     if (!active) skillDebugSessionRepository.updateComparison(session.id, diagnostics.comparison);

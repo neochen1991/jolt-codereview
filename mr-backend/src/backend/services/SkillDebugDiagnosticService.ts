@@ -2,6 +2,18 @@ function statusSuccess(status: unknown) {
   return ["completed", "cache_hit"].includes(String(status || ""));
 }
 
+function eventPayload(event: any): Record<string, any> {
+  const value = event?.payload_json;
+  if (value && typeof value === "object") return value;
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function variantSummary(detail: any, targetAgent: string, skillKey: string) {
   if (!detail) return null;
   const trace = Array.isArray(detail.trace) ? detail.trace : [];
@@ -9,7 +21,11 @@ function variantSummary(detail: any, targetAgent: string, skillKey: string) {
   const toolCalls = Array.isArray(detail.tool_calls) ? detail.tool_calls : [];
   const findings = Array.isArray(detail.findings) ? detail.findings : [];
   const agentExecuted = trace.some((event: any) => event.event_type === "agent_started" && String(event.agent_id || "") === targetAgent);
-  const skillEvents = trace.filter((event: any) => String(event.event_type || "").includes("skill") && String(event.payload_json || "").includes(skillKey));
+  const skillEvents = trace.filter((event: any) => {
+    if (event.event_type !== "skill_context_loaded" || String(event.agent_id || "") !== targetAgent) return false;
+    const customSkills = eventPayload(event).custom_skills;
+    return Array.isArray(customSkills) && customSkills.map(String).includes(skillKey);
+  });
   const checkpoints = trace.filter((event: any) => String(event.event_type || "").includes("checkpoint") || String(event.event_type || "").includes("bound_skill"));
   return {
     status: detail.run?.status || detail.job?.status || "queued",

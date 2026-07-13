@@ -60,14 +60,24 @@ export class SkillDebugSessionRepository {
   }
 
   updateStatus(sessionId: string, status: string, failureReason?: string | null) {
-    this.db.prepare(`
-      UPDATE skill_debug_sessions
-      SET status = $1,
-          failure_reason = $2,
-          cancelled_at = CASE WHEN $1 = 'cancelled' THEN CURRENT_TIMESTAMP ELSE cancelled_at END,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = $3
-    `).run(status, failureReason ?? null, sessionId);
+    if (status === "cancelled") {
+      this.db.prepare(`
+        UPDATE skill_debug_sessions
+        SET status = $1,
+            failure_reason = $2,
+            cancelled_at = COALESCE(cancelled_at, CURRENT_TIMESTAMP::text),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $3
+      `).run(status, failureReason ?? null, sessionId);
+    } else {
+      this.db.prepare(`
+        UPDATE skill_debug_sessions
+        SET status = $1,
+            failure_reason = $2,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $3
+      `).run(status, failureReason ?? null, sessionId);
+    }
     return this.findById(sessionId);
   }
 

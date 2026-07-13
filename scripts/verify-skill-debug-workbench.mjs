@@ -38,6 +38,9 @@ const checks = [
   [policyService, "daily_token_limit", "daily debug token quota"],
   [policyService, "max_duration_seconds", "debug timeout policy"],
   [diagnosticService, "token_delta", "A/B diagnostic comparison"],
+  [diagnosticService, 'event.event_type !== "skill_context_loaded"', "target skill load uses the concrete worker event"],
+  [diagnosticService, "event.agent_id", "target skill load is scoped to the target agent"],
+  [diagnosticService, "custom_skills", "target skill load checks the custom skill payload"],
   [diagnosticService, "production_route_did_not_select_target_agent", "production routing diagnostic"],
   [redactionService, "Bearer <redacted>", "recursive diagnostic redaction"],
   [ruleRoutes, "/api/projects/:projectId/custom-skills/:skillKey/versions/:version/activate", "audited skill activation"],
@@ -52,6 +55,7 @@ const checks = [
   [routes, "/api/mr-review/skill-debug-runs/:jobId", "debug detail route"],
   [routes, "production_route", "production routing mode"],
   [routes, "targeted", "targeted routing mode"],
+  [routes, '["stale_head", "timed_out", "expired"]', "terminal debug status preservation"],
   [routes, "skill_debug.publish_forbidden", "publish protection"],
   [routeRoot, "finding.execution_kind", "publish checks finding execution ownership"],
   [worker, "debug_context_json", "worker debug context loading"],
@@ -69,5 +73,8 @@ const checks = [
 ];
 
 const failures = checks.filter(([source, snippet]) => !source.includes(snippet)).map(([, , label]) => label);
+if (sessionRepository.includes("CASE WHEN $1 = 'cancelled' THEN CURRENT_TIMESTAMP ELSE cancelled_at END")) {
+  failures.push("PostgreSQL-safe debug session cancellation timestamp update");
+}
 if (failures.length) throw new Error(`skill debug workbench verification failed:\n${failures.join("\n")}`);
 console.log(JSON.stringify({ ok: true, verified: "skill_debug_workbench" }, null, 2));

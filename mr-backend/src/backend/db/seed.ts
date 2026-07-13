@@ -413,6 +413,23 @@ export function seed(db: Db) {
     `).run(asset.id, asset.asset_path, asset.asset_type, asset.content, asset.executable);
   }
 
+  db.prepare(`
+    INSERT INTO custom_skill_versions (
+      id, project_id, skill_key, version, name, description, content, assets_json, status
+    ) VALUES (
+      'skill_version_skill_java_low_level_defect_review',
+      'project_default',
+      'java-low-level-defect-review',
+      'v1',
+      'Java 低级缺陷检视 Skill',
+      '用于低级缺陷 Agent 的标准 Skill，包含 Java 常见低级缺陷 references 规范。',
+      $1,
+      $2,
+      'active'
+    )
+    ON CONFLICT(project_id, skill_key, version) DO NOTHING
+  `).run(javaLowLevelSkillContent, JSON.stringify(lowLevelSkillAssets));
+
   const expertProfiles = [
     {
       agent_key: "security_agent",

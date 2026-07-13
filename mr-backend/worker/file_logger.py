@@ -53,6 +53,14 @@ def _redact(key: str, value: Any) -> Any:
     sensitive_keys = {"token", "access_token", "refresh_token", "api_key", "apikey", "secret", "authorization", "password"}
     if normalized in sensitive_keys or re.search(r"(^|_)(api[_-]?key|secret|authorization|password)$", normalized):
         return "<redacted>"
+    if isinstance(value, dict):
+        return {child_key: _redact(str(child_key), child) for child_key, child in value.items()}
+    if isinstance(value, list):
+        return [_redact("", item) for item in value]
+    if isinstance(value, str):
+        value = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}", "Bearer <redacted>", value)
+        value = re.sub(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b", "<redacted:github-token>", value)
+        value = re.sub(r"(?i)(api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*['\"]?[^'\"\s,}]{8,}", r"\1=<redacted>", value)
     return value
 
 

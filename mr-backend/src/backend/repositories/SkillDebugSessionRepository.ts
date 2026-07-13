@@ -79,4 +79,14 @@ export class SkillDebugSessionRepository {
     `).run(JSON.stringify(comparison), sessionId);
     return this.findById(sessionId);
   }
+
+  expireDue() {
+    return this.db.prepare(`
+      UPDATE skill_debug_sessions
+      SET status = 'expired', snapshot_json = '{}', comparison_json = '{}', updated_at = CURRENT_TIMESTAMP
+      WHERE expires_at IS NOT NULL
+        AND expires_at::timestamptz < CURRENT_TIMESTAMP
+        AND status <> 'expired'
+    `).run();
+  }
 }

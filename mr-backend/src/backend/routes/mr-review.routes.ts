@@ -21,6 +21,8 @@ import { ReviewQueueService } from "../services/ReviewQueueService.js";
 import { StaticToolAvailabilityService } from "../services/StaticToolAvailabilityService.js";
 import { SkillDebugSnapshotService } from "../services/SkillDebugSnapshotService.js";
 import { SkillDebugPolicyService } from "../services/SkillDebugPolicyService.js";
+import { SkillDebugDiagnosticService } from "../services/SkillDebugDiagnosticService.js";
+import { SensitiveDataRedactionService } from "../services/SensitiveDataRedactionService.js";
 import { CommonBackendClient } from "../services/CommonBackendClient.js";
 import { queuedReviewWorkerCapacity } from "../services/WorkerLaunchPolicy.js";
 import { spawnWorkerOnce as launchWorkerOnce, type WorkerProcessLogger } from "../services/WorkerProcessLauncher.js";
@@ -63,6 +65,8 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
   const staticToolAvailabilityService = new StaticToolAvailabilityService();
   const skillDebugSnapshotService = new SkillDebugSnapshotService(db);
   const skillDebugPolicyService = new SkillDebugPolicyService(db);
+  const skillDebugDiagnosticService = new SkillDebugDiagnosticService();
+  const sensitiveDataRedactionService = new SensitiveDataRedactionService();
 
   function all<T>(sql: string, params: any[] = []): T[] {
     return db.prepare(sql).all(...params) as T[];
@@ -475,6 +479,8 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     staticToolAvailabilityService,
     skillDebugSnapshotService,
     skillDebugPolicyService,
+    skillDebugDiagnosticService,
+    sensitiveDataRedactionService,
     reviewQueueService,
     effectiveConfig,
     all,

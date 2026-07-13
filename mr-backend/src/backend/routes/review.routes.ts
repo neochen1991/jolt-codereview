@@ -41,6 +41,8 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     reviewQueueService,
     skillDebugSnapshotService,
     skillDebugPolicyService,
+    skillDebugDiagnosticService,
+    sensitiveDataRedactionService,
     effectiveConfig,
     feedbackLearningService
   } = ctx;
@@ -740,7 +742,9 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     const cancelled = statuses.length > 0 && statuses.every((status) => status === "cancelled");
     const derivedStatus = session.status === "cancelled" ? "cancelled" : active ? "running" : failed ? "failed" : cancelled ? "cancelled" : statuses.length ? "completed" : session.status;
     if (derivedStatus !== session.status) skillDebugSessionRepository.updateStatus(session.id, derivedStatus);
-    return {
+    const diagnostics = skillDebugDiagnosticService.build({ ...session, status: derivedStatus }, baseline, candidate);
+    if (!active) skillDebugSessionRepository.updateComparison(session.id, diagnostics.comparison);
+    return sensitiveDataRedactionService.redact({
       session: {
         ...session,
         status: derivedStatus,
@@ -750,11 +754,13 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       },
       baseline,
       candidate,
+      diagnostics,
       publish_guard: "skill_debug.publish_forbidden"
-    };
+    }) as Record<string, unknown>;
   }
 
   async function createSkillDebugSession(input: Record<string, unknown>, actorId: string, forcedProjectId?: string, frozenSnapshot?: Record<string, any>) {
+    skillDebugSessionRepository.expireDue();
     const mrId = String(input.mr_id || "").trim();
     const mr = mergeRequestRepository.findById(mrId) as Record<string, any> | undefined;
     if (!mr) return notFound();
@@ -844,6 +850,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const actorId = currentUserId(req);
       const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
       if (denied) return denied;
+      skillDebugSessionRepository.expireDue();
       const limit = boundedQueryLimit(url, "limit", 50, 200);
       return { items: skillDebugSessionRepository.listByProject(params.projectId, limit) };
     }),
@@ -893,7 +900,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const actorId = currentUserId(req);
       const denied = ensureProjectRole(session.project_id, actorId, "project_admin");
       if (denied) return denied;
-      const detail = debugSessionDetail(session);
+      const detail = sensitiveDataRedactionService.redact(debugSessionDetail(session));
       auditLog({ userId: actorId, projectId: session.project_id, action: "skill_debug.session_export", resourceType: "skill_debug_session", resourceId: session.id, summary: "export redacted skill debug diagnostics" });
       return { filename: `skill-debug-${session.id}.json`, content_type: "application/json; charset=utf-8", content: JSON.stringify(detail, null, 2) };
     }),

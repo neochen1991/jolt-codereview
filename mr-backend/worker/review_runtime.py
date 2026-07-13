@@ -433,6 +433,10 @@ class Recorder:
             ),
         )
         self._mark_write(force=True)
+        retention = str(((self.config or {}).get("data_policy") or {}).get("prompt_retention") or "hash_only")
+        retained_prompt = prompt if retention in {"full", "full_debug"} else ""
+        retained_messages = (request_messages or []) if retention in {"full", "full_debug"} else []
+        retained_response = (response_text or "") if retention in {"full", "full_debug"} else ""
         self._file_log(
             "llm_call",
             {
@@ -441,9 +445,10 @@ class Recorder:
                 "model": model,
                 "request_id": request_id,
                 "prompt_hash": sha1(prompt),
-                "prompt": prompt,
-                "request_messages": request_messages or [],
-                "response_text": response_text or "",
+                "prompt": retained_prompt,
+                "request_messages": retained_messages,
+                "response_text": retained_response,
+                "prompt_retention": retention,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "duration_ms": duration_ms,

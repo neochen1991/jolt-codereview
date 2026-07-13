@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any, Callable
+from skill_debug import production_side_effects_allowed
 
 
 def _tool_aliases(tool_name: str) -> set[str]:
@@ -245,13 +246,15 @@ def make_finalize_node(
         budget_tracker = state.get("budget_tracker")
         if budget_tracker:
             budget_used.update(budget_tracker.snapshot())
-        history_summary = update_mr_finding_history(
-            conn,
-            merge_request_id=mr["id"],
-            head_sha=job["head_sha"],
-            run_id=run_id,
-            final_findings=final_findings,
-        )
+        history_summary = {"active": 0, "resolved": 0, "skipped": "skill_debug"}
+        if production_side_effects_allowed(job):
+            history_summary = update_mr_finding_history(
+                conn,
+                merge_request_id=mr["id"],
+                head_sha=job["head_sha"],
+                run_id=run_id,
+                final_findings=final_findings,
+            )
         summary = f"输出 {len(final_findings)} 个问题"
         if budget_used.get("truncated_reason"):
             summary = f"{summary}；预算截断：{budget_used['truncated_reason']}"
@@ -260,11 +263,30 @@ def make_finalize_node(
             (status, summary, json.dumps(budget_used, ensure_ascii=False), json.dumps(coverage, ensure_ascii=False), run_id),
         )
         conn.execute("UPDATE review_jobs SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (status, job["id"]))
-        conn.execute(
-            "UPDATE merge_requests SET review_status = %s WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
-            (status, mr["id"]),
-        )
-        if recorder:
+        if not production_side_effects_allowed(job):
+            conn.execute(
+                """
+                UPDATE skill_debug_sessions
+                SET status = CASE
+                      WHEN EXISTS (
+                        SELECT 1 FROM review_jobs
+                        WHERE debug_session_id = skill_debug_sessions.id
+                          AND id <> %s
+                          AND status IN ('queued','fetching','pre_scanning','reviewing','judging','running')
+                      ) THEN 'running'
+                      ELSE 'completed'
+                    END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                (job["id"], job.get("debug_session_id")),
+            )
+        if production_side_effects_allowed(job):
+            conn.execute(
+                "UPDATE merge_requests SET review_status = %s WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
+                (status, mr["id"]),
+            )
+        if recorder and production_side_effects_allowed(job):
             span = recorder.span("incremental_history", "history_tracker")
             recorder.event(span, "mr_finding_history_updated", "MR finding history 已更新", history_summary)
             recorder.finish(span)

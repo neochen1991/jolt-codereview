@@ -4,6 +4,7 @@ import json
 from typing import Any, Callable
 
 from budget import BudgetTracker
+from skill_debug import production_side_effects_allowed
 
 
 def _numeric_override(raw: Any, fallback: int | float) -> int | float:
@@ -71,10 +72,11 @@ def make_choose_effort_node(
             (effort, json.dumps(budget, ensure_ascii=False), run_id),
         )
         conn.execute("UPDATE review_jobs SET status = 'pre_scanning', heartbeat_at = CURRENT_TIMESTAMP WHERE id = %s", (job["id"],))
-        conn.execute(
-            "UPDATE merge_requests SET review_status = 'pre_scanning' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
-            (job["merge_request_id"],),
-        )
+        if production_side_effects_allowed(job):
+            conn.execute(
+                "UPDATE merge_requests SET review_status = 'pre_scanning' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
+                (job["merge_request_id"],),
+            )
         conn.commit()
         return {**state, "effort": effort, "budget": budget, "budget_tracker": BudgetTracker.from_budget(budget)}
 

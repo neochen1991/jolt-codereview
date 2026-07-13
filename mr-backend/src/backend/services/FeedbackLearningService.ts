@@ -95,7 +95,7 @@ export class FeedbackLearningService {
       JOIN review_jobs rj ON rj.id = rr.review_job_id
       JOIN merge_requests mr ON mr.id = rj.merge_request_id
       JOIN repositories r ON r.id = mr.repository_id
-      ${input.projectId ? "WHERE r.project_id = $1" : ""}
+      ${input.projectId ? "WHERE r.project_id = $1 AND rj.execution_kind = 'production_review'" : "WHERE rj.execution_kind = 'production_review'"}
     `).all(...params) as Array<{
       project_id: string;
       agent_id: string;

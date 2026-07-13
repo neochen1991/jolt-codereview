@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from typing import Any
+from skill_debug import production_side_effects_allowed
 
 from tools.candidate_store import upsert_candidate_finding
 from tools.tool_normalizer import normalized_rule_category
@@ -675,10 +676,11 @@ def make_verify_findings_node(
         files = state["files"]
         all_findings = state["all_findings"]
         conn.execute("UPDATE review_jobs SET status = 'judging', heartbeat_at = CURRENT_TIMESTAMP WHERE id = %s", (job["id"],))
-        conn.execute(
-            "UPDATE merge_requests SET review_status = 'judging' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
-            (job["merge_request_id"],),
-        )
+        if production_side_effects_allowed(job):
+            conn.execute(
+                "UPDATE merge_requests SET review_status = 'judging' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
+                (job["merge_request_id"],),
+            )
         conn.commit()
         verifier_span = recorder.span("verify_findings", "verifier")
         suppressed_hashes = load_feedback_suppressions(conn, project_id)

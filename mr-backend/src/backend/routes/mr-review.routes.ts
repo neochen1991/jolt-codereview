@@ -368,8 +368,8 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     const requestedFindingIds = Array.from(new Set(findingIds.filter(Boolean)));
     if (requestedFindingIds.length === 0) return badRequest("finding_ids is required");
     const placeholders = requestedFindingIds.map((_, index) => `$${index + 1}`).join(",");
-    const findings = all<FindingRow>(`
-      SELECT rf.*
+    const findings = all<FindingRow & { execution_kind: string }>(`
+      SELECT rf.*, rj.execution_kind
       FROM review_findings rf
       JOIN review_runs rr ON rr.id = rf.review_run_id
       JOIN review_jobs rj ON rj.id = rr.review_job_id
@@ -378,6 +378,10 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     `, [mrId, ...requestedFindingIds]);
     if (findings.length !== requestedFindingIds.length) {
       return badRequest("finding_ids must all belong to the target merge request");
+    }
+    if (findings.some((finding) => finding.execution_kind !== "production_review")) {
+      auditLog({ userId, projectId: repo.project_id, action: "skill_debug.publish_blocked", resourceType: "merge_request", resourceId: mrId, summary: "skill_debug.publish_forbidden" });
+      return { statusCode: 409, error: "skill_debug.publish_forbidden", message: "Skill 调试任务产生的问题不可发布，请先执行正式检视" };
     }
     if (!findings.length) return badRequest("no publishable findings");
     const publishedRecords = dryRun

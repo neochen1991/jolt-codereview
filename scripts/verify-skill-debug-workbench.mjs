@@ -4,6 +4,7 @@ import path from "node:path";
 const root = process.cwd();
 const read = (...parts) => readFileSync(path.join(root, ...parts), "utf8");
 const routes = read("mr-backend", "src", "backend", "routes", "review.routes.ts");
+const routeRoot = read("mr-backend", "src", "backend", "routes", "mr-review.routes.ts");
 const migrations = read("mr-backend", "src", "backend", "db", "migrations.ts");
 const repository = read("mr-backend", "src", "backend", "repositories", "ReviewJobRepository.ts");
 const sessionRepository = read("mr-backend", "src", "backend", "repositories", "SkillDebugSessionRepository.ts");
@@ -47,7 +48,7 @@ const checks = [
   [routes, "production_route", "production routing mode"],
   [routes, "targeted", "targeted routing mode"],
   [routes, "skill_debug.publish_forbidden", "publish protection"],
-  [routes, "execution_kind", "publish checks finding execution ownership"],
+  [routeRoot, "finding.execution_kind", "publish checks finding execution ownership"],
   [worker, "debug_context_json", "worker debug context loading"],
   [debugWorker, "production_side_effects_allowed", "debug side-effect isolation"],
   [debugWorker, "apply_debug_snapshot", "frozen snapshot execution"],

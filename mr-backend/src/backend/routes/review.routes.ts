@@ -103,7 +103,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       SELECT rr.id, rr.review_job_id, rr.started_at
       FROM review_runs rr
       JOIN review_jobs rj ON rj.id = rr.review_job_id
-      WHERE rj.merge_request_id = $1
+      WHERE rj.merge_request_id = $1 AND rj.execution_kind = 'production_review'
       ORDER BY rr.started_at DESC
       LIMIT 2
     `, [mrId]);
@@ -482,7 +482,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     const runs = all<Record<string, any>>(`
       SELECT rr.* FROM review_runs rr
       JOIN review_jobs rj ON rj.id = rr.review_job_id
-      WHERE rj.merge_request_id = $1
+      WHERE rj.merge_request_id = $1 AND rj.execution_kind = 'production_review'
       ORDER BY rr.started_at DESC
     `, [mrId]);
     const selectedRun = runId ? runs.find((run) => run.id === runId) : runs[0];
@@ -912,6 +912,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         JOIN merge_requests mr ON mr.id = rj.merge_request_id
         JOIN repositories r ON r.id = mr.repository_id
         WHERE r.project_id = $1
+          AND rj.execution_kind = 'production_review'
           AND rj.status IN ('fetching', 'pre_scanning', 'reviewing', 'judging', 'running')
           AND NULLIF(COALESCE(rj.heartbeat_at, rj.locked_at, rj.updated_at), '')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '60 seconds'
         ORDER BY rj.locked_at DESC, rj.updated_at DESC
@@ -1006,14 +1007,14 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const jobs = all(`
         SELECT *
         FROM review_jobs
-        WHERE merge_request_id = $1
+        WHERE merge_request_id = $1 AND execution_kind = 'production_review'
         ORDER BY created_at DESC
         LIMIT $2
       `, [params.mrId, jobLimit]);
       const runs = all(`
         SELECT rr.* FROM review_runs rr
         JOIN review_jobs rj ON rj.id = rr.review_job_id
-        WHERE rj.merge_request_id = $1
+        WHERE rj.merge_request_id = $1 AND rj.execution_kind = 'production_review'
         ORDER BY rr.started_at DESC
         LIMIT $2
       `, [params.mrId, runLimit]);
@@ -1175,7 +1176,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const runs = all(`
         SELECT rr.* FROM review_runs rr
         JOIN review_jobs rj ON rj.id = rr.review_job_id
-        WHERE rj.merge_request_id = $1
+        WHERE rj.merge_request_id = $1 AND rj.execution_kind = 'production_review'
         ORDER BY rr.started_at DESC
       `, [params.mrId]);
       const latestRun = runs[0] as { id: string } | undefined;
@@ -1627,8 +1628,8 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     route("PATCH", "/api/mr-review/review-findings/:findingId", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const input = body as Record<string, unknown>;
-      const finding = get<FindingRow & { project_id: string }>(`
-        SELECT rf.*, r.project_id
+      const finding = get<FindingRow & { project_id: string; execution_kind: string }>(`
+        SELECT rf.*, r.project_id, rj.execution_kind
         FROM review_findings rf
         JOIN review_runs rr ON rr.id = rf.review_run_id
         JOIN review_jobs rj ON rj.id = rr.review_job_id
@@ -1637,6 +1638,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         WHERE rf.id = $1
       `, [params.findingId]);
       if (!finding) return notFound();
+      if (finding.execution_kind !== "production_review") return badRequest("Skill 调试问题不进入正式反馈学习");
       const denied = ensureProjectRole(finding.project_id, actorId, "developer");
       if (denied) return denied;
       if (typeof input.selected === "boolean") {
@@ -1653,8 +1655,8 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const actorId = currentUserId(req);
       const input = body as Record<string, unknown>;
       const state = String(input.feedback_type ?? "dismissed");
-      const finding = get<FindingRow & { project_id: string }>(`
-        SELECT rf.*, r.project_id
+      const finding = get<FindingRow & { project_id: string; execution_kind: string }>(`
+        SELECT rf.*, r.project_id, rj.execution_kind
         FROM review_findings rf
         JOIN review_runs rr ON rr.id = rf.review_run_id
         JOIN review_jobs rj ON rj.id = rr.review_job_id
@@ -1663,6 +1665,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         WHERE rf.id = $1
       `, [params.findingId]);
       if (!finding) return notFound();
+      if (finding.execution_kind !== "production_review") return badRequest("Skill 调试问题不进入正式反馈学习");
       const denied = ensureProjectRole(finding.project_id, actorId, "developer");
       if (denied) return denied;
       feedbackLearningService.markFindingFeedback(params.findingId, state);
@@ -1684,10 +1687,6 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       if (!repo) return notFound();
       const denied = ensureProjectRole(repo.project_id, currentUserId(req), "reviewer");
       if (denied) return denied;
-      const latestJob = get<Record<string, any>>("SELECT debug_context_json FROM review_jobs WHERE merge_request_id = $1 ORDER BY updated_at DESC LIMIT 1", [params.mrId]);
-      if (parseRecord(latestJob?.debug_context_json).kind === "skill_debug") {
-        return { statusCode: 409, error: "skill_debug.publish_forbidden", message: "Skill 调试任务不可发布 MR 评论，请先执行正式检视" };
-      }
       const closed = await ensureMergeRequestOpenForAction(params.mrId, "提交检视意见");
       if (closed) return closed;
       return publishFindings(params.mrId, (input.finding_ids as string[] | undefined) ?? [], Boolean(input.dry_run), currentUserId(req));

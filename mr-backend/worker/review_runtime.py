@@ -4494,10 +4494,11 @@ def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
         if not job:
             conn.commit()
             return None
-        conn.execute(
-            "UPDATE merge_requests SET review_status = 'fetching' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
-            (job["merge_request_id"],),
-        )
+        if not is_debug_job(job):
+            conn.execute(
+                "UPDATE merge_requests SET review_status = 'fetching' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
+                (job["merge_request_id"],),
+            )
         conn.commit()
         return job
     except Exception:
@@ -4594,10 +4595,13 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             """,
             (job["id"],),
         )
-        conn.execute(
-            "UPDATE merge_requests SET review_status = 'too_large' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
-            (job["merge_request_id"],),
-        )
+        if is_debug_job(job):
+            conn.execute("UPDATE skill_debug_sessions SET status = 'failed', failure_reason = 'mr_too_large', updated_at = CURRENT_TIMESTAMP WHERE id = %s", (job.get("debug_session_id"),))
+        else:
+            conn.execute(
+                "UPDATE merge_requests SET review_status = 'too_large' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
+                (job["merge_request_id"],),
+            )
         conn.commit()
         write_worker_log(
             config,
@@ -4898,10 +4902,13 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             """,
             (job_status, next_attempt, job["id"]),
         )
-        conn.execute(
-            "UPDATE merge_requests SET review_status = %s WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
-            (mr_status, mr["id"]),
-        )
+        if is_debug_job(job):
+            conn.execute("UPDATE skill_debug_sessions SET status = 'failed', failure_reason = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (str(exc), job.get("debug_session_id")))
+        else:
+            conn.execute(
+                "UPDATE merge_requests SET review_status = %s WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
+                (mr_status, mr["id"]),
+            )
         conn.commit()
         try:
             token_report = report_token_usage(conn, project_config, run_id)

@@ -104,7 +104,7 @@ export class ReviewJobRepository {
   }
 
   listByMergeRequest(mergeRequestId: string) {
-    return this.db.prepare("SELECT * FROM review_jobs WHERE merge_request_id = $1 ORDER BY created_at DESC").all(mergeRequestId);
+    return this.db.prepare("SELECT * FROM review_jobs WHERE merge_request_id = $1 AND execution_kind = 'production_review' ORDER BY created_at DESC").all(mergeRequestId);
   }
 
   findByMergeRequestAndHead(mergeRequestId: string, headSha: string) {

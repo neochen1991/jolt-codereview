@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Callable
+from skill_debug import production_side_effects_allowed
 
 from orchestration.deepagents_runner import run_bounded_deepagent
 from prompts.example_retriever import retrieve_examples
@@ -730,10 +731,11 @@ def make_run_experts_node(
         selected_agents = state["selected_agents"]
         project_id = _project_id_for_job(conn, job)
         conn.execute("UPDATE review_jobs SET status = 'reviewing', heartbeat_at = CURRENT_TIMESTAMP WHERE id = %s", (job["id"],))
-        conn.execute(
-            "UPDATE merge_requests SET review_status = 'reviewing' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
-            (job["merge_request_id"],),
-        )
+        if production_side_effects_allowed(job):
+            conn.execute(
+                "UPDATE merge_requests SET review_status = 'reviewing' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
+                (job["merge_request_id"],),
+            )
         conn.commit()
         all_findings: list[dict[str, Any]] = []
         bound_review_coverage_records: list[dict[str, Any]] = []

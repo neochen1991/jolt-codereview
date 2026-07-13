@@ -49,6 +49,7 @@ export class MergeRequestRepository {
         FROM review_jobs rj
         JOIN review_runs rr ON rr.review_job_id = rj.id
         JOIN project_mrs pm ON pm.id = rj.merge_request_id
+        WHERE rj.execution_kind = 'production_review'
         ORDER BY rj.merge_request_id, rr.started_at DESC
       ),
       latest_jobs AS (
@@ -57,6 +58,7 @@ export class MergeRequestRepository {
           rj.status AS latest_job_status
         FROM review_jobs rj
         JOIN project_mrs pm ON pm.id = rj.merge_request_id
+        WHERE rj.execution_kind = 'production_review'
         ORDER BY rj.merge_request_id, rj.updated_at DESC, rj.created_at DESC
       ),
       finding_counts AS (

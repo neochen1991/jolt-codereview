@@ -71,6 +71,7 @@ def shadow_job_context(case: dict[str, Any]) -> dict[str, Any]:
     return {
         "kind": "review_quality_shadow",
         "case_id": _text(case.get("case_id")),
+        "merge_request_id": _text(case.get("merge_request_id")),
         "input_snapshot_id": _text(case.get("input_snapshot_id")),
         "input_artifact_sha256": _text(case.get("input_artifact_sha256")),
         "gold_sha256": gold_digest,

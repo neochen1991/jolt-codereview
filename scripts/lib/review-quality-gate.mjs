@@ -9,6 +9,7 @@ export function evaluateReviewQualityUplift(baseline, candidate) {
   const checks = [];
   const add = (metric, passed, actual, required) => checks.push({ metric, passed, actual, required });
   const sampleCount = number(candidate, "sample_count") ?? 0;
+  const distinctMrCount = number(candidate, "distinct_mr_count") ?? 0;
   const recall = number(candidate, "recall");
   const baselineRecall = number(baseline, "recall");
   const crossRecall = number(candidate, "cross_file_recall");
@@ -23,6 +24,7 @@ export function evaluateReviewQualityUplift(baseline, candidate) {
   const durationP95 = number(candidate, "p95_duration_ms");
   const baselineDurationP95 = number(baseline, "p95_duration_ms");
   add("sample_count", sampleCount >= 30, sampleCount, ">=30");
+  add("distinct_mr_count", distinctMrCount >= 30, distinctMrCount, ">=30");
   add("recall_uplift", recall !== null && baselineRecall !== null && recall - baselineRecall >= 0.10, recall !== null && baselineRecall !== null ? recall - baselineRecall : null, ">=0.10");
   add("cross_file_recall_uplift", crossRecall !== null && baselineCrossRecall !== null && crossRecall - baselineCrossRecall >= 0.15, crossRecall !== null && baselineCrossRecall !== null ? crossRecall - baselineCrossRecall : null, ">=0.15");
   add("critical_high_recall", criticalHighRecall !== null && criticalHighRecall >= 0.95, criticalHighRecall, ">=0.95");

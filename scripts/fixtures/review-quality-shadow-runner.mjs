@@ -4,6 +4,7 @@ const snapshot = JSON.parse(input || "{}");
 const v2 = snapshot.context_engine === "v2";
 console.log(JSON.stringify({
   case_id: snapshot.case_id,
+  merge_request_id: snapshot.merge_request_id,
   execution_kind: snapshot.execution_kind,
   context_engine: snapshot.context_engine,
   input_artifact_sha256: snapshot.input_artifact_sha256,

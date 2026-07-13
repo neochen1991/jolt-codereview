@@ -21,6 +21,7 @@ function summarize(engine, rows) {
   return {
     engine,
     sample_count: rows.length,
+    distinct_mr_count: new Set(rows.map((row) => String(row.merge_request_id || "")).filter(Boolean)).size,
     precision: output ? found / output : null,
     recall: truth ? found / truth : null,
     cross_file_recall: crossTruth ? crossFound / crossTruth : null,
@@ -56,6 +57,7 @@ for (const snapshot of snapshots) {
     results[engine].push({ ...row, snapshot_sha256: frozenSnapshotSha256 });
   }
 }
-const report = { schema_version: "review_quality_shadow_v1", rollout_stage: stage, minimum_valid_mrs: 30, stage_ready_for_gate: snapshots.length >= 30, generated_at: new Date().toISOString(), baseline: summarize("v1", results.v1), candidate: summarize("v2", results.v2), cases: results };
+const distinctMrCount = new Set(snapshots.map((snapshot) => String(snapshot.merge_request_id || "")).filter(Boolean)).size;
+const report = { schema_version: "review_quality_shadow_v1", rollout_stage: stage, minimum_valid_mrs: 30, distinct_mr_count: distinctMrCount, stage_ready_for_gate: distinctMrCount >= 30, generated_at: new Date().toISOString(), baseline: summarize("v1", results.v1), candidate: summarize("v2", results.v2), cases: results };
 writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, output: outputPath, sample_count: snapshots.length }));

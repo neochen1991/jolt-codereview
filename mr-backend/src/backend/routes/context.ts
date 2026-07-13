@@ -6,6 +6,7 @@ import type { MergeRequestRepository } from "../repositories/MergeRequestReposit
 import type { ProjectRepository } from "../repositories/ProjectRepository.js";
 import type { RepositoryRepository } from "../repositories/RepositoryRepository.js";
 import type { ReviewJobRepository } from "../repositories/ReviewJobRepository.js";
+import type { SkillDebugSessionRepository } from "../repositories/SkillDebugSessionRepository.js";
 import type { RuleDocumentRepository } from "../repositories/RuleDocumentRepository.js";
 import type { AgentConfigService } from "../services/AgentConfigService.js";
 import type { AgentToolBindingService } from "../services/AgentToolBindingService.js";
@@ -14,6 +15,7 @@ import type { MrSyncService } from "../services/MrSyncService.js";
 import type { ObservabilityService } from "../services/ObservabilityService.js";
 import type { ReviewQueueService } from "../services/ReviewQueueService.js";
 import type { StaticToolAvailabilityService } from "../services/StaticToolAvailabilityService.js";
+import type { SkillDebugSnapshotService } from "../services/SkillDebugSnapshotService.js";
 
 export interface MrSyncRepositoryResult {
   repository_id: string;
@@ -42,6 +44,7 @@ export interface BackendRouteContext {
   repositoryRepository: RepositoryRepository;
   mergeRequestRepository: MergeRequestRepository;
   reviewJobRepository: ReviewJobRepository;
+  skillDebugSessionRepository: SkillDebugSessionRepository;
   agentRepository: AgentRepository;
   ruleDocumentRepository: RuleDocumentRepository;
   auditRepository: AuditRepository;
@@ -51,6 +54,7 @@ export interface BackendRouteContext {
   mrSyncService: MrSyncService;
   observabilityService: ObservabilityService;
   staticToolAvailabilityService: StaticToolAvailabilityService;
+  skillDebugSnapshotService: SkillDebugSnapshotService;
   reviewQueueService: ReviewQueueService;
   effectiveConfig(projectId: string): Promise<AppConfig>;
   all<T>(sql: string, params?: any[]): T[];

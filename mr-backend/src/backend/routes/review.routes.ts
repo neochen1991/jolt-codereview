@@ -34,10 +34,12 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     repositoryRepository,
     mergeRequestRepository,
     reviewJobRepository,
+    skillDebugSessionRepository,
     agentRepository,
     ruleDocumentRepository,
     auditRepository,
     reviewQueueService,
+    skillDebugSnapshotService,
     effectiveConfig,
     feedbackLearningService
   } = ctx;
@@ -702,7 +704,189 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     };
   }
 
+  function parseJsonValue(value: unknown): any {
+    if (typeof value !== "string") return value;
+    try { return JSON.parse(value); } catch { return value; }
+  }
+
+  function debugJobDetail(jobId: string | null | undefined) {
+    if (!jobId) return null;
+    const job = reviewJobRepository.findById(jobId) as Record<string, any> | undefined;
+    if (!job) return null;
+    const run = get<Record<string, any>>("SELECT * FROM review_runs WHERE review_job_id = $1 ORDER BY started_at DESC LIMIT 1", [jobId]);
+    const runId = String(run?.id || "");
+    const trace = runId ? all<Record<string, any>>(`SELECT e.*, s.span_key, s.agent_id FROM agent_trace_events e JOIN agent_trace_spans s ON s.id=e.span_id WHERE s.review_run_id=$1 ORDER BY e.created_at`, [runId]) : [];
+    const llmCalls = runId ? all<Record<string, any>>(`SELECT l.*, s.span_key, s.agent_id FROM llm_call_records l JOIN agent_trace_spans s ON s.id=l.span_id WHERE s.review_run_id=$1 ORDER BY l.created_at`, [runId]) : [];
+    const toolCalls = runId ? all<Record<string, any>>(`SELECT t.*, s.span_key, s.agent_id FROM tool_call_records t JOIN agent_trace_spans s ON s.id=t.span_id WHERE s.review_run_id=$1 ORDER BY t.created_at`, [runId]) : [];
+    const findings = runId ? all<Record<string, any>>("SELECT * FROM review_findings WHERE review_run_id=$1 ORDER BY created_at", [runId]) : [];
+    return {
+      job: { ...job, debug_context_json: undefined },
+      run: run || null,
+      trace,
+      llm_calls: llmCalls,
+      tool_calls: toolCalls,
+      findings,
+      skill_trace: buildSkillTracePayload(run || {}, trace.map(normalizeLegacyEvidenceTraceRow), llmCalls)
+    };
+  }
+
+  function debugSessionDetail(session: Record<string, any>) {
+    const baseline: any = debugJobDetail(session.baseline_job_id);
+    const candidate: any = debugJobDetail(session.candidate_job_id);
+    const statuses = [baseline?.job?.status, candidate?.job?.status].filter(Boolean).map(String);
+    const active = statuses.some((status) => ["queued", "fetching", "pre_scanning", "reviewing", "judging", "running"].includes(status));
+    const failed = statuses.some((status) => ["failed", "dead_letter"].includes(status));
+    const cancelled = statuses.length > 0 && statuses.every((status) => status === "cancelled");
+    const derivedStatus = session.status === "cancelled" ? "cancelled" : active ? "running" : failed ? "failed" : cancelled ? "cancelled" : statuses.length ? "completed" : session.status;
+    if (derivedStatus !== session.status) skillDebugSessionRepository.updateStatus(session.id, derivedStatus);
+    return {
+      session: {
+        ...session,
+        status: derivedStatus,
+        snapshot_json: undefined,
+        snapshot: parseJsonValue(session.snapshot_json),
+        comparison: parseJsonValue(session.comparison_json)
+      },
+      baseline,
+      candidate,
+      publish_guard: "skill_debug.publish_forbidden"
+    };
+  }
+
+  async function createSkillDebugSession(input: Record<string, unknown>, actorId: string, forcedProjectId?: string, frozenSnapshot?: Record<string, any>) {
+    const mrId = String(input.mr_id || "").trim();
+    const mr = mergeRequestRepository.findById(mrId) as Record<string, any> | undefined;
+    if (!mr) return notFound();
+    const repo = repositoryRepository.findById(mr.repository_id) as Record<string, any> | undefined;
+    if (!repo || (forcedProjectId && repo.project_id !== forcedProjectId)) return notFound();
+    const denied = ensureProjectRole(repo.project_id, actorId, "project_admin");
+    if (denied) return denied;
+    const skillKey = String(input.skill_key || frozenSnapshot?.skill?.skill_key || "").trim();
+    const skillVersion = String(input.skill_version || frozenSnapshot?.skill?.version || "").trim();
+    const agentKey = String(input.agent_key || frozenSnapshot?.agent?.agent_key || "").trim();
+    const mode = String(input.mode || "targeted");
+    const effortLevel = String(input.effort_level || "standard");
+    if (!skillKey || !agentKey) return badRequest("skill_key and agent_key are required");
+    if (!["targeted", "production_route"].includes(mode)) return badRequest("mode must be targeted or production_route");
+    let snapshotResult: { snapshot: Record<string, unknown>; snapshot_sha256: string };
+    try {
+      snapshotResult = frozenSnapshot
+        ? { snapshot: frozenSnapshot, snapshot_sha256: String(input.snapshot_sha256 || "") || sha1(JSON.stringify(frozenSnapshot)) }
+        : skillDebugSnapshotService.build({
+            projectId: repo.project_id,
+            mergeRequest: mr,
+            repository: repo,
+            skillKey,
+            skillVersion,
+            agentKey,
+            effectiveConfig: await effectiveConfig(repo.project_id)
+          });
+    } catch (error) {
+      return badRequest((error as Error).message);
+    }
+    const sessionId = id("skill_debug");
+    const expiresAt = new Date(Date.now() + 14 * 86400_000).toISOString();
+    const session = skillDebugSessionRepository.create({
+      id: sessionId,
+      projectId: repo.project_id,
+      repositoryId: repo.id,
+      mergeRequestId: mr.id,
+      headSha: mr.latest_head_sha,
+      skillKey,
+      skillVersion: String((snapshotResult.snapshot.skill as Record<string, any>)?.version || skillVersion),
+      agentKey,
+      mode: mode as "targeted" | "production_route",
+      effortLevel,
+      requestedBy: actorId,
+      snapshot: snapshotResult.snapshot,
+      snapshotSha256: snapshotResult.snapshot_sha256,
+      expiresAt
+    }) as Record<string, any>;
+    const baseContext = {
+      kind: "skill_debug", mode, session_id: sessionId, project_id: repo.project_id,
+      skill_key: skillKey, skill_version: session.skill_version, agent_key: agentKey,
+      mr_id: mr.id, head_sha: mr.latest_head_sha, requested_by: actorId,
+      publish_allowed: false, consistency_contract: "production_review_pipeline_v1",
+      snapshot_sha256: snapshotResult.snapshot_sha256, snapshot: snapshotResult.snapshot
+    };
+    const baseline = mode === "targeted" ? reviewQueueService.enqueueDebug({
+      mergeRequestId: mr.id, headSha: mr.latest_head_sha, priority: Number(mr.risk_score || 0), effortLevel,
+      requestedBy: actorId, debugSessionId: sessionId, debugVariant: "baseline", debugContext: { ...baseContext, variant: "baseline" }
+    }) as Record<string, any> : null;
+    const candidate = reviewQueueService.enqueueDebug({
+      mergeRequestId: mr.id, headSha: mr.latest_head_sha, priority: Number(mr.risk_score || 0), effortLevel,
+      requestedBy: actorId, debugSessionId: sessionId, debugVariant: "candidate", debugContext: { ...baseContext, variant: "candidate" }
+    }) as Record<string, any>;
+    skillDebugSessionRepository.attachJobs(sessionId, baseline?.id || null, candidate.id);
+    auditLog({ userId: actorId, projectId: repo.project_id, action: "skill_debug.session_create", resourceType: "skill_debug_session", resourceId: sessionId, summary: `${mode} ${skillKey} ${session.skill_version}` });
+    runWorkerOnce();
+    return debugSessionDetail(skillDebugSessionRepository.findById(sessionId) as Record<string, any>);
+  }
+
   const routes: Route[] = [
+    route("POST", "/api/mr-review/projects/:projectId/skill-debug-sessions", async ({ params, body, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return createSkillDebugSession((body || {}) as Record<string, unknown>, actorId, params.projectId);
+    }),
+    route("GET", "/api/mr-review/projects/:projectId/skill-debug-sessions", ({ params, req, url }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      const limit = boundedQueryLimit(url, "limit", 50, 200);
+      return { items: skillDebugSessionRepository.listByProject(params.projectId, limit) };
+    }),
+    route("GET", "/api/mr-review/skill-debug-sessions/:sessionId", ({ params, req }) => {
+      const session = skillDebugSessionRepository.findById(params.sessionId) as Record<string, any> | undefined;
+      if (!session) return notFound();
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(session.project_id, actorId, "project_admin");
+      if (denied) return denied;
+      auditLog({ userId: actorId, projectId: session.project_id, action: "skill_debug.session_view", resourceType: "skill_debug_session", resourceId: session.id, summary: "view skill debug session" });
+      return debugSessionDetail(session);
+    }),
+    route("POST", "/api/mr-review/skill-debug-sessions/:sessionId/cancel", ({ params, req }) => {
+      const session = skillDebugSessionRepository.findById(params.sessionId) as Record<string, any> | undefined;
+      if (!session) return notFound();
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(session.project_id, actorId, "project_admin");
+      if (denied) return denied;
+      db.prepare(`
+        UPDATE review_jobs SET status = 'cancelled', locked_at = NULL, locked_by = NULL, heartbeat_at = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE debug_session_id = $1 AND status IN ('queued', 'fetching', 'pre_scanning', 'reviewing', 'judging', 'running')
+      `).run(session.id);
+      const updated = skillDebugSessionRepository.updateStatus(session.id, "cancelled");
+      auditLog({ userId: actorId, projectId: session.project_id, action: "skill_debug.session_cancel", resourceType: "skill_debug_session", resourceId: session.id, summary: "cancel skill debug session" });
+      return debugSessionDetail(updated as Record<string, any>);
+    }),
+    route("POST", "/api/mr-review/skill-debug-sessions/:sessionId/rerun", async ({ params, req }) => {
+      const session = skillDebugSessionRepository.findById(params.sessionId) as Record<string, any> | undefined;
+      if (!session) return notFound();
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(session.project_id, actorId, "project_admin");
+      if (denied) return denied;
+      const snapshot = parseJsonValue(session.snapshot_json) as Record<string, any>;
+      return createSkillDebugSession({
+        mr_id: session.merge_request_id,
+        skill_key: session.skill_key,
+        skill_version: session.skill_version,
+        agent_key: session.agent_key,
+        mode: session.mode,
+        effort_level: session.requested_effort_level,
+        snapshot_sha256: session.snapshot_sha256
+      }, actorId, session.project_id, snapshot);
+    }),
+    route("GET", "/api/mr-review/skill-debug-sessions/:sessionId/export", ({ params, req }) => {
+      const session = skillDebugSessionRepository.findById(params.sessionId) as Record<string, any> | undefined;
+      if (!session) return notFound();
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(session.project_id, actorId, "project_admin");
+      if (denied) return denied;
+      const detail = debugSessionDetail(session);
+      auditLog({ userId: actorId, projectId: session.project_id, action: "skill_debug.session_export", resourceType: "skill_debug_session", resourceId: session.id, summary: "export redacted skill debug diagnostics" });
+      return { filename: `skill-debug-${session.id}.json`, content_type: "application/json; charset=utf-8", content: JSON.stringify(detail, null, 2) };
+    }),
     route("GET", "/api/mr-review/projects/:projectId/merge-requests", async ({ params, req, url }) => {
       const denied = ensureProjectRead(params.projectId, req);
       if (denied) return denied;
@@ -1055,7 +1239,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       if (!mr) return notFound();
       const repo = repositoryRepository.findById(mr.repository_id) as Record<string, any> | undefined;
       if (!repo) return notFound();
-      const denied = ensureProjectRole(repo.project_id, actorId, "reviewer");
+      const denied = ensureProjectRole(repo.project_id, actorId, "project_admin");
       if (denied) return denied;
       const input = (body || {}) as Record<string, unknown>;
       const skillKey = String(input.skill_key || "").trim();
@@ -1098,7 +1282,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       return { ...job, debug_context: debugContext };
     }),
     route("GET", "/api/mr-review/projects/:projectId/skill-debug-runs", ({ params, req, url }) => {
-      const denied = ensureProjectRead(params.projectId, req);
+      const denied = ensureProjectRole(params.projectId, currentUserId(req), "project_admin");
       if (denied) return denied;
       const limit = boundedQueryLimit(url, "limit", 50, 200);
       return { items: all(`
@@ -1114,7 +1298,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     route("GET", "/api/mr-review/skill-debug-runs/:jobId", ({ params, req }) => {
       const job = reviewJobRepository.findWithProject(params.jobId) as Record<string, any> | undefined;
       if (!job) return notFound();
-      const denied = ensureProjectRead(String(job.project_id), req);
+      const denied = ensureProjectRole(String(job.project_id), currentUserId(req), "project_admin");
       if (denied) return denied;
       const run = get<Record<string, any>>("SELECT * FROM review_runs WHERE review_job_id = $1 ORDER BY started_at DESC LIMIT 1", [params.jobId]);
       const debugContext = parseRecord(job.debug_context_json);

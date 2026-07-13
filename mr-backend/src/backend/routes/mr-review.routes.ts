@@ -10,6 +10,7 @@ import { MergeRequestRepository } from "../repositories/MergeRequestRepository.j
 import { ProjectRepository } from "../repositories/ProjectRepository.js";
 import { RepositoryRepository } from "../repositories/RepositoryRepository.js";
 import { ReviewJobRepository } from "../repositories/ReviewJobRepository.js";
+import { SkillDebugSessionRepository } from "../repositories/SkillDebugSessionRepository.js";
 import { RuleDocumentRepository } from "../repositories/RuleDocumentRepository.js";
 import { AgentConfigService } from "../services/AgentConfigService.js";
 import { AgentToolBindingService } from "../services/AgentToolBindingService.js";
@@ -18,6 +19,7 @@ import { MrSyncService } from "../services/MrSyncService.js";
 import { ObservabilityService } from "../services/ObservabilityService.js";
 import { ReviewQueueService } from "../services/ReviewQueueService.js";
 import { StaticToolAvailabilityService } from "../services/StaticToolAvailabilityService.js";
+import { SkillDebugSnapshotService } from "../services/SkillDebugSnapshotService.js";
 import { CommonBackendClient } from "../services/CommonBackendClient.js";
 import { queuedReviewWorkerCapacity } from "../services/WorkerLaunchPolicy.js";
 import { spawnWorkerOnce as launchWorkerOnce, type WorkerProcessLogger } from "../services/WorkerProcessLauncher.js";
@@ -42,6 +44,7 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
   const repositoryRepository = new RepositoryRepository(db);
   const mergeRequestRepository = new MergeRequestRepository(db);
   const reviewJobRepository = new ReviewJobRepository(db);
+  const skillDebugSessionRepository = new SkillDebugSessionRepository(db);
   const agentRepository = new AgentRepository(db);
   const ruleDocumentRepository = new RuleDocumentRepository(db);
   const auditRepository = new AuditRepository(db);
@@ -57,6 +60,7 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
   const mrSyncService = new MrSyncService(config, repositoryRepository, mergeRequestRepository, reviewQueueService, runWorkerOnce, effectiveConfig);
   const observabilityService = new ObservabilityService(db);
   const staticToolAvailabilityService = new StaticToolAvailabilityService();
+  const skillDebugSnapshotService = new SkillDebugSnapshotService(db);
 
   function all<T>(sql: string, params: any[] = []): T[] {
     return db.prepare(sql).all(...params) as T[];
@@ -453,6 +457,7 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     repositoryRepository,
     mergeRequestRepository,
     reviewJobRepository,
+    skillDebugSessionRepository,
     agentRepository,
     ruleDocumentRepository,
     auditRepository,
@@ -462,6 +467,7 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
     mrSyncService,
     observabilityService,
     staticToolAvailabilityService,
+    skillDebugSnapshotService,
     reviewQueueService,
     effectiveConfig,
     all,

@@ -23,6 +23,8 @@
 5. Finding、Trace、LLM Exchange 和 Review Artifacts 仍按各自 run ID 落库；评论发布、MR 状态更新、反馈学习和生产历史写入全部禁用。
 6. Runner 等待两个作业结束，校验输入 SHA、发布尝试数和终态，再输出统一 case result；聚合脚本生成质量门报告。
 
+实现采用 `review_input_snapshots`：项目显式开启 `quality_shadow_mode` 时，production run 捕获 Worker 实际使用的 changed files、源文件内容和增量历史，规范化哈希后保留 72 小时。原生 case runner 通过 Snapshot ID 和 SHA256 引用该输入，不在 JSONL 中重复保存源码全文。
+
 ## 隔离与失败处理
 
 - `quality_shadow_*` 与 `skill_debug_*` 统一归类为 non-production review job；`production_side_effects_allowed()` 对两者都返回 false。

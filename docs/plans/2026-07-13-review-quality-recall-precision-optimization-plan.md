@@ -1007,7 +1007,7 @@ git commit -m "test: gate review quality v2 rollout"
 - Skill Checkpoint 编译器支持 `evidence_scope`、`context_queries` 和 `max_dependency_hops`；Skill Debug 与 Production 共用 Context Planner、Exchange、Verify、Critic 和 Judge。
 - Review Detail 与项目质量接口已暴露 Context Health、Candidate Funnel、Verifier/Judge 拒绝原因、反馈精确率、Checkpoint 指标、未闭环 Candidate 和可复现状态。
 - 项目配置支持 `context_engine / semantic_index / llm_replay / quality_shadow_mode`，README 已记录 Windows 内网依赖、回放数据策略和回滚顺序。
-- Shadow Runner 强制冻结 Snapshot、同输入 v1/v2 双跑和 `publish_allowed=false`；质量门覆盖 Recall、跨文件 Recall、Critical/High Recall、Precision、Negative FP、P95 Token 和 P95 Duration。
+- 原生 Shadow Runner 已接入 PostgreSQL Review Job 队列：正式 Review 在显式开启时捕获 72 小时 TTL 的规范化输入 Artifact，`quality_shadow_v1/v2` 从同一 MR/head/hash 恢复输入，并共用正式 Review Graph；生产队列优先，MR 状态、Skill Debug 会话、反馈学习、历史 Finding 和发布副作用全部隔离。质量门覆盖 Recall、跨文件 Recall、Critical/High Recall、Precision、Negative FP、P95 Token 和 P95 Duration。
 - 超大符号中的远距离 Hunk 会拆成独立 ContextUnit，并保留 40 行语义窗口，避免固定 400 行中心裁剪遗漏两端；SemanticGraph 现已记录接口多实现、未修改调用方、测试导入与配置读取关系。
 - 完整响应的 Exact Replay 存储改为显式 Data Policy 授权，并写入 `review_run_id`、TTL；新建表和旧表升级都包含留存列，PostgreSQL 时间比较统一使用 `timestamptz` 转换。
 - `live_repeat` 已强制绕过旧 Response Cache；缓存命中也会进入统一 Exchange 指纹链。DeepAgent 缺少 Exchange Recorder 时直接失败，不能再旁路发起模型 HTTP 请求。
@@ -1026,6 +1026,9 @@ git commit -m "test: gate review quality v2 rollout"
 | 当前 Negative MR FP | 0 / 2 Negative MR | 同上 |
 | Exact Replay 一致率 | 100% | 自动化用例 2 次 LLM Exchange；Replay 网络调用 0 次 |
 | Shadow Runner 机制用例 | 2 个冻结 Snapshot，v1/v2 均执行且发布尝试 0 | 机制测试，不计入上线样本 |
+| 原生 Shadow 作业链 | PASS | `npm run verify:review-quality-shadow`；覆盖明确 execution kind、相同 Snapshot hash、Gold 评分、Token/耗时和发布隔离 |
+| 真实 PostgreSQL 迁移 | PASS | 本机 MR Backend 启动完成迁移，`review_input_snapshots` 表存在 |
+| 当前数据库冻结 Snapshot | 0 | 尚未开启真实项目捕获，未伪造样本 |
 | 有效生产 Shadow A/B 样本 | 0 / 30 | 尚未在真实内部项目累计 |
 | 生产 v1/v2 跨文件 Recall 提升 | 未采集 | 需真实 Shadow A/B Gold 标注 |
 | 生产 v1/v2 P95 Token | 未采集 | 需至少 30 个有效 MR |
@@ -1033,4 +1036,4 @@ git commit -m "test: gate review quality v2 rollout"
 
 ### 11.3 正式切换状态
 
-当前保守默认仍为 v1，项目可在 Shadow 环境显式启用 v2，但**尚不能声称达到生产上线质量门**。原因不是代码或自动化失败，而是第 5 节要求的人工双人复核扩展 Gold Set 和每阶段至少 30 个真实 MR 尚无外部标注/样本。质量门会把样本少于 30、缺少跨文件 Recall 或缺少 P95 成本数据的报告判为失败。正式推广必须依次完成 `internal_10 → internal_30 → internal_100 → external_10 → full`；任一阶段失败即把 `context_engine` 回滚为 `v1`，不得用本节的机制 fixture 代替生产证据。
+当前保守默认仍为 v1。真实 Shadow A/B 已具备原生队列、冻结输入、正式 Worker 同图执行、结果评分和发布隔离能力，但**尚不能声称达到生产上线质量门**。当前数据库只有 1 个生产 MR、0 个冻结 Snapshot，不足以生成 30 个不同真实 MR 的有效 cohort；第 5 节要求的人工双人复核 Gold Set 也需要项目人员参与。质量门会把样本少于 30、缺少跨文件 Recall 或缺少 P95 成本数据的报告判为失败。正式推广必须依次完成 `internal_10 → internal_30 → internal_100 → external_10 → full`；任一阶段失败即把 `context_engine` 回滚为 `v1`，不得用机制 fixture、同一 MR 重复执行或模型自标注代替生产证据。

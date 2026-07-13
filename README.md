@@ -209,6 +209,78 @@ MR Backend 支持项目级 Review 质量灰度配置。在真实 Shadow A/B 达�
 - `llm_replay`: `off` 只实时调用；`record` 记录稳定 Seed、请求/响应 Hash 和调用指纹；`replay` 只读取已有 Exchange，缺记录会明确失败且不会偷偷联网；`live_repeat` 实时重跑并更新记录。
 - `quality_shadow_mode`: 标记项目允许进入 Shadow A/B。实际双跑由 `node scripts/run-review-quality-shadow.mjs` 对冻结 Snapshot 执行；Shadow Runner 强制 `publish_allowed=false`，只写独立质量报告，不替代正式发布结果。单独修改这个开关不会在普通 Review Job 内隐式双跑。
 
+#### 真实 Review Quality Shadow A/B
+
+`quality_shadow_mode=true` 后，新建的正式 `production_review` 会把本次 Worker 实际读取的 changed files、源文件内容和增量历史保存到 `review_input_snapshots`。输入使用规范化 SHA256，并同时绑定 MR、Head SHA 和来源 Review Run；默认 72 小时过期。v1/v2 Shadow Job 只覆盖 `context_engine`，其余项目配置、Agent、激活 Skill、Checkpoint、模型、Verify、Critic 和 Judge 都继续走正式 Review Worker 图。
+
+该开关会短期保存源码全文，属于显式数据留存授权。敏感项目开启前必须确认 PostgreSQL 访问控制、备份策略和 72 小时留存符合要求；不做 Shadow 时保持 `false`。过期 Snapshot 会被 runner 拒绝，不能计入有效样本。
+
+准备 JSONL，每行代表一个不同的真实 MR。`input_snapshot_id` 和 `input_artifact_sha256` 可由项目数据库管理员查询 `review_input_snapshots`；Gold 必须使用稳定 ID，并完成双人独立标注和分歧原因记录：
+
+```sql
+SELECT id AS input_snapshot_id,
+       merge_request_id,
+       head_sha,
+       artifact_sha256 AS input_artifact_sha256,
+       source_review_run_id,
+       expires_at
+FROM review_input_snapshots
+WHERE expires_at::timestamptz > CURRENT_TIMESTAMP
+ORDER BY created_at DESC;
+```
+
+```json
+{"case_id":"internal-mr-2026-001","merge_request_id":"mr_xxx","head_sha":"012345...","input_snapshot_id":"snapshot_xxx","input_artifact_sha256":"64位十六进制SHA256","gold_records":[{"id":"gold-001","mr_id":"mr_xxx","file":"src/A.java","line":42,"rule_id":"AUTH-001","severity":"high","evidence_scope":"cross_file","evidence_keywords":["authorization"]}]}
+```
+
+先启动 MR Backend/Worker，再运行同输入双跑。macOS/Linux：
+
+```bash
+export DATABASE_URL='postgresql://USER:PASSWORD@PG_HOST:5432/jolt_codereview'
+npm --prefix mr-backend run start
+
+# 在另一个终端执行
+export DATABASE_URL='postgresql://USER:PASSWORD@PG_HOST:5432/jolt_codereview'
+node scripts/run-review-quality-shadow.mjs \
+  --snapshots evaluation/internal-shadow.jsonl \
+  --runner "mr-backend/.venv/bin/python scripts/run_review_quality_shadow_case.py" \
+  --stage internal_10 \
+  --output outputs/internal-shadow-report.json
+```
+
+Windows PowerShell：
+
+```powershell
+$env:DATABASE_URL="postgresql://USER:PASSWORD@PG_HOST:5432/jolt_codereview"
+npm --prefix mr-backend run start
+
+# 在另一个 PowerShell 窗口执行
+$env:DATABASE_URL="postgresql://USER:PASSWORD@PG_HOST:5432/jolt_codereview"
+$runner = '"{0}" "{1}"' -f "$PWD\mr-backend\.venv\Scripts\python.exe", "$PWD\scripts\run_review_quality_shadow_case.py"
+node scripts/run-review-quality-shadow.mjs `
+  --snapshots evaluation/internal-shadow.jsonl `
+  --runner $runner `
+  --stage internal_10 `
+  --output outputs/internal-shadow-report.json
+```
+
+原生 runner 会在 PostgreSQL 创建低优先级 `quality_shadow_v1` / `quality_shadow_v2` Job，等待正式 Worker 完成，并从独立 Run/Finding/Token 记录生成报告。生产 Job 排队时不会领取 Shadow；Snapshot 缺失、过期、MR/head/hash 不一致、Worker 超时、任一 Job 失败、返回的 engine 不一致或出现发布尝试时，case 直接失败。默认最长等待 1800 秒，可通过 `JOLT_SHADOW_TIMEOUT_SECONDS` 调整；Windows 内网下 PostgreSQL 地址应加入 `NO_PROXY`。
+
+机制测试命令：
+
+```bash
+npm run verify:review-quality-shadow
+```
+
+机制测试只证明同一输入确实进入两个 engine 且生产发布次数为 0，不能替代上线数据。每个灰度阶段必须至少 30 个不同真实 MR，并运行：
+
+```bash
+npm run verify:real-prs
+node scripts/verify-review-quality-uplift.mjs --baseline <v1-report> --candidate <v2-report>
+```
+
+只有 Recall、跨文件 Recall、Critical/High Recall、Precision、Negative FP、P95 Token 和 P95 Duration 全部通过，才允许进入下一阶段；否则保持或回滚 `context_engine=v1`。
+
 回滚顺序：先把 `context_engine` 改为 `v1`；如果语义索引异常，再把 `semantic_index` 改为 `regex`；模型网关或存储异常时把 `llm_replay` 改为 `off`。修改后只影响新建 Review Run，已有 Run 的 `coverage_json`、Context Health 和调用指纹仍保留用于审计。
 
 生产环境默认只保留 Prompt/Response Hash，不因为 `record` 自动持久化完整模型响应。Skill Debug 使用冻结 MR Snapshot 时，可在会话 TTL 内启用 Exact Replay 存储；调试结束后由 `skill_debug_policy.retention_days` 和清理任务删除。不要在共享数据库中无限期保存源码、Prompt、工具结果或完整模型响应。Review 页面“真实任务质量仪表盘”会显示 `full / partial / patch_only / blocked`、Candidate 漏斗、Checkpoint 闭环、反馈精确率和可复现状态；没有数据时显示 unavailable，不按成功处理。
@@ -264,6 +336,9 @@ $env:MR_CONFIG_PATH="$PWD\mr-backend\config.json"
 | `CODEHUB_TOKEN` | 接内网 CodeHub 时必需 | CodeHub API Token，对应 `codehub.default_token_env` | 可以直接写 `codehub.default_token`，但不推荐 |
 | `GITHUB_TOKEN` | 接 GitHub 时可选 | GitHub API Token，对应 `github.default_token_env` | 可以直接写 `github.default_token`，但不推荐 |
 | `PYTHON_BIN` | 可选 | Python Worker 解释器路径；优先级高于 `runtime.python_bin` | 可以放 `mr-backend.config.runtime.python_bin` |
+| `DATABASE_URL` | 运行原生 Review Quality Shadow runner 时必需 | runner 直接连接同一 PostgreSQL；普通服务仍读取 `server.postgres_url` | Shadow runner 当前必须用环境变量，避免把数据库口令写进样本文件 |
+| `JOLT_SHADOW_TIMEOUT_SECONDS` | Shadow A/B 可选 | 单个 v1/v2 Job 最长等待时间；默认 1800 秒 | 否 |
+| `JOLT_SHADOW_POLL_SECONDS` | Shadow A/B 可选 | runner 查询 Job 终态的间隔；默认 1 秒 | 否 |
 | `JOLT_FRONTEND_HOST` | 内网访问时建议 | Frontend Gateway 监听地址；默认 `127.0.0.1` | 否，Frontend Gateway 从环境变量或 `frontend/.env` 读 |
 | `JOLT_FRONTEND_PORT` | 可选 | Frontend Gateway 端口；默认 `9020` | 否 |
 | `JOLT_VITE_PORT` | 可选 | Vite dev server 端口；默认 `9023` | 否 |

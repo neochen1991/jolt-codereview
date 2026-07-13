@@ -65,6 +65,35 @@ type SkillCheckpointQuality = {
   items?: SkillCheckpointMetric[];
 };
 
+type SkillRuntimeTotals = {
+  skill_opportunity_count?: number;
+  routed_count?: number;
+  applicable_count?: number;
+  applicable_routed_count?: number;
+  loaded_count?: number;
+  required_checkpoint_count?: number;
+  completed_checkpoint_count?: number;
+  unresolved_checkpoint_count?: number;
+  judge_hit_checkpoint_count?: number;
+  feedback_eligible_count?: number;
+  feedback_labeled_count?: number;
+  false_positive_count?: number;
+  all_route_rate?: number | null;
+  applicable_route_rate?: number | null;
+  load_rate?: number | null;
+  checkpoint_completion_rate?: number | null;
+  unresolved_rate?: number | null;
+  hit_rate?: number | null;
+  false_positive_rate?: number | null;
+  feedback_coverage_rate?: number | null;
+};
+
+type SkillRuntimeDashboard = {
+  totals?: SkillRuntimeTotals;
+  items?: Array<Record<string, unknown>>;
+  health?: Array<{ code?: string; level?: string; message?: string }>;
+};
+
 function formatRate(value: unknown) {
   if (typeof value !== "number" || Number.isNaN(value)) return "--";
   return `${Math.round(value * 100)}%`;
@@ -405,6 +434,7 @@ export function ProjectCard({
   const [llmSaving, setLlmSaving] = useState(false);
   const [llmTest, setLlmTest] = useState<LlmTestState>({ status: "idle", message: "" });
   const [skillQualityMetrics, setSkillQualityMetrics] = useState<SkillCheckpointQuality>({ items: [], totals: {} });
+  const [skillRuntimeDashboard, setSkillRuntimeDashboard] = useState<SkillRuntimeDashboard>({ items: [], totals: {}, health: [] });
 
   async function loadRepos() {
     setRepos(await api<Repo[]>(`/api/projects/${project.id}/repositories`));
@@ -413,12 +443,14 @@ export function ProjectCard({
   async function loadProjectLlmSettings() {
     setLlmLoading(true);
     try {
-      const [settings, effective, skillQuality] = await Promise.all([
+      const [settings, effective, skillQuality, skillRuntime] = await Promise.all([
         api<Record<string, unknown>>(`/api/projects/${project.id}/settings`),
         api<Record<string, unknown>>(`/api/projects/${project.id}/effective-config`),
-        api<SkillCheckpointQuality>(`/api/projects/${project.id}/skill-checkpoints/quality`).catch(() => ({ items: [], totals: {} }))
+        api<SkillCheckpointQuality>(`/api/projects/${project.id}/skill-checkpoints/quality`).catch(() => ({ items: [], totals: {} })),
+        api<SkillRuntimeDashboard>(`/api/projects/${project.id}/skill-runtime/dashboard`).catch(() => ({ items: [], totals: {}, health: [] }))
       ]);
       setSkillQualityMetrics(skillQuality);
+      setSkillRuntimeDashboard(skillRuntime);
       const settingsMap = recordValue((settings as Record<string, unknown>).settings);
       const effectiveRoot = recordValue((effective as Record<string, unknown>).effective_config);
       const llm = { ...recordValue(effectiveRoot.llm), ...recordValue(settingsMap.llm_policy) };
@@ -558,6 +590,17 @@ export function ProjectCard({
 
   const skillQualityItems = (skillQualityMetrics.items || []).slice(0, 8);
   const skillQualityTotals = skillQualityMetrics.totals || {};
+  const skillRuntimeTotals = skillRuntimeDashboard.totals || {};
+  const skillRuntimeKpis = [
+    { label: "适用路由率", rate: skillRuntimeTotals.applicable_route_rate, numerator: skillRuntimeTotals.applicable_routed_count, denominator: skillRuntimeTotals.applicable_count },
+    { label: "全量路由率", rate: skillRuntimeTotals.all_route_rate, numerator: skillRuntimeTotals.routed_count, denominator: skillRuntimeTotals.skill_opportunity_count },
+    { label: "加载率", rate: skillRuntimeTotals.load_rate, numerator: skillRuntimeTotals.loaded_count, denominator: skillRuntimeTotals.routed_count },
+    { label: "Checkpoint 完成率", rate: skillRuntimeTotals.checkpoint_completion_rate, numerator: skillRuntimeTotals.completed_checkpoint_count, denominator: skillRuntimeTotals.required_checkpoint_count },
+    { label: "未闭环率", rate: skillRuntimeTotals.unresolved_rate, numerator: skillRuntimeTotals.unresolved_checkpoint_count, denominator: skillRuntimeTotals.required_checkpoint_count },
+    { label: "命中率", rate: skillRuntimeTotals.hit_rate, numerator: skillRuntimeTotals.judge_hit_checkpoint_count, denominator: skillRuntimeTotals.completed_checkpoint_count },
+    { label: "误报率", rate: skillRuntimeTotals.false_positive_rate, numerator: skillRuntimeTotals.false_positive_count, denominator: skillRuntimeTotals.feedback_labeled_count },
+    { label: "反馈覆盖率", rate: skillRuntimeTotals.feedback_coverage_rate, numerator: skillRuntimeTotals.feedback_labeled_count, denominator: skillRuntimeTotals.feedback_eligible_count }
+  ];
 
   return (
     <article className="project-card">
@@ -748,6 +791,27 @@ export function ProjectCard({
                 </div>
                 {llmTest.message && <p className={`llm-test-result ${llmTest.status}`}>{llmTest.message}</p>}
                 <div className="project-skill-quality-panel">
+                  <div className="skill-runtime-dashboard-head">
+                    <div>
+                      <strong>真实任务 Skill 仪表盘</strong>
+                      <span>仅统计 production_review；调试任务不进入聚合。</span>
+                    </div>
+                  </div>
+                  <div className="skill-runtime-kpi-grid" aria-label="真实任务 Skill 核心指标">
+                    {skillRuntimeKpis.map((item) => (
+                      <div className="skill-runtime-kpi" key={item.label}>
+                        <span>{item.label}</span>
+                        <strong>{formatRate(item.rate)}</strong>
+                        <small>{numberMetric(item.numerator)} / {numberMetric(item.denominator)}</small>
+                      </div>
+                    ))}
+                  </div>
+                  {(skillRuntimeDashboard.health || []).map((item, index) => (
+                    <div className={`skill-runtime-health ${item.level === "error" ? "error" : "warning"}`} key={`${item.code || "health"}-${index}`}>
+                      <strong>{item.code === "judge_unclassified_rejection" ? "Judge 决策原因异常" : item.code === "legacy_skill_runtime_data" ? "存在旧版运行数据" : "Skill 运行提醒"}</strong>
+                      <span>{item.message || "--"}</span>
+                    </div>
+                  ))}
                   <div className="project-skill-quality-head">
                     <div>
                       <strong>Skill Checkpoint 质量</strong>

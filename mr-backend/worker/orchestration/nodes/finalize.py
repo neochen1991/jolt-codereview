@@ -4,6 +4,7 @@ import hashlib
 import json
 from typing import Any, Callable
 from skill_debug import production_side_effects_allowed
+from orchestration.skill_runtime_facts import seal_skill_runtime_facts
 
 
 def _tool_aliases(tool_name: str) -> set[str]:
@@ -214,6 +215,46 @@ def make_finalize_node(
             """,
             (run_id,),
         ).fetchall()
+        loaded_skill_rows = conn.execute(
+            """
+            SELECT s.agent_id, e.payload_json
+            FROM agent_trace_events e
+            JOIN agent_trace_spans s ON s.id = e.span_id
+            WHERE s.review_run_id = %s AND e.event_type = 'skill_context_loaded'
+            """,
+            (run_id,),
+        ).fetchall()
+        loaded_skills: set[tuple[str, str]] = set()
+        for row in loaded_skill_rows:
+            try:
+                payload = json.loads(str(row["payload_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            for skill_key in payload.get("custom_skills") or []:
+                if str(skill_key).strip():
+                    loaded_skills.add((str(row["agent_id"] or ""), str(skill_key)))
+        unclassified_rows = conn.execute(
+            """
+            SELECT COALESCE(agent_id, '') AS agent_id, COALESCE(rule_id, '') AS rule_id, COUNT(*) AS count
+            FROM candidate_findings
+            WHERE review_run_id = %s AND stage = 'judge'
+              AND rejected_reasons_json LIKE '%%judge_unclassified_rejection%%'
+            GROUP BY COALESCE(agent_id, ''), COALESCE(rule_id, '')
+            """,
+            (run_id,),
+        ).fetchall()
+        unclassified_deletions = {
+            (str(row["agent_id"] or ""), str(row["rule_id"] or "")): int(row["count"] or 0)
+            for row in unclassified_rows
+        }
+        bound_review_coverage = (state.get("candidate_quality") or {}).get("bound_review_coverage") or {}
+        skill_runtime_facts = seal_skill_runtime_facts(
+            state.get("skill_routing_facts") or [],
+            bound_review_coverage,
+            final_findings,
+            loaded_skills,
+            unclassified_deletions=unclassified_deletions,
+        )
         coverage = {
             "tools": [
                 {
@@ -233,6 +274,9 @@ def make_finalize_node(
             "finding_count": len(final_findings),
             "candidate_quality": state.get("candidate_quality") or {},
             "evidence_contracts": summarize_evidence_contracts(final_findings),
+            "skill_runtime_schema": "skill_runtime_facts_v1",
+            "skill_runtime_facts": skill_runtime_facts,
+            "execution_kind": str(job.get("execution_kind") or "production_review"),
         }
         budget_used = {
             "llm_calls": int(usage["llm_calls"] or 0),

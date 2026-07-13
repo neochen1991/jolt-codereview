@@ -40,6 +40,12 @@ export function createObservabilityRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       return observabilityService.getSkillCheckpointQualityMetrics(params.projectId, url.searchParams.get("since"));
     }),
+    route("GET", "/api/projects/:projectId/skill-runtime/dashboard", ({ params, req, url }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return observabilityService.getSkillRuntimeDashboard(params.projectId, url.searchParams.get("since"));
+    }),
     route("GET", "/api/observability/review-quality", ({ req, url }) => {
       const projectId = url.searchParams.get("project_id") || "";
       if (!projectId) return { statusCode: 400, error: "bad_request", message: "project_id is required" };

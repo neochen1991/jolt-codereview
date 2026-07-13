@@ -3,6 +3,10 @@ import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
 import type { FindingRow } from "../types.js";
 import type { BackendRouteContext } from "./context.js";
 import { SkillActivationPolicyService } from "../services/SkillActivationPolicyService.js";
+import {
+  compileSkillCheckpointManifest,
+  SKILL_CHECKPOINT_COMPILER_VERSION
+} from "../services/SkillCheckpointCompiler.js";
 
 function normalizeSkillKey(value: string) {
   return value
@@ -46,9 +50,6 @@ type SkillAssetInput = {
 };
 
 const SKILL_FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---/;
-const SKILL_CHECKPOINT_HEADING_RE = /^##\s+(?:checkpoint[:：]\s*)?([A-Za-z][A-Za-z0-9_.:-]*-[A-Za-z0-9_.:-]+|[A-Z]{2,}[A-Z0-9_-]*-\d+[A-Z0-9_-]*)\s+(.+)$/i;
-const SKILL_FIELD_RE = /^-\s*([a-zA-Z_]+):\s*(.*)$/;
-const SKILL_SECTION_RE = /^###\s+(.+)$/;
 const SUSPICIOUS_FIELD_BULLET_RE = /^-\s*([a-zA-Z0-9_.-]+:[a-zA-Z0-9_.:-]+)\s+(.+)$/;
 
 function parseFrontmatter(content: string) {
@@ -61,102 +62,6 @@ function parseFrontmatter(content: string) {
       .filter((match): match is RegExpMatchArray => Boolean(match))
       .map((match) => [match[1], match[2].replace(/^["']|["']$/g, "").trim()])
   );
-}
-
-function compactSkillText(value: string) {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function extractSkillSections(lines: string[]) {
-  const sections: Record<string, string[]> = {};
-  let current = "";
-  for (const raw of lines) {
-    const line = raw.trim();
-    const section = line.match(SKILL_SECTION_RE);
-    if (section) {
-      current = section[1].trim();
-      sections[current] = sections[current] || [];
-      continue;
-    }
-    if (current && line) sections[current].push(line);
-  }
-  return sections;
-}
-
-function joinSkillSections(sections: Record<string, string[]>, names: string[]) {
-  const lowered = new Map(Object.keys(sections).map((key) => [key.toLowerCase(), key]));
-  return names
-    .map((name) => {
-      const key = lowered.get(name.toLowerCase()) || name;
-      const values = sections[key] || [];
-      return values.length ? `${key}：${values.join(" ")}` : "";
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
-function parseSkillCheckpoints(skillKey: string, content: string, sourcePath: string) {
-  const checkpoints: Array<Record<string, string>> = [];
-  let current: Record<string, string | string[]> | null = null;
-  const flush = () => {
-    if (!current) return;
-    const body = Array.isArray(current.body) ? current.body : [];
-    const sections = extractSkillSections(body);
-    const check = String(current.check || "").trim() || joinSkillSections(sections, ["检查点", "如何检查", "规范说明", "规则说明"]);
-    if (!check.trim()) {
-      current = null;
-      return;
-    }
-    const requiredEvidence = String(current.required_evidence || current.evidence_required || "").trim()
-      || joinSkillSections(sections, ["证据要求", "输出要求", "Required Evidence"]);
-    const falsePositivePatterns = String(current.false_positive_patterns || "").trim()
-      || joinSkillSections(sections, ["误报模式", "误报排除", "例外"]);
-    const fixGuidance = String(current.fix_guidance || "").trim()
-      || joinSkillSections(sections, ["修复建议", "整改建议"]);
-    checkpoints.push({
-      skill_key: skillKey,
-      checkpoint_id: String(current.checkpoint_id || ""),
-      rule_id: String(current.checkpoint_id || ""),
-      title: String(current.title || ""),
-      severity: String(current.severity || "medium"),
-      applies_to: String(current.applies_to || "**/*"),
-      check: compactSkillText(check),
-      required_evidence: compactSkillText(requiredEvidence || "精确文件、行号、源码证据和触发条件。"),
-      false_positive_patterns: compactSkillText(falsePositivePatterns),
-      fix_guidance: compactSkillText(fixGuidance),
-      source_path: sourcePath,
-      parse_quality: "structured"
-    });
-    current = null;
-  };
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trimEnd();
-    const heading = line.match(SKILL_CHECKPOINT_HEADING_RE);
-    if (heading) {
-      flush();
-      current = {
-        checkpoint_id: heading[1].trim(),
-        title: heading[2].trim(),
-        severity: "medium",
-        applies_to: "**/*",
-        check: "",
-        required_evidence: "",
-        false_positive_patterns: "",
-        fix_guidance: "",
-        body: []
-      };
-      continue;
-    }
-    if (!current) continue;
-    const field = line.trim().match(SKILL_FIELD_RE);
-    if (field) {
-      current[field[1].trim()] = field[2].trim();
-      continue;
-    }
-    (current.body as string[]).push(line);
-  }
-  flush();
-  return checkpoints;
 }
 
 function validateSkillBundlePayload(raw: Record<string, unknown>) {
@@ -189,10 +94,13 @@ function validateSkillBundlePayload(raw: Record<string, unknown>) {
       if (!String(frontmatter[field] || "").trim()) failures.push({ path: "SKILL.md", message: `missing frontmatter field: ${field}` });
     }
   }
-  const checkpoints: Array<Record<string, string>> = [];
   const sources = assets.filter((asset) => asset.asset_path === "SKILL.md" || (asset.asset_path.startsWith("references/") && /\.(md|mdx|txt)$/i.test(asset.asset_path)));
+  const checkpointManifest = compileSkillCheckpointManifest(
+    skillKey,
+    sources.map((asset) => ({ asset_path: asset.asset_path, content: asset.content }))
+  );
+  const checkpoints = checkpointManifest.checkpoints;
   for (const asset of sources) {
-    checkpoints.push(...parseSkillCheckpoints(skillKey, asset.content, asset.asset_path));
     for (const [index, line] of asset.content.split(/\r?\n/).entries()) {
       const suspicious = line.trim().match(SUSPICIOUS_FIELD_BULLET_RE);
       if (suspicious) {
@@ -204,27 +112,26 @@ function validateSkillBundlePayload(raw: Record<string, unknown>) {
       }
     }
   }
-  const checkpointIds = new Map<string, string>();
-  for (const checkpoint of checkpoints) {
-    const checkpointId = checkpoint.checkpoint_id;
-    if (checkpointIds.has(checkpointId)) {
-      failures.push({ path: checkpoint.source_path, message: `duplicate checkpoint_id: ${checkpointId}` });
-    }
-    checkpointIds.set(checkpointId, checkpoint.source_path);
-    for (const field of ["required_evidence", "false_positive_patterns", "fix_guidance"]) {
-      if (!String(checkpoint[field] || "").trim()) {
-        failures.push({ path: checkpoint.source_path, checkpoint_id: checkpointId, message: `checkpoint missing ${field}` });
-      }
-    }
+  for (const diagnostic of checkpointManifest.diagnostics) {
+    const target = diagnostic.level === "error" ? failures : warnings;
+    target.push({
+      path: diagnostic.source_path,
+      line: diagnostic.line,
+      checkpoint_id: diagnostic.checkpoint_id,
+      code: diagnostic.code,
+      message: diagnostic.message
+    });
   }
-  if (!checkpoints.length) failures.push({ path: "", message: "no structured checkpoints parsed from SKILL.md or references" });
   return {
     ok: failures.length === 0,
     skill_key: skillKey,
     asset_count: assets.length,
     failures,
     warnings,
-    checkpoints
+    normalized_assets: assets,
+    checkpoints,
+    checkpoint_compiler_version: SKILL_CHECKPOINT_COMPILER_VERSION,
+    checkpoint_manifest: checkpointManifest
   };
 }
 
@@ -498,8 +405,10 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
         content,
         version: String(input.version ?? "v1"),
         status: "draft",
-        assets: submittedAssets as Array<Record<string, unknown>>,
+        assets: validation.normalized_assets as Array<Record<string, unknown>>,
         validationJson: validation,
+        checkpointManifestJson: validation.checkpoint_manifest,
+        checkpointCompilerVersion: validation.checkpoint_compiler_version,
         createdBy: actorId
       });
       auditLog({ userId: actorId, projectId: params.projectId, action: "custom_skills.upsert", resourceType: "custom_skill", resourceId: skillKey, summary: `upsert custom skill ${skillKey}` });
@@ -511,6 +420,30 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       const selected = ruleDocumentRepository.findCustomSkillVersion(params.projectId, params.skillKey, params.version) as Record<string, any> | undefined;
       if (!selected) return notFound();
+      const selectedAssets = (() => {
+        try {
+          const parsed = JSON.parse(String(selected.assets_json || "[]"));
+          return Array.isArray(parsed) && parsed.length
+            ? parsed
+            : [{ asset_path: "SKILL.md", asset_type: "skill", content: String(selected.content || "") }];
+        } catch {
+          return [{ asset_path: "SKILL.md", asset_type: "skill", content: String(selected.content || "") }];
+        }
+      })();
+      const activationValidation = validateSkillBundlePayload({
+        skill_key: params.skillKey,
+        name: selected.name,
+        assets: selectedAssets
+      });
+      if (!activationValidation.ok) {
+        return { statusCode: 409, error: "skill_checkpoint_compile_failed", message: "Skill activation requires a valid immutable Checkpoint Manifest", validation: activationValidation };
+      }
+      ruleDocumentRepository.updateCustomSkillVersionCompilation(
+        params.projectId,
+        params.skillKey,
+        params.version,
+        activationValidation
+      );
       const input = (body || {}) as Record<string, unknown>;
       const breakGlassReason = String(input.break_glass_reason || "").trim();
       if (breakGlassReason) {

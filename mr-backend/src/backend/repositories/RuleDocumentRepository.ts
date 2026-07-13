@@ -161,6 +161,8 @@ export class RuleDocumentRepository {
     status: string;
     assets?: Array<Record<string, unknown>>;
     validationJson?: Record<string, unknown>;
+    checkpointManifestJson?: Record<string, unknown>;
+    checkpointCompilerVersion?: string;
     createdBy?: string | null;
   }) {
     if (input.status === "active") {
@@ -181,8 +183,9 @@ export class RuleDocumentRepository {
     }
     this.db.prepare(`
       INSERT INTO custom_skill_versions (
-        id, project_id, skill_key, version, name, description, content, assets_json, status, validation_json, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        id, project_id, skill_key, version, name, description, content, assets_json, status, validation_json,
+        checkpoint_manifest_json, checkpoint_compiler_version, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT(project_id, skill_key, version) DO UPDATE SET
         name = excluded.name,
         description = excluded.description,
@@ -190,6 +193,8 @@ export class RuleDocumentRepository {
         assets_json = excluded.assets_json,
         status = excluded.status,
         validation_json = excluded.validation_json,
+        checkpoint_manifest_json = excluded.checkpoint_manifest_json,
+        checkpoint_compiler_version = excluded.checkpoint_compiler_version,
         created_by = COALESCE(custom_skill_versions.created_by, excluded.created_by),
         updated_at = CURRENT_TIMESTAMP
       WHERE custom_skill_versions.status <> 'active'
@@ -204,6 +209,8 @@ export class RuleDocumentRepository {
       JSON.stringify(input.assets || []),
       input.status,
       JSON.stringify(input.validationJson || {}),
+      JSON.stringify(input.checkpointManifestJson || {}),
+      input.checkpointCompilerVersion || "",
       input.createdBy ?? null
     );
     this.refreshCustomSkillVersionHash(input.projectId, input.skillKey, input.version);
@@ -268,6 +275,29 @@ export class RuleDocumentRepository {
     const bundleSha256 = canonicalSkillBundleHash(selected);
     this.db.prepare("UPDATE custom_skill_versions SET bundle_sha256 = $1 WHERE id = $2").run(bundleSha256, selected.id);
     return bundleSha256;
+  }
+
+  updateCustomSkillVersionCompilation(
+    projectId: string,
+    skillKey: string,
+    version: string,
+    validation: Record<string, any>
+  ) {
+    return this.db.prepare(`
+      UPDATE custom_skill_versions
+      SET validation_json = $1,
+          checkpoint_manifest_json = $2,
+          checkpoint_compiler_version = $3,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE project_id = $4 AND skill_key = $5 AND version = $6 AND status <> 'active'
+    `).run(
+      JSON.stringify(validation || {}),
+      JSON.stringify(validation.checkpoint_manifest || {}),
+      String(validation.checkpoint_compiler_version || ""),
+      projectId,
+      skillKey,
+      version
+    );
   }
 
   activateCustomSkillVersion(projectId: string, skillKey: string, version: string) {

@@ -816,6 +816,68 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   gap: 12px;
 }
 
+.skill-runtime-dashboard-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.skill-runtime-dashboard-head > div {
+  display: grid;
+  gap: 4px;
+}
+
+.skill-runtime-dashboard-head span {
+  color: #64758d;
+  font-size: 12px;
+}
+
+.skill-runtime-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.skill-runtime-kpi {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #d7e4f3;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.skill-runtime-kpi span,
+.skill-runtime-kpi small {
+  color: #64758d;
+  font-size: 12px;
+}
+
+.skill-runtime-kpi strong {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.skill-runtime-health {
+  display: flex;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.skill-runtime-health.warning {
+  color: #8a5b00;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.skill-runtime-health.error {
+  color: #b42318;
+  background: rgba(239, 68, 68, 0.11);
+}
+
 .project-skill-quality-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -6322,6 +6384,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .workspace { grid-template-rows: auto minmax(0, 1fr); }
   .workspace-scroll { max-width: 100%; }
   .project-llm-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .skill-runtime-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .project-skill-quality-head { grid-template-columns: minmax(0, 1fr); }
   .project-skill-quality-totals { justify-content: flex-start; }
   .project-skill-quality-table { overflow-x: auto; }

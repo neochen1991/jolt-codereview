@@ -165,6 +165,26 @@ Token 和 API Key 可以直接写入 `config.json`，例如 `default_token`、`d
 
 Skill 新版本统一保存为 draft，不能直接进入正式检视。服务端会强制校验 Bundle；同一 Bundle 哈希必须分别取得有效的“定向 A/B”和“严格生产路由”证据后，项目管理员才能激活。`degraded` 或 `inconclusive` 结果不满足激活门禁。`skill_developer` 可以创建草稿、绑定 Skill 并查看自己发起的调试，但不能激活版本或修改项目密钥与发布配置。
 
+### Skill Checkpoint 编译与真实任务指标
+
+新建 Skill 版本时，服务端会把 `SKILL.md` 和 `references/*.md` 确定性编译为 Checkpoint Manifest。Manifest 与版本一起固化；Skill Debug 和正式 MR 检视读取同一个编译产物，Worker 不会再次解释新版本 Markdown。支持以下写法：
+
+- `## SEC-CMD-001 命令执行检查` 形式的显式 ID 标题。
+- “检查点 / Checkpoints / Rules”章节下的子标题，并通过 `id`、`check`、`required_evidence` 等字段描述。
+- 包含 `checkpoint_id`、`title`、`check`、`required_evidence`、`false_positive_patterns`、`fix_guidance` 列的 Markdown 表格。
+- `严重级别`、`适用范围`、`如何检查`、`证据要求`、`误报排除`、`修复建议` 等中英文字段别名。
+
+代码围栏中的示例不会被解析。重复 ID 或缺少检查要求、证据要求、误报排除、修复建议时，版本不能激活；接口会返回源文件、行号和诊断代码。没有 Manifest 的历史已激活版本仍可运行，但会标记为 `legacy_fallback`，建议创建新版本重新激活。
+
+项目管理员可在项目设置的“真实任务 Skill 仪表盘”查看：
+
+- 全量路由率和适用路由率；适用性由 Manifest 中的 `applies_to` 与 MR 变更文件匹配。
+- Skill 加载率、Checkpoint 完成率、未闭环率和 Judge 保留后的命中率。
+- 人工误报率及其反馈覆盖率；无人工反馈时显示暂无数据，不按 0% 处理。
+- 旧版运行数据、未闭环 Checkpoint 和 `judge_unclassified_rejection` 决策异常。
+
+仪表盘只统计 `production_review`。Skill Debug 会生成相同的单次运行事实用于调试，但不会污染正式指标。进入 Judge 的 Skill 候选都会写入决策账本；拒绝或合并必须保存原因码、中文解释、决策阶段和时间，不能无痕消失。仪表盘和 Judge 决策详情要求 `project_admin` 权限。
+
 上传到 `scripts/` 的文件当前只作为只读参考资源。平台会记录调用意图并返回 `blocked_by_policy`，不会直接执行上传脚本；需要可执行脚本时必须另行部署具备网络、凭据、CPU、内存和超时隔离的沙箱。
 
 如果配置文件不在默认位置，可以分别指定服务配置路径：

@@ -113,9 +113,15 @@ def ensure_worker_schema(conn: Any) -> None:
     add_column_if_missing("review_jobs", "debug_context_json", "TEXT NOT NULL DEFAULT '{}'")
     add_column_if_missing("review_jobs", "requested_by", "TEXT")
     add_column_if_missing("review_runs", "coverage_json", "TEXT NOT NULL DEFAULT '{}'")
+    add_column_if_missing("candidate_findings", "decision_reason_json", "TEXT NOT NULL DEFAULT '[]'")
+    add_column_if_missing("candidate_findings", "decision_stage", "TEXT")
+    add_column_if_missing("candidate_findings", "decided_at", "TEXT")
+    add_column_if_missing("candidate_findings", "merged_into_candidate_id", "TEXT")
     add_column_if_missing("custom_skills", "active_version_id", "TEXT")
     add_column_if_missing("custom_skill_versions", "bundle_sha256", "TEXT NOT NULL DEFAULT ''")
     add_column_if_missing("custom_skill_versions", "validation_json", "TEXT NOT NULL DEFAULT '{}'")
+    add_column_if_missing("custom_skill_versions", "checkpoint_manifest_json", "TEXT NOT NULL DEFAULT '{}'")
+    add_column_if_missing("custom_skill_versions", "checkpoint_compiler_version", "TEXT NOT NULL DEFAULT ''")
     add_column_if_missing("custom_skill_versions", "created_by", "TEXT")
     add_column_if_missing("skill_debug_sessions", "bundle_sha256", "TEXT NOT NULL DEFAULT ''")
     add_column_if_missing("skill_debug_sessions", "validity_contract", "TEXT NOT NULL DEFAULT 'skill_debug_validity_v1'")
@@ -185,6 +191,10 @@ def ensure_worker_schema(conn: Any) -> None:
           source_observations_json TEXT NOT NULL DEFAULT '[]',
           raw_json TEXT NOT NULL DEFAULT '{}',
           final_finding_id TEXT,
+          decision_reason_json TEXT NOT NULL DEFAULT '[]',
+          decision_stage TEXT,
+          decided_at TEXT,
+          merged_into_candidate_id TEXT,
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           UNIQUE(review_run_id, dedupe_hash, stage)
@@ -3630,6 +3640,7 @@ def load_agent_configs(conn: Any, project_id: str) -> list[dict[str, Any]]:
         agent["skills"] = dedupe_strings([*(agent.get("skills") or []), *custom_skills])
         agent["custom_skills"] = custom_skills
         agent["skill_assets"] = load_bound_custom_skill_assets(conn, project_id, custom_skills)
+        agent["skill_checkpoint_manifests"] = load_bound_custom_skill_manifests(conn, project_id, custom_skills)
         if custom_skills or agent["skill_assets"]:
             agent["requires_deepagents"] = True
             agent["max_tool_calls"] = max(int(agent.get("max_tool_calls") or 0), 14)
@@ -3851,6 +3862,32 @@ def load_bound_custom_skill_assets(
             "executable": bool(row["executable"]),
         } for row in rows)
     return sorted(result, key=lambda item: (str(item.get("skill_key")), str(item.get("asset_path"))))
+
+
+def load_bound_custom_skill_manifests(
+    conn: Any,
+    project_id: str,
+    skill_keys: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Load the immutable compiler output shared by production and Skill Debug."""
+    manifests: dict[str, dict[str, Any]] = {}
+    for skill_key in skill_keys:
+        version, legacy_fallback = load_canonical_skill_version(conn, project_id, skill_key)
+        if not version or legacy_fallback:
+            continue
+        try:
+            manifest = json.loads(str(version.get("checkpoint_manifest_json") or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            manifest = {}
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("checkpoints"), list):
+            continue
+        manifests[skill_key] = {
+            **manifest,
+            "skill_key": str(manifest.get("skill_key") or skill_key),
+            "skill_version": str(version.get("version") or ""),
+            "bundle_sha256": str(version.get("bundle_sha256") or ""),
+        }
+    return manifests
 
 
 def custom_skill_asset_manifest(conn: Any | None, project_id: str | None, skill_name: str) -> str:

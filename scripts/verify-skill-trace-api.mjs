@@ -12,7 +12,9 @@ const requiredRouteSnippets = [
   "bound_skill_checked",
   "bound_batch_findings_rejected",
   "false_positive_matches",
-  "missing_required_evidence"
+  "missing_required_evidence",
+  "judge_decisions",
+  "decision_reason_json"
 ];
 
 const requiredWorkerSnippets = [

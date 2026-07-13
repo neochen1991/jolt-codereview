@@ -149,6 +149,180 @@ function skillCheckpointMetricKey(item: Pick<SkillCheckpointMetric, "project_id"
   return [item.project_id, item.skill_key, item.checkpoint_id, item.agent_id, item.model, item.week].join("\u0001");
 }
 
+type SkillRuntimeRun = {
+  id: string;
+  started_at?: string | null;
+  execution_kind?: string | null;
+  coverage_json?: string | null;
+};
+
+type SkillRuntimeFinding = {
+  id: string;
+  run_id: string;
+  agent_id?: string | null;
+  covered_rules?: string[];
+  feedback?: string | null;
+};
+
+function runtimeRate(numerator: number, denominator: number) {
+  return denominator ? Number((numerator / denominator).toFixed(4)) : null;
+}
+
+function emptySkillRuntimeTotals() {
+  return {
+    production_run_count: 0,
+    legacy_derived_run_count: 0,
+    skill_opportunity_count: 0,
+    routed_count: 0,
+    applicable_count: 0,
+    applicable_routed_count: 0,
+    loaded_count: 0,
+    required_checkpoint_count: 0,
+    completed_checkpoint_count: 0,
+    unresolved_checkpoint_count: 0,
+    judge_hit_checkpoint_count: 0,
+    judge_unclassified_deletion_count: 0,
+    feedback_eligible_count: 0,
+    feedback_labeled_count: 0,
+    false_positive_count: 0
+  };
+}
+
+type SkillRuntimeTotals = ReturnType<typeof emptySkillRuntimeTotals>;
+type SkillRuntimeDimension = SkillRuntimeTotals & {
+  project_id: string;
+  skill_key: string;
+  skill_version: string;
+  agent_id: string;
+  model: string;
+  week: string;
+};
+
+function runtimeTotalsWithRates<T extends SkillRuntimeTotals>(totals: T) {
+  return {
+    ...totals,
+    all_route_rate: runtimeRate(totals.routed_count, totals.skill_opportunity_count),
+    applicable_route_rate: runtimeRate(totals.applicable_routed_count, totals.applicable_count),
+    load_rate: runtimeRate(totals.loaded_count, totals.routed_count),
+    checkpoint_completion_rate: runtimeRate(totals.completed_checkpoint_count, totals.required_checkpoint_count),
+    unresolved_rate: runtimeRate(totals.unresolved_checkpoint_count, totals.required_checkpoint_count),
+    hit_rate: runtimeRate(totals.judge_hit_checkpoint_count, totals.completed_checkpoint_count),
+    false_positive_rate: runtimeRate(totals.false_positive_count, totals.feedback_labeled_count),
+    feedback_coverage_rate: runtimeRate(totals.feedback_labeled_count, totals.feedback_eligible_count)
+  };
+}
+
+export function summarizeSkillRuntimeDashboard(
+  projectId: string,
+  rows: SkillRuntimeRun[],
+  findings: SkillRuntimeFinding[]
+) {
+  const totals = emptySkillRuntimeTotals();
+  const byDimension = new Map<string, SkillRuntimeDimension>();
+  const checkpointDimensions = new Map<string, Set<string>>();
+  const productionRunIds = new Set<string>();
+
+  for (const row of rows) {
+    if (String(row.execution_kind || "production_review") !== "production_review") continue;
+    productionRunIds.add(row.id);
+    totals.production_run_count += 1;
+    const coverage = parseJson(row.coverage_json);
+    const facts = Array.isArray(coverage.skill_runtime_facts) ? coverage.skill_runtime_facts : [];
+    if (!facts.length) {
+      totals.legacy_derived_run_count += 1;
+      continue;
+    }
+    for (const rawFact of facts) {
+      if (!rawFact || typeof rawFact !== "object") continue;
+      const fact = rawFact as Record<string, unknown>;
+      const skillKey = String(fact.skill_key || "skill_bundle");
+      const skillVersion = String(fact.skill_version || "unknown");
+      const agentId = String(fact.agent_id || "unknown");
+      const model = String(fact.model || "unknown");
+      const week = isoWeekKey(row.started_at);
+      const dimensionKey = [skillKey, skillVersion, agentId, model, week].join("\u0001");
+      const dimension = byDimension.get(dimensionKey) ?? {
+        ...emptySkillRuntimeTotals(),
+        project_id: projectId,
+        skill_key: skillKey,
+        skill_version: skillVersion,
+        agent_id: agentId,
+        model,
+        week
+      };
+      const targets: SkillRuntimeTotals[] = [totals, dimension];
+      for (const target of targets) {
+        target.skill_opportunity_count += 1;
+        if (Boolean(fact.routed)) target.routed_count += 1;
+        if (Boolean(fact.applicable)) target.applicable_count += 1;
+        if (Boolean(fact.applicable) && Boolean(fact.routed)) target.applicable_routed_count += 1;
+        if (Boolean(fact.routed) && Boolean(fact.loaded)) target.loaded_count += 1;
+        target.required_checkpoint_count += numberValue(fact.required_checkpoint_count);
+        target.completed_checkpoint_count += numberValue(fact.completed_checkpoint_count);
+        target.unresolved_checkpoint_count += numberValue(fact.unresolved_checkpoint_count);
+        target.judge_hit_checkpoint_count += numberValue(fact.judge_hit_checkpoint_count);
+        target.judge_unclassified_deletion_count += numberValue(fact.judge_unclassified_deletion_count);
+      }
+      const checkpoints = Array.isArray(fact.checkpoints) ? fact.checkpoints : [];
+      for (const rawCheckpoint of checkpoints) {
+        if (!rawCheckpoint || typeof rawCheckpoint !== "object") continue;
+        const checkpointId = String((rawCheckpoint as Record<string, unknown>).checkpoint_id || "");
+        if (!checkpointId) continue;
+        const key = `${row.id}\u0001${agentId}\u0001${checkpointId}`;
+        const dimensions = checkpointDimensions.get(key) ?? new Set<string>();
+        dimensions.add(dimensionKey);
+        checkpointDimensions.set(key, dimensions);
+      }
+      byDimension.set(dimensionKey, dimension);
+    }
+  }
+
+  for (const finding of findings) {
+    if (!productionRunIds.has(finding.run_id)) continue;
+    const dimensionKeys = new Set<string>();
+    for (const ruleId of finding.covered_rules || []) {
+      for (const key of checkpointDimensions.get(`${finding.run_id}\u0001${String(finding.agent_id || "")}\u0001${ruleId}`) || []) {
+        dimensionKeys.add(key);
+      }
+    }
+    if (!dimensionKeys.size) continue;
+    totals.feedback_eligible_count += 1;
+    const feedback = String(finding.feedback || "");
+    const labeled = ["accepted", "false_positive", "dismissed"].includes(feedback);
+    const falsePositive = ["false_positive", "dismissed"].includes(feedback);
+    if (labeled) totals.feedback_labeled_count += 1;
+    if (falsePositive) totals.false_positive_count += 1;
+    for (const dimensionKey of dimensionKeys) {
+      const dimension = byDimension.get(dimensionKey);
+      if (!dimension) continue;
+      dimension.feedback_eligible_count += 1;
+      if (labeled) dimension.feedback_labeled_count += 1;
+      if (falsePositive) dimension.false_positive_count += 1;
+    }
+  }
+
+  const finalTotals = runtimeTotalsWithRates(totals);
+  const items = [...byDimension.values()]
+    .map((item) => runtimeTotalsWithRates(item))
+    .sort((left, right) => (
+      String(left.week).localeCompare(String(right.week))
+      || String(left.skill_key).localeCompare(String(right.skill_key))
+      || String(left.agent_id).localeCompare(String(right.agent_id))
+      || String(left.model).localeCompare(String(right.model))
+    ));
+  const health: Array<{ code: string; level: "warning" | "error"; message: string }> = [];
+  if (finalTotals.legacy_derived_run_count) health.push({ code: "legacy_skill_runtime_data", level: "warning", message: `${finalTotals.legacy_derived_run_count} 个正式任务缺少结构化 Skill 生命周期事实。` });
+  if (finalTotals.judge_unclassified_deletion_count) health.push({ code: "judge_unclassified_rejection", level: "error", message: `${finalTotals.judge_unclassified_deletion_count} 个 Skill 候选缺少原始 Judge 分类原因。` });
+  if (finalTotals.unresolved_checkpoint_count) health.push({ code: "skill_checkpoint_unresolved", level: "warning", message: `${finalTotals.unresolved_checkpoint_count} 个 Checkpoint 未闭环。` });
+  return {
+    project_id: projectId,
+    dimensions: ["project_id", "skill_key", "skill_version", "agent_id", "model", "week"],
+    totals: finalTotals,
+    items,
+    health
+  };
+}
+
 export function summarizeBoundRuleCoverageByAgent(rows: Array<{ coverage_json?: string | null }>) {
   const byAgent = new Map<string, ReturnType<typeof emptyAgentCoverage>>();
   for (const row of rows) {
@@ -653,6 +827,100 @@ export class ObservabilityService {
         duplicate_rate: totals.checked_count ? Number((totals.duplicate_merge_count / totals.checked_count).toFixed(4)) : null
       },
       items: finalItems
+    };
+  }
+
+  getSkillRuntimeDashboard(projectId: string, since?: string | null) {
+    const params: unknown[] = [projectId];
+    const sinceFilter = since ? "AND COALESCE(rr.completed_at, rr.started_at) >= $2" : "";
+    if (since) params.push(since);
+    const runs = this.db.prepare(`
+      SELECT rr.id, rr.started_at, rr.coverage_json, rj.execution_kind
+      FROM review_runs rr
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      JOIN merge_requests mr ON mr.id = rj.merge_request_id
+      JOIN repositories r ON r.id = mr.repository_id
+      WHERE r.project_id = $1 AND rj.execution_kind = 'production_review' ${sinceFilter}
+      ORDER BY rr.started_at DESC
+      LIMIT 1000
+    `).all(...params) as SkillRuntimeRun[];
+    const modelRows = this.db.prepare(`
+      SELECT rr.id AS run_id, s.agent_id,
+             COALESCE(string_agg(DISTINCT NULLIF(l.model, ''), ','), 'unknown') AS model
+      FROM llm_call_records l
+      JOIN agent_trace_spans s ON s.id = l.span_id
+      JOIN review_runs rr ON rr.id = s.review_run_id
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      JOIN merge_requests mr ON mr.id = rj.merge_request_id
+      JOIN repositories r ON r.id = mr.repository_id
+      WHERE r.project_id = $1 AND rj.execution_kind = 'production_review' ${sinceFilter}
+      GROUP BY rr.id, s.agent_id
+    `).all(...params) as Array<{ run_id: string; agent_id: string; model: string }>;
+    const modelByRunAgent = new Map(modelRows.map((row) => [`${row.run_id}\u0001${row.agent_id}`, row.model || "unknown"]));
+    const enrichedRuns = runs.map((run) => {
+      const coverage = parseJson(run.coverage_json);
+      if (!Array.isArray(coverage.skill_runtime_facts)) return run;
+      return {
+        ...run,
+        coverage_json: JSON.stringify({
+          ...coverage,
+          skill_runtime_facts: coverage.skill_runtime_facts.map((rawFact: unknown) => {
+            if (!rawFact || typeof rawFact !== "object") return rawFact;
+            const fact = rawFact as Record<string, unknown>;
+            return {
+              ...fact,
+              model: modelByRunAgent.get(`${run.id}\u0001${String(fact.agent_id || "")}`) || "unknown"
+            };
+          })
+        })
+      };
+    });
+    const findings = this.db.prepare(`
+      SELECT
+        rf.id,
+        rr.id AS run_id,
+        rf.agent_id,
+        rf.covered_rules_json,
+        rf.lifecycle_state,
+        COALESCE(fb.accepted, 0) AS feedback_accepted,
+        COALESCE(fb.false_positive, 0) AS feedback_false_positive,
+        COALESCE(fb.dismissed, 0) AS feedback_dismissed
+      FROM review_findings rf
+      JOIN review_runs rr ON rr.id = rf.review_run_id
+      JOIN review_jobs rj ON rj.id = rr.review_job_id
+      JOIN merge_requests mr ON mr.id = rj.merge_request_id
+      JOIN repositories r ON r.id = mr.repository_id
+      LEFT JOIN (
+        SELECT
+          finding_id,
+          MAX(CASE WHEN feedback_type = 'accepted' THEN 1 ELSE 0 END) AS accepted,
+          MAX(CASE WHEN feedback_type = 'false_positive' THEN 1 ELSE 0 END) AS false_positive,
+          MAX(CASE WHEN feedback_type = 'dismissed' THEN 1 ELSE 0 END) AS dismissed
+        FROM user_feedback
+        GROUP BY finding_id
+      ) fb ON fb.finding_id = rf.id
+      WHERE r.project_id = $1 AND rj.execution_kind = 'production_review' ${sinceFilter}
+    `).all(...params) as Array<Record<string, unknown>>;
+    const normalizedFindings: SkillRuntimeFinding[] = findings.map((row) => {
+      const covered = parseJson(String(row.covered_rules_json || "[]"));
+      const feedback = Number(row.feedback_false_positive || 0) > 0 || String(row.lifecycle_state || "") === "false_positive"
+        ? "false_positive"
+        : Number(row.feedback_dismissed || 0) > 0 || String(row.lifecycle_state || "") === "dismissed"
+          ? "dismissed"
+          : Number(row.feedback_accepted || 0) > 0 || String(row.lifecycle_state || "") === "accepted"
+            ? "accepted"
+            : null;
+      return {
+        id: String(row.id || ""),
+        run_id: String(row.run_id || ""),
+        agent_id: String(row.agent_id || ""),
+        covered_rules: Array.isArray(covered) ? covered.map((item) => String(item || "")).filter(Boolean) : [],
+        feedback
+      };
+    });
+    return {
+      ...summarizeSkillRuntimeDashboard(projectId, enrichedRuns, normalizedFindings),
+      since: since || null
     };
   }
 }

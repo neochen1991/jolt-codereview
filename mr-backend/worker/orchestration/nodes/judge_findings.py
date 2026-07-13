@@ -36,6 +36,54 @@ OSS_TOOL_PROMOTION_THRESHOLDS = {
 }
 PROMOTABLE_TOOL_RULES = promotable_rule_ids()
 TOOL_COVERAGE_FILL_RULES = tool_coverage_fill_rule_ids()
+
+
+def _judge_decision_identity(item: dict[str, Any]) -> str:
+    explicit = str(item.get("dedupe_hash") or "").strip()
+    if explicit:
+        return explicit
+    return sha1(
+        "|".join(
+            [
+                str(item.get("agent_id") or item.get("tool_name") or "unknown"),
+                str(item.get("file_path") or ""),
+                str(item.get("line_start") or ""),
+                str(item.get("title") or item.get("message") or ""),
+            ]
+        )
+    )
+
+
+def ensure_judge_decision_accountability(
+    inputs: list[dict[str, Any]],
+    retained: list[dict[str, Any]],
+    rejected: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Guarantee every Judge input has an auditable terminal decision."""
+    anomaly_count = 0
+    reconciled: list[dict[str, Any]] = []
+    for item in rejected:
+        reasons = [str(reason).strip() for reason in (item.get("rejected_reasons") or []) if str(reason).strip()]
+        if reasons:
+            reconciled.append(item)
+            continue
+        reconciled.append({**item, "rejected_reasons": ["judge_unclassified_rejection"]})
+        anomaly_count += 1
+    decided = {_judge_decision_identity(item) for item in [*retained, *reconciled]}
+    for item in inputs:
+        identity = _judge_decision_identity(item)
+        if identity in decided:
+            continue
+        reconciled.append(
+            {
+                **item,
+                "dedupe_hash": str(item.get("dedupe_hash") or identity),
+                "rejected_reasons": ["judge_unclassified_rejection"],
+            }
+        )
+        decided.add(identity)
+        anomaly_count += 1
+    return reconciled, anomaly_count
 PROMOTABLE_EXTERNAL_TOOL_RULES = external_tool_rule_map()
 
 AGENT_BY_RULE_PREFIX = {
@@ -3767,8 +3815,9 @@ def make_judge_findings_node(
                     "rules": sorted({rule for item in supplemented_findings for rule in item.get("covered_rules", [])}),
                 },
             )
+        judge_input_findings = [*state["verified_findings"], *promoted_findings, *supplemented_findings]
         final_findings, judge_rejections = judge_candidate_findings(
-            [*state["verified_findings"], *promoted_findings, *supplemented_findings],
+            judge_input_findings,
             state.get("conflicts") or [],
             state.get("debate_results") or [],
             max_findings=max_findings,
@@ -4098,6 +4147,18 @@ def make_judge_findings_node(
                 {"dedupe_hash": finding.get("dedupe_hash"), "severity": finding.get("severity")},
             )
         final_findings = quality_selected_findings
+        judge_rejections, unclassified_decision_count = ensure_judge_decision_accountability(
+            judge_input_findings,
+            final_findings,
+            judge_rejections,
+        )
+        if unclassified_decision_count:
+            recorder.event(
+                judge_span,
+                "judge_decision_integrity_anomaly",
+                f"Judge 有 {unclassified_decision_count} 个候选缺少显式去向，已记录异常拒绝原因",
+                {"count": unclassified_decision_count, "reason": "judge_unclassified_rejection"},
+            )
         persisted_findings: list[dict[str, Any]] = []
         for finding in final_findings:
             source_observations = finding.get("source_observations") or []

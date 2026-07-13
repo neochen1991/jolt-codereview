@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from tools.tool_normalizer import CATEGORY_PRIMARY_RULE, normalized_rule_category
+from orchestration.skill_runtime_facts import build_skill_routing_facts
 
 
 SECURITY_CATEGORIES = {
@@ -180,7 +181,11 @@ def make_route_agents_node(
                 budget_tracker.snapshot(),
             )
             recorder.finish(router_span)
-            return {**state, "selected_agents": []}
+            return {
+                **state,
+                "selected_agents": [],
+                "skill_routing_facts": build_skill_routing_facts(agent_configs, [], files),
+            }
         selected_agents = route_agents(
             agent_configs,
             files,
@@ -217,6 +222,14 @@ def make_route_agents_node(
                     "evidence": tool_route_evidence[:50],
                 },
             )
+        skill_routing_facts = build_skill_routing_facts(agent_configs, selected_agents, files)
+        if skill_routing_facts:
+            recorder.event(
+                router_span,
+                "skill_routing_evaluated",
+                f"评估 {len(skill_routing_facts)} 个 Skill 路由机会",
+                {"items": skill_routing_facts},
+            )
         recorder.event(
             router_span,
             "agent_routed",
@@ -242,6 +255,6 @@ def make_route_agents_node(
                 ),
             )
         recorder.finish(router_span)
-        return {**state, "selected_agents": selected_agents}
+        return {**state, "selected_agents": selected_agents, "skill_routing_facts": skill_routing_facts}
 
     return route_agents_node

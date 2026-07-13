@@ -162,6 +162,10 @@ export function migrate(db: Db) {
       source_observations_json TEXT NOT NULL DEFAULT '[]',
       raw_json TEXT NOT NULL DEFAULT '{}',
       final_finding_id TEXT,
+      decision_reason_json TEXT NOT NULL DEFAULT '[]',
+      decision_stage TEXT,
+      decided_at TEXT,
+      merged_into_candidate_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(review_run_id, dedupe_hash, stage)
@@ -433,6 +437,8 @@ export function migrate(db: Db) {
       status TEXT NOT NULL DEFAULT 'draft',
       bundle_sha256 TEXT NOT NULL DEFAULT '',
       validation_json TEXT NOT NULL DEFAULT '{}',
+      checkpoint_manifest_json TEXT NOT NULL DEFAULT '{}',
+      checkpoint_compiler_version TEXT NOT NULL DEFAULT '',
       created_by TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -762,6 +768,10 @@ export function migrate(db: Db) {
   addColumnIfMissing(db, "rule_precision_history", "recent_accepted_count", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "rule_precision_history", "recent_rejected_count", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "review_runs", "coverage_json", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(db, "candidate_findings", "decision_reason_json", "TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing(db, "candidate_findings", "decision_stage", "TEXT");
+  addColumnIfMissing(db, "candidate_findings", "decided_at", "TEXT");
+  addColumnIfMissing(db, "candidate_findings", "merged_into_candidate_id", "TEXT");
   addColumnIfMissing(db, "full_review_jobs", "attempt", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "full_review_jobs", "locked_at", "TEXT");
   addColumnIfMissing(db, "full_review_jobs", "locked_by", "TEXT");
@@ -771,6 +781,8 @@ export function migrate(db: Db) {
   addColumnIfMissing(db, "custom_skills", "active_version_id", "TEXT");
   addColumnIfMissing(db, "custom_skill_versions", "bundle_sha256", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "custom_skill_versions", "validation_json", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(db, "custom_skill_versions", "checkpoint_manifest_json", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(db, "custom_skill_versions", "checkpoint_compiler_version", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "custom_skill_versions", "created_by", "TEXT");
   addColumnIfMissing(db, "skill_debug_sessions", "bundle_sha256", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "skill_debug_sessions", "validity_contract", "TEXT NOT NULL DEFAULT 'skill_debug_validity_v1'");

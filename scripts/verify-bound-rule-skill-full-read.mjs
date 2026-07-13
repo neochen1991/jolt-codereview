@@ -69,7 +69,7 @@ const checks = [
     file: "mr-backend/worker/orchestration/nodes/run_experts.py",
     forbidden: [],
     required: [
-      "def _bound_rule_batches(agent_context: dict[str, Any])",
+    "def _bound_rule_batches(agent_context: dict[str, Any], files: list[dict[str, Any]] | None = None)",
       "\"bound_rules\": [rule]",
       "\"bound_skill_batch\": {",
       "\"enforce_skill_scope\": True",

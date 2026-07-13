@@ -8,6 +8,7 @@ from skill_debug import production_side_effects_allowed
 from orchestration.deepagents_runner import run_bounded_deepagent
 from prompts.example_retriever import retrieve_examples
 from rules.skill_checkpoint_parser import parse_skill_checkpoints
+from orchestration.skill_runtime_facts import checkpoint_applies_to_files
 
 
 def _builtin_java_heuristics_enabled(project_config: dict[str, Any]) -> bool:
@@ -79,10 +80,11 @@ def _project_id_for_job(conn: Any, job: Any) -> str:
         return ""
 
 
-def _bound_rule_batches(agent_context: dict[str, Any]) -> list[dict[str, Any]]:
+def _bound_rule_batches(agent_context: dict[str, Any], files: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     rules = [rule for rule in (agent_context.get("bound_rules") or []) if isinstance(rule, dict)]
     custom_skills = [str(skill).strip() for skill in (agent_context.get("custom_skills") or []) if str(skill).strip()]
     skill_assets = [asset for asset in (agent_context.get("skill_assets") or []) if isinstance(asset, dict)]
+    skill_manifests = agent_context.get("skill_checkpoint_manifests") if isinstance(agent_context.get("skill_checkpoint_manifests"), dict) else {}
     if not rules and not custom_skills:
         return [{"label": "default", "agent": agent_context, "rule_id": ""}]
     batches: list[dict[str, Any]] = []
@@ -105,7 +107,10 @@ def _bound_rule_batches(agent_context: dict[str, Any]) -> list[dict[str, Any]]:
         )
     for skill_index, skill_key in enumerate(custom_skills, start=1):
         filtered_assets = [asset for asset in skill_assets if str(asset.get("skill_key") or "") == skill_key]
-        checkpoints = _skill_checkpoints(skill_key, filtered_assets)
+        manifest = skill_manifests.get(skill_key) if isinstance(skill_manifests.get(skill_key), dict) else None
+        checkpoints = _skill_checkpoints(skill_key, filtered_assets, manifest=manifest)
+        if files is not None:
+            checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint_applies_to_files(checkpoint, files)]
         for checkpoint_index, checkpoint in enumerate(checkpoints, start=1):
             checkpoint_id = str(checkpoint.get("checkpoint_id") or f"SKILL:{skill_key}")
             batches.append(
@@ -179,7 +184,27 @@ def _coverage_retry_batch(batch: dict[str, Any], *, reason: str) -> dict[str, An
     return {**batch, "label": f"{batch.get('label')}:coverage_retry", "agent": agent, "coverage_retry": True}
 
 
-def _skill_checkpoints(skill_key: str, skill_assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _skill_checkpoints(
+    skill_key: str,
+    skill_assets: list[dict[str, Any]],
+    *,
+    manifest: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    if manifest:
+        compiler_version = str(manifest.get("compiler_version") or "")
+        source_hash = str(manifest.get("source_hash") or "")
+        compiled = [item for item in (manifest.get("checkpoints") or []) if isinstance(item, dict)]
+        if compiled:
+            return [
+                {
+                    **item,
+                    "skill_key": str(item.get("skill_key") or skill_key),
+                    "compiler_version": compiler_version,
+                    "manifest_source_hash": source_hash,
+                    "manifest_mode": "compiled",
+                }
+                for item in compiled
+            ]
     source_assets = [asset for asset in skill_assets if _is_checkpoint_source_asset(asset)]
     combined: list[dict[str, Any]] = []
     fallback: list[dict[str, Any]] = []
@@ -194,14 +219,14 @@ def _skill_checkpoints(skill_key: str, skill_assets: list[dict[str, Any]]) -> li
         )
         structured = [item for item in parsed if str(item.get("parse_quality") or "") == "structured"]
         if structured:
-            combined.extend(structured)
+            combined.extend({**item, "manifest_mode": "legacy_fallback"} for item in structured)
         else:
-            fallback.extend(parsed)
+            fallback.extend({**item, "manifest_mode": "legacy_fallback"} for item in parsed)
     if combined:
         return combined
     if fallback:
         return fallback[:1]
-    return parse_skill_checkpoints(skill_key, "", source_path="SKILL.md")
+    return [{**item, "manifest_mode": "legacy_fallback"} for item in parse_skill_checkpoints(skill_key, "", source_path="SKILL.md")]
 
 
 def _is_checkpoint_source_asset(asset: dict[str, Any]) -> bool:
@@ -979,7 +1004,7 @@ def make_run_experts_node(
                 llm_items = []
             else:
                 llm_items = []
-                rule_batches = _bound_rule_batches(agent_context)
+                rule_batches = _bound_rule_batches(agent_context, state.get("files") or [])
                 for batch in rule_batches:
                     if budget_tracker and budget_tracker.should_stop():
                         recorder.event(span, "llm_skipped_by_budget", f"预算已触发熔断：{budget_tracker.truncated_reason}", budget_tracker.snapshot())

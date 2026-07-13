@@ -1551,7 +1551,9 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       return { spans, events, messages, llm_calls: llmCalls, tool_calls: toolCalls, mcp_calls: mcpCalls, skill_calls: normalizeSkillCalls(events), page: { limit, offset, type } };
     }),
     route("GET", "/api/mr-review/review-runs/:runId/skill-trace", ({ params, req, url }) => {
-      const denied = ensureRunRead(params.runId, req);
+      const projectId = projectIdForRun(params.runId);
+      if (!projectId) return notFound();
+      const denied = ensureProjectRole(projectId, currentUserId(req), "project_admin");
       if (denied) return denied;
       const limit = boundedQueryLimit(url, "limit", 500, 1000);
       const offset = boundedQueryOffset(url);
@@ -1592,7 +1594,27 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         ) recent_skill_llm_calls
         ORDER BY created_at
       `, [params.runId, limit, offset]);
-      return { ...buildSkillTracePayload(run, events, llmCalls), page: { limit, offset } };
+      const coverage = parseRecord(run.coverage_json);
+      const runtimeFacts = Array.isArray(coverage.skill_runtime_facts) ? coverage.skill_runtime_facts.map(parseRecord) : [];
+      const skillCheckpointIds = new Set(runtimeFacts.flatMap((fact) => (
+        Array.isArray(fact.checkpoints)
+          ? fact.checkpoints.map(parseRecord).map((item) => String(item.checkpoint_id || "")).filter(Boolean)
+          : []
+      )));
+      const judgeDecisions = all<Record<string, any>>(`
+        SELECT id, dedupe_hash, status, agent_id, rule_id, title, file_path, line_start, line_end,
+               rejected_reasons_json, decision_reason_json, decision_stage, decided_at, merged_into_candidate_id
+        FROM candidate_findings
+        WHERE review_run_id = $1 AND stage = 'judge' AND status IN ('rejected','merged')
+        ORDER BY decided_at, updated_at
+      `, [params.runId])
+        .filter((row) => skillCheckpointIds.has(String(row.rule_id || "")))
+        .map((row) => ({
+          ...row,
+          rejected_reasons: stringList(parseJsonValue(row.rejected_reasons_json)),
+          decision_reasons: Array.isArray(parseJsonValue(row.decision_reason_json)) ? parseJsonValue(row.decision_reason_json) : []
+        }));
+      return { ...buildSkillTracePayload(run, events, llmCalls), judge_decisions: judgeDecisions, page: { limit, offset } };
     }),
     route("GET", "/api/mr-review/review-runs/:runId/artifacts", ({ params, req, url }) => {
       const denied = ensureRunRead(params.runId, req);

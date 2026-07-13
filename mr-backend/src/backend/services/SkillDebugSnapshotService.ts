@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Db } from "../db.js";
 import type { AppConfig } from "../types.js";
+import { canonicalSkillBundleHash, resolveCanonicalSkillVersion } from "../repositories/RuleDocumentRepository.js";
 
 const SECRET_KEY = /(^|_)(api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|password|secret|token)$/i;
 
@@ -34,11 +35,7 @@ export class SkillDebugSnapshotService {
     agentKey: string;
     effectiveConfig: AppConfig;
   }) {
-    const skill = this.db.prepare(`
-      SELECT * FROM custom_skill_versions
-      WHERE project_id = $1 AND skill_key = $2 AND ($3 = '' OR version = $3)
-      ORDER BY updated_at DESC LIMIT 1
-    `).get(input.projectId, input.skillKey, input.skillVersion || "") as Record<string, any> | undefined;
+    const skill = resolveCanonicalSkillVersion(this.db, input.projectId, input.skillKey, input.skillVersion);
     if (!skill) throw new Error("Skill version not found");
     const agent = this.db.prepare("SELECT * FROM expert_profiles WHERE project_id = $1 AND agent_key = $2")
       .get(input.projectId, input.agentKey) as Record<string, any> | undefined;
@@ -66,7 +63,8 @@ export class SkillDebugSnapshotService {
       mr: { id: input.mergeRequest.id, head_sha: input.mergeRequest.latest_head_sha, repository_id: input.repository.id },
       skill: {
         id: skill.id, skill_key: skill.skill_key, version: skill.version, name: skill.name,
-        description: skill.description, content: skill.content, status: skill.status
+        description: skill.description, content: skill.content, status: skill.status,
+        bundle_sha256: skill.bundle_sha256 || canonicalSkillBundleHash(skill)
       },
       assets: JSON.parse(String(skill.assets_json || "[]")),
       agent,

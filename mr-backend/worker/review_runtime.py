@@ -14,6 +14,7 @@ import subprocess
 import time
 import urllib.parse
 import urllib.request
+import warnings
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -112,6 +113,15 @@ def ensure_worker_schema(conn: Any) -> None:
     add_column_if_missing("review_jobs", "debug_context_json", "TEXT NOT NULL DEFAULT '{}'")
     add_column_if_missing("review_jobs", "requested_by", "TEXT")
     add_column_if_missing("review_runs", "coverage_json", "TEXT NOT NULL DEFAULT '{}'")
+    add_column_if_missing("custom_skills", "active_version_id", "TEXT")
+    add_column_if_missing("custom_skill_versions", "bundle_sha256", "TEXT NOT NULL DEFAULT ''")
+    add_column_if_missing("custom_skill_versions", "validation_json", "TEXT NOT NULL DEFAULT '{}'")
+    add_column_if_missing("custom_skill_versions", "created_by", "TEXT")
+    add_column_if_missing("skill_debug_sessions", "bundle_sha256", "TEXT NOT NULL DEFAULT ''")
+    add_column_if_missing("skill_debug_sessions", "validity_contract", "TEXT NOT NULL DEFAULT 'skill_debug_validity_v1'")
+    add_column_if_missing("skill_debug_sessions", "validity_json", "TEXT NOT NULL DEFAULT '{}'")
+    add_column_if_missing("skill_debug_sessions", "input_artifact_json", "TEXT NOT NULL DEFAULT '{}'")
+    add_column_if_missing("skill_debug_sessions", "input_artifact_sha256", "TEXT NOT NULL DEFAULT ''")
     add_column_if_missing("rule_precision_history", "recent_accepted_count", "INTEGER NOT NULL DEFAULT 0")
     add_column_if_missing("rule_precision_history", "recent_rejected_count", "INTEGER NOT NULL DEFAULT 0")
     conn.executescript(
@@ -3712,6 +3722,35 @@ def load_bound_custom_skill_keys(conn: Any, project_id: str, agent_key: str) -> 
     return [str(row["skill_key"]) for row in rows]
 
 
+def load_canonical_skill_version(conn: Any, project_id: str, skill_key: str) -> tuple[dict[str, Any] | None, bool]:
+    """Resolve the exact immutable version used by production and Skill Debug."""
+    if table_exists(conn, "custom_skill_versions"):
+        row = conn.execute(
+            """
+            SELECT csv.*
+            FROM custom_skills cs
+            JOIN custom_skill_versions csv ON csv.id = cs.active_version_id
+            WHERE cs.project_id = %s AND cs.skill_key = %s AND cs.status = 'active'
+            """,
+            (project_id, skill_key),
+        ).fetchone()
+        if row:
+            return dict(row), False
+    if not table_exists(conn, "custom_skills"):
+        return None, False
+    row = conn.execute(
+        """
+        SELECT * FROM custom_skills
+        WHERE project_id = %s AND skill_key = %s AND status = 'active'
+        """,
+        (project_id, skill_key),
+    ).fetchone()
+    if row:
+        warnings.warn(f"skill_version_legacy_fallback:{project_id}:{skill_key}", RuntimeWarning, stacklevel=2)
+        return dict(row), True
+    return None, False
+
+
 def merge_custom_agents(agent_configs: list[dict[str, Any]], project_config: dict[str, Any]) -> list[dict[str, Any]]:
     custom_agents = project_config.get("routing", {}).get("custom_agents")
     if not isinstance(custom_agents, list):
@@ -3755,16 +3794,7 @@ def load_custom_skill_summary(
         return ""
     if not table_exists(conn, "custom_skills"):
         return ""
-    row = conn.execute(
-        """
-        SELECT skill_key, name, description, content, version
-        FROM custom_skills
-        WHERE project_id = %s
-          AND skill_key = %s
-          AND status = 'active'
-        """,
-        (project_id, skill_name),
-    ).fetchone()
+    row, _legacy_fallback = load_canonical_skill_version(conn, project_id, skill_name)
     if not row:
         return ""
     return (
@@ -3784,29 +3814,43 @@ def load_bound_custom_skill_assets(
 ) -> list[dict[str, Any]]:
     if not skill_keys:
         return []
-    if not table_exists(conn, "custom_skill_assets"):
-        return []
-    placeholders = ",".join("%s" for _ in skill_keys)
-    rows = conn.execute(
-        f"""
-        SELECT skill_key, asset_path, asset_type, content, executable
-        FROM custom_skill_assets
-        WHERE project_id = %s
-          AND skill_key IN ({placeholders})
-        ORDER BY skill_key, asset_path
-        """,
-        (project_id, *skill_keys),
-    ).fetchall()
-    return [
-        {
+    result: list[dict[str, Any]] = []
+    for skill_key in skill_keys:
+        version, legacy_fallback = load_canonical_skill_version(conn, project_id, skill_key)
+        if version and not legacy_fallback:
+            try:
+                assets = json.loads(str(version.get("assets_json") or "[]"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                assets = []
+            for asset in assets if isinstance(assets, list) else []:
+                if not isinstance(asset, dict):
+                    continue
+                result.append({
+                    "skill_key": str(asset.get("skill_key") or skill_key),
+                    "asset_path": str(asset.get("asset_path") or ""),
+                    "asset_type": str(asset.get("asset_type") or "reference"),
+                    "content": str(asset.get("content") or ""),
+                    "executable": bool(asset.get("executable")),
+                })
+            continue
+        if not legacy_fallback or not table_exists(conn, "custom_skill_assets"):
+            continue
+        rows = conn.execute(
+            """
+            SELECT skill_key, asset_path, asset_type, content, executable
+            FROM custom_skill_assets
+            WHERE project_id = %s AND skill_key = %s ORDER BY asset_path
+            """,
+            (project_id, skill_key),
+        ).fetchall()
+        result.extend({
             "skill_key": row["skill_key"],
             "asset_path": row["asset_path"],
             "asset_type": row["asset_type"],
             "content": row["content"],
             "executable": bool(row["executable"]),
-        }
-        for row in rows
-    ]
+        } for row in rows)
+    return sorted(result, key=lambda item: (str(item.get("skill_key")), str(item.get("asset_path"))))
 
 
 def custom_skill_asset_manifest(conn: Any | None, project_id: str | None, skill_name: str) -> str:

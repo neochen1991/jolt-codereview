@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Db } from "./connection.js";
 
 export function migrate(db: Db) {
@@ -401,6 +402,7 @@ export function migrate(db: Db) {
       content TEXT NOT NULL,
       version TEXT NOT NULL DEFAULT 'v1',
       status TEXT NOT NULL DEFAULT 'active',
+      active_version_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(project_id, skill_key)
@@ -429,6 +431,9 @@ export function migrate(db: Db) {
       content TEXT NOT NULL,
       assets_json TEXT NOT NULL DEFAULT '[]',
       status TEXT NOT NULL DEFAULT 'draft',
+      bundle_sha256 TEXT NOT NULL DEFAULT '',
+      validation_json TEXT NOT NULL DEFAULT '{}',
+      created_by TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(project_id, skill_key, version)
@@ -763,6 +768,77 @@ export function migrate(db: Db) {
   addColumnIfMissing(db, "full_review_jobs", "heartbeat_at", "TEXT");
   addColumnIfMissing(db, "full_review_jobs", "failure_reason", "TEXT");
   addColumnIfMissing(db, "llm_response_cache", "project_id", "TEXT NOT NULL DEFAULT 'project_default'");
+  addColumnIfMissing(db, "custom_skills", "active_version_id", "TEXT");
+  addColumnIfMissing(db, "custom_skill_versions", "bundle_sha256", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "custom_skill_versions", "validation_json", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(db, "custom_skill_versions", "created_by", "TEXT");
+  addColumnIfMissing(db, "skill_debug_sessions", "bundle_sha256", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "skill_debug_sessions", "validity_contract", "TEXT NOT NULL DEFAULT 'skill_debug_validity_v1'");
+  addColumnIfMissing(db, "skill_debug_sessions", "validity_json", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(db, "skill_debug_sessions", "input_artifact_json", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(db, "skill_debug_sessions", "input_artifact_sha256", "TEXT NOT NULL DEFAULT ''");
+  repairCanonicalSkillVersions(db);
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function normalizedAssets(value: unknown): Array<Record<string, unknown>> {
+  const parsed = typeof value === "string" ? (() => { try { return JSON.parse(value); } catch { return []; } })() : value;
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({
+      skill_key: String(item.skill_key || ""),
+      asset_path: String(item.asset_path || ""),
+      asset_type: String(item.asset_type || "reference"),
+      content: String(item.content || ""),
+      executable: Boolean(item.executable)
+    }))
+    .sort((left, right) => String(left.asset_path).localeCompare(String(right.asset_path)));
+}
+
+function skillBundleHash(skill: Record<string, unknown>, assets: Array<Record<string, unknown>>) {
+  const canonical = {
+    skill_key: String(skill.skill_key || ""),
+    version: String(skill.version || ""),
+    name: String(skill.name || ""),
+    description: String(skill.description || ""),
+    content: String(skill.content || ""),
+    assets
+  };
+  return createHash("sha256").update(stableStringify(canonical)).digest("hex");
+}
+
+function repairCanonicalSkillVersions(db: Db) {
+  const skills = db.prepare("SELECT * FROM custom_skills WHERE status = 'active'").all() as Array<Record<string, unknown>>;
+  for (const skill of skills) {
+    const version = db.prepare(`
+      SELECT * FROM custom_skill_versions
+      WHERE project_id = $1 AND skill_key = $2 AND version = $3
+    `).get(skill.project_id, skill.skill_key, skill.version) as Record<string, unknown> | undefined;
+    if (!version) continue;
+    const liveAssets = db.prepare(`
+      SELECT skill_key, asset_path, asset_type, content, executable
+      FROM custom_skill_assets WHERE project_id = $1 AND skill_key = $2 ORDER BY asset_path
+    `).all(skill.project_id, skill.skill_key) as Array<Record<string, unknown>>;
+    const storedAssets = normalizedAssets(version.assets_json);
+    const assets = liveAssets.length && storedAssets.length === 0 ? normalizedAssets(liveAssets) : storedAssets;
+    const bundleSha256 = skillBundleHash(version, assets);
+    db.prepare(`
+      UPDATE custom_skill_versions
+      SET assets_json = $1, bundle_sha256 = $2,
+          validation_json = CASE WHEN validation_json = '{}' THEN $3 ELSE validation_json END
+      WHERE id = $4
+    `).run(JSON.stringify(assets), bundleSha256, JSON.stringify({ migrated: true, ok: true }), version.id);
+    db.prepare("UPDATE custom_skills SET active_version_id = $1 WHERE id = $2").run(version.id, skill.id);
+  }
 }
 
 function replaceLegacyReviewJobUniqueness(db: Db) {

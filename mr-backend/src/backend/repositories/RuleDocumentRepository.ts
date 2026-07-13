@@ -1,4 +1,53 @@
+import { createHash } from "node:crypto";
 import type { Db } from "../db.js";
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function canonicalSkillBundleHash(skill: Record<string, any>) {
+  let assets: unknown = skill.assets_json || [];
+  if (typeof assets === "string") {
+    try { assets = JSON.parse(assets); } catch { assets = []; }
+  }
+  const normalizedAssets = (Array.isArray(assets) ? assets : [])
+    .filter((item) => item && typeof item === "object")
+    .map((item: Record<string, any>) => ({
+      skill_key: String(item.skill_key || skill.skill_key || ""),
+      asset_path: String(item.asset_path || ""),
+      asset_type: String(item.asset_type || "reference"),
+      content: String(item.content || ""),
+      executable: Boolean(item.executable)
+    }))
+    .sort((left, right) => left.asset_path.localeCompare(right.asset_path));
+  return createHash("sha256").update(stableStringify({
+    skill_key: String(skill.skill_key || ""),
+    version: String(skill.version || ""),
+    name: String(skill.name || ""),
+    description: String(skill.description || ""),
+    content: String(skill.content || ""),
+    assets: normalizedAssets
+  })).digest("hex");
+}
+
+export function resolveCanonicalSkillVersion(db: Db, projectId: string, skillKey: string, version?: string | null) {
+  if (version) {
+    return db.prepare(`
+      SELECT * FROM custom_skill_versions
+      WHERE project_id = $1 AND skill_key = $2 AND version = $3
+    `).get(projectId, skillKey, version) as Record<string, any> | undefined;
+  }
+  return db.prepare(`
+    SELECT csv.* FROM custom_skills cs
+    JOIN custom_skill_versions csv ON csv.id = cs.active_version_id
+    WHERE cs.project_id = $1 AND cs.skill_key = $2 AND cs.status = 'active'
+  `).get(projectId, skillKey) as Record<string, any> | undefined;
+}
 
 export class RuleDocumentRepository {
   constructor(private readonly db: Db) {}
@@ -147,6 +196,7 @@ export class RuleDocumentRepository {
       JSON.stringify(input.status === "active" ? this.listCustomSkillAssets(input.projectId, input.skillKey) : []),
       input.status
     );
+    this.refreshCustomSkillVersionHash(input.projectId, input.skillKey, input.version);
     return this.findCustomSkillVersion(input.projectId, input.skillKey, input.version);
   }
 
@@ -198,13 +248,23 @@ export class RuleDocumentRepository {
       UPDATE custom_skill_versions SET assets_json = $1, updated_at = CURRENT_TIMESTAMP
       WHERE project_id = $2 AND skill_key = $3 AND version = $4
     `).run(JSON.stringify(next), input.projectId, input.skillKey, input.version);
+    this.refreshCustomSkillVersionHash(input.projectId, input.skillKey, input.version);
     return this.findCustomSkillVersion(input.projectId, input.skillKey, input.version);
+  }
+
+  refreshCustomSkillVersionHash(projectId: string, skillKey: string, version: string) {
+    const selected = this.findCustomSkillVersion(projectId, skillKey, version) as Record<string, any> | undefined;
+    if (!selected) return undefined;
+    const bundleSha256 = canonicalSkillBundleHash(selected);
+    this.db.prepare("UPDATE custom_skill_versions SET bundle_sha256 = $1 WHERE id = $2").run(bundleSha256, selected.id);
+    return bundleSha256;
   }
 
   activateCustomSkillVersion(projectId: string, skillKey: string, version: string) {
     const selected = this.findCustomSkillVersion(projectId, skillKey, version) as Record<string, any> | undefined;
     if (!selected) return undefined;
     const assets = JSON.parse(String(selected.assets_json || "[]")) as Array<Record<string, any>>;
+    this.refreshCustomSkillVersionHash(projectId, skillKey, version);
     this.db.prepare(`
       UPDATE custom_skill_versions
       SET status = CASE WHEN version = $1 THEN 'active' WHEN status = 'active' THEN 'reviewed' ELSE status END,
@@ -212,12 +272,12 @@ export class RuleDocumentRepository {
       WHERE project_id = $2 AND skill_key = $3
     `).run(version, projectId, skillKey);
     this.db.prepare(`
-      INSERT INTO custom_skills (id, project_id, skill_key, name, description, content, version, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+      INSERT INTO custom_skills (id, project_id, skill_key, name, description, content, version, status, active_version_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8)
       ON CONFLICT(project_id, skill_key) DO UPDATE SET
         name = excluded.name, description = excluded.description, content = excluded.content,
-        version = excluded.version, status = 'active', updated_at = CURRENT_TIMESTAMP
-    `).run(String(selected.id), projectId, skillKey, selected.name, selected.description, selected.content, version);
+        version = excluded.version, status = 'active', active_version_id = excluded.active_version_id, updated_at = CURRENT_TIMESTAMP
+    `).run(String(selected.id), projectId, skillKey, selected.name, selected.description, selected.content, version, selected.id);
     this.db.prepare("DELETE FROM custom_skill_assets WHERE project_id = $1 AND skill_key = $2").run(projectId, skillKey);
     for (const asset of assets) {
       this.upsertCustomSkillAsset({

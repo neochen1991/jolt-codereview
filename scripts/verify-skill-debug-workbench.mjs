@@ -20,7 +20,7 @@ const checks = [
   [migrations, "debug_context_json", "review_jobs debug context migration"],
   [migrations, "skill_debug_sessions", "isolated debug session table"],
   [migrations, "execution_kind", "review job execution classification"],
-  [migrations, "skill_debug_candidate", "candidate debug variant"],
+  [repository, "skill_debug_${input.debugVariant}", "candidate debug variant"],
   [migrations, "custom_skill_versions", "immutable skill version bundles"],
   [sessionRepository, "class SkillDebugSessionRepository", "debug session repository"],
   [repository, "debug_context_json", "queue persistence"],

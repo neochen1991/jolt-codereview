@@ -48,6 +48,16 @@ from orchestration.nodes.verify_findings import rejected_reason_counts, verify_c
 from orchestration.state import EXECUTED_GRAPH_NODE_KEYS as GRAPH_NODE_KEYS
 from review_queue.job_consumer import ACTIVE_STATUSES, MAX_ATTEMPTS, RECLAIM_AFTER_SECONDS, start_heartbeat
 from token_usage_reporter import report_token_usage
+from skill_debug import (
+    SkillDebugStopped,
+    apply_debug_snapshot,
+    apply_snapshot_config,
+    check_debug_cancelled_or_timed_out,
+    debug_skill_summary,
+    debug_variant,
+    is_debug_job,
+    load_debug_context,
+)
 from prompts.builder import build_prompt, redact_untrusted
 from rules.rule_loader import load_bound_rules
 from static.heuristics import static_findings
@@ -4537,7 +4547,22 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     mr = conn.execute("SELECT * FROM merge_requests WHERE id = %s", (job["merge_request_id"],)).fetchone()
     repo = conn.execute("SELECT * FROM repositories WHERE id = %s", (mr["repository_id"],)).fetchone()
     project_id = repo["project_id"]
+    debug_context = load_debug_context(job)
+    if is_debug_job(job) and str(job["head_sha"]) != str(mr["latest_head_sha"]):
+        session_id = str(job.get("debug_session_id") or debug_context.get("session_id") or "")
+        conn.execute("UPDATE review_jobs SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE debug_session_id = %s", (session_id,))
+        conn.execute("UPDATE skill_debug_sessions SET status = 'stale_head', failure_reason = 'mr_head_changed', updated_at = CURRENT_TIMESTAMP WHERE id = %s", (session_id,))
+        conn.commit()
+        write_worker_log(config, "skill_debug_stale_head", {"review_job_id": job["id"], "expected_head_sha": job["head_sha"], "actual_head_sha": mr["latest_head_sha"]}, "warn")
+        return True
+    stopped_reason = check_debug_cancelled_or_timed_out(conn, job, debug_context)
+    if stopped_reason:
+        conn.execute("UPDATE review_jobs SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = %s", (job["id"],))
+        conn.commit()
+        return True
     project_config = effective_project_config(config, conn, project_id, job["requested_by"])
+    if is_debug_job(job):
+        project_config = apply_snapshot_config(project_config, dict(debug_context.get("snapshot") or {}))
 
     size_guard_files: list[ChangedFile] | None = None
     size_decision = evaluate_mr_size_policy(mr, None, project_config)
@@ -4638,6 +4663,8 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     conn.execute("UPDATE review_runs SET data_policy_snapshot = %s WHERE id = %s", (json.dumps(data_policy, ensure_ascii=False), run_id))
     conn.commit()
     agent_configs = merge_custom_agents(load_agent_configs(conn, project_id), project_config)
+    if is_debug_job(job):
+        agent_configs = apply_debug_snapshot(agent_configs, dict(debug_context.get("snapshot") or {}), debug_variant(job))
     agent_config_by_id = {agent["agent_id"]: agent for agent in agent_configs}
 
     try:
@@ -4711,7 +4738,7 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             data_policy=data_policy,
             tool_gateway=tool_gateway,
             package_version=package_version,
-            load_skill_summary=lambda skill, files=None: load_skill_summary(skill, files, conn, project_id),
+            load_skill_summary=lambda skill, files=None: debug_skill_summary(debug_context, skill) if is_debug_job(job) and debug_skill_summary(debug_context, skill) is not None else load_skill_summary(skill, files, conn, project_id),
             load_tool_observations=load_tool_observations,
             static_findings=static_findings,
             sanitize_findings_for_policy=sanitize_findings_for_policy,
@@ -4759,17 +4786,11 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
         )
         finalize_node = make_finalize_node(conn=conn, job=job, mr=mr, run_id=run_id, recorder=recorder)
 
-        try:
-            debug_context = json.loads(str(job.get("debug_context_json") or "{}"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            debug_context = {}
         if debug_context.get("kind") == "skill_debug":
             debug_span = recorder.span("skill_debug", str(debug_context.get("agent_key") or "router_agent"))
             recorder.event(debug_span, "skill_debug_context_loaded", "Skill 调试上下文已进入正式 Review Worker 图", debug_context)
             recorder.finish(debug_span)
-        invoke_review_graph(
-            {"run_id": run_id, "job_id": job["id"], "debug_context": debug_context},
-            [
+        graph_nodes = [
                 ("fetch_mr", fetch_node),
                 ("choose_effort", choose_effort_node),
                 ("prescan", prescan_node),
@@ -4782,7 +4803,19 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
                 ("judge_findings", judge_findings_node),
                 ("summarize_pr", summarize_pr_node),
                 ("finalize", finalize_node),
-            ],
+            ]
+        if is_debug_job(job):
+            def guarded(name: str, node: Any) -> Any:
+                def run_guarded(state: dict[str, Any]) -> dict[str, Any]:
+                    reason = check_debug_cancelled_or_timed_out(conn, job, debug_context)
+                    if reason:
+                        raise SkillDebugStopped(reason)
+                    return node(state)
+                return run_guarded
+            graph_nodes = [(name, guarded(name, node)) for name, node in graph_nodes]
+        invoke_review_graph(
+            {"run_id": run_id, "job_id": job["id"], "debug_context": debug_context},
+            graph_nodes,
             recorder,
         )
         recorder.flush()
@@ -4835,6 +4868,13 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
         recorder.event(fail_span, "worker_error", str(exc))
         recorder.finish(fail_span, "failed")
         recorder.flush()
+        if isinstance(exc, SkillDebugStopped):
+            session_id = str(job.get("debug_session_id") or debug_context.get("session_id") or "")
+            conn.execute("UPDATE review_runs SET status = 'cancelled', report_summary = %s, completed_at = CURRENT_TIMESTAMP WHERE id = %s", (str(exc), run_id))
+            conn.execute("UPDATE review_jobs SET status = 'cancelled', locked_at = NULL, locked_by = NULL, heartbeat_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (job["id"],))
+            conn.execute("UPDATE skill_debug_sessions SET status = %s, failure_reason = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", ("timed_out" if str(exc) == "timed_out" else "cancelled", str(exc), session_id))
+            conn.commit()
+            return True
         next_attempt = int(job["attempt"] or 0) + 1
         if next_attempt >= MAX_ATTEMPTS:
             conn.execute(

@@ -97,27 +97,129 @@ export class RuleDocumentRepository {
     version: string;
     status: string;
   }) {
+    if (input.status === "active") {
+      this.db.prepare(`
+        INSERT INTO custom_skills (id, project_id, skill_key, name, description, content, version, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT(project_id, skill_key) DO UPDATE SET
+          name = excluded.name,
+          description = excluded.description,
+          content = excluded.content,
+          version = excluded.version,
+          status = excluded.status,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(
+        input.id, input.projectId, input.skillKey, input.name, input.description,
+        input.content, input.version, input.status
+      );
+    }
     this.db.prepare(`
-      INSERT INTO custom_skills (id, project_id, skill_key, name, description, content, version, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      ON CONFLICT(project_id, skill_key) DO UPDATE SET
+      INSERT INTO custom_skill_versions (
+        id, project_id, skill_key, version, name, description, content, assets_json, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ON CONFLICT(project_id, skill_key, version) DO UPDATE SET
         name = excluded.name,
         description = excluded.description,
         content = excluded.content,
-        version = excluded.version,
+        assets_json = excluded.assets_json,
         status = excluded.status,
         updated_at = CURRENT_TIMESTAMP
+      WHERE custom_skill_versions.status <> 'active'
     `).run(
-      input.id,
+      `skill_version_${input.id}`,
       input.projectId,
       input.skillKey,
+      input.version,
       input.name,
       input.description,
       input.content,
-      input.version,
+      JSON.stringify(this.listCustomSkillAssets(input.projectId, input.skillKey)),
       input.status
     );
-    return this.db.prepare("SELECT * FROM custom_skills WHERE project_id = $1 AND skill_key = $2").get(input.projectId, input.skillKey);
+    return this.findCustomSkillVersion(input.projectId, input.skillKey, input.version);
+  }
+
+  listCustomSkillVersions(projectId: string, skillKey: string) {
+    return this.db.prepare(`
+      SELECT * FROM custom_skill_versions
+      WHERE project_id = $1 AND skill_key = $2
+      ORDER BY created_at DESC
+    `).all(projectId, skillKey);
+  }
+
+  findCustomSkillVersion(projectId: string, skillKey: string, version?: string | null) {
+    if (version) {
+      return this.db.prepare(`
+        SELECT * FROM custom_skill_versions
+        WHERE project_id = $1 AND skill_key = $2 AND version = $3
+      `).get(projectId, skillKey, version);
+    }
+    return this.db.prepare(`
+      SELECT * FROM custom_skill_versions
+      WHERE project_id = $1 AND skill_key = $2
+      ORDER BY updated_at DESC LIMIT 1
+    `).get(projectId, skillKey);
+  }
+
+  upsertCustomSkillVersionAsset(input: {
+    projectId: string;
+    skillKey: string;
+    version: string;
+    assetPath: string;
+    assetType: string;
+    content: string;
+    executable: boolean;
+  }) {
+    const selected = this.findCustomSkillVersion(input.projectId, input.skillKey, input.version) as Record<string, any> | undefined;
+    if (!selected) return undefined;
+    if (selected.status === "active") throw new Error("active Skill versions are immutable");
+    const assets = JSON.parse(String(selected.assets_json || "[]")) as Array<Record<string, any>>;
+    const next = assets.filter((asset) => String(asset.asset_path) !== input.assetPath);
+    next.push({
+      skill_key: input.skillKey,
+      asset_path: input.assetPath,
+      asset_type: input.assetType,
+      content: input.content,
+      executable: input.executable ? 1 : 0
+    });
+    next.sort((left, right) => String(left.asset_path).localeCompare(String(right.asset_path)));
+    this.db.prepare(`
+      UPDATE custom_skill_versions SET assets_json = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE project_id = $2 AND skill_key = $3 AND version = $4
+    `).run(JSON.stringify(next), input.projectId, input.skillKey, input.version);
+    return this.findCustomSkillVersion(input.projectId, input.skillKey, input.version);
+  }
+
+  activateCustomSkillVersion(projectId: string, skillKey: string, version: string) {
+    const selected = this.findCustomSkillVersion(projectId, skillKey, version) as Record<string, any> | undefined;
+    if (!selected) return undefined;
+    const assets = JSON.parse(String(selected.assets_json || "[]")) as Array<Record<string, any>>;
+    this.db.prepare(`
+      UPDATE custom_skill_versions
+      SET status = CASE WHEN version = $1 THEN 'active' WHEN status = 'active' THEN 'reviewed' ELSE status END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE project_id = $2 AND skill_key = $3
+    `).run(version, projectId, skillKey);
+    this.db.prepare(`
+      INSERT INTO custom_skills (id, project_id, skill_key, name, description, content, version, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+      ON CONFLICT(project_id, skill_key) DO UPDATE SET
+        name = excluded.name, description = excluded.description, content = excluded.content,
+        version = excluded.version, status = 'active', updated_at = CURRENT_TIMESTAMP
+    `).run(String(selected.id), projectId, skillKey, selected.name, selected.description, selected.content, version);
+    this.db.prepare("DELETE FROM custom_skill_assets WHERE project_id = $1 AND skill_key = $2").run(projectId, skillKey);
+    for (const asset of assets) {
+      this.upsertCustomSkillAsset({
+        id: String(asset.id || `skill_asset_${skillKey}_${asset.asset_path}`),
+        projectId,
+        skillKey,
+        assetPath: String(asset.asset_path),
+        assetType: String(asset.asset_type || "reference"),
+        content: String(asset.content || ""),
+        executable: Boolean(asset.executable)
+      }, false);
+    }
+    return this.findCustomSkillVersion(projectId, skillKey, version);
   }
 
   listExpertSkillBindings(projectId: string) {
@@ -186,7 +288,7 @@ export class RuleDocumentRepository {
     assetType: string;
     content: string;
     executable: boolean;
-  }) {
+  }, syncVersion = true) {
     this.db.prepare(`
       INSERT INTO custom_skill_assets (
         id, project_id, skill_key, asset_path, asset_type, content, executable
@@ -206,11 +308,23 @@ export class RuleDocumentRepository {
       input.content,
       input.executable ? 1 : 0
     );
+    if (syncVersion) this.syncCurrentSkillVersionAssets(input.projectId, input.skillKey);
     return this.db.prepare(`
       SELECT *
       FROM custom_skill_assets
       WHERE project_id = $1 AND skill_key = $2 AND asset_path = $3
     `).get(input.projectId, input.skillKey, input.assetPath);
+  }
+
+  private syncCurrentSkillVersionAssets(projectId: string, skillKey: string) {
+    const skill = this.db.prepare("SELECT version FROM custom_skills WHERE project_id = $1 AND skill_key = $2")
+      .get(projectId, skillKey) as { version?: string } | undefined;
+    if (!skill?.version) return;
+    this.db.prepare(`
+      UPDATE custom_skill_versions
+      SET assets_json = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE project_id = $2 AND skill_key = $3 AND version = $4 AND status <> 'active'
+    `).run(JSON.stringify(this.listCustomSkillAssets(projectId, skillKey)), projectId, skillKey, skill.version);
   }
 
   findReviewPolicy(projectId: string) {

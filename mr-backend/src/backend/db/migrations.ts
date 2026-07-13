@@ -419,6 +419,21 @@ export function migrate(db: Db) {
       UNIQUE(project_id, skill_key, asset_path)
     );
 
+    CREATE TABLE IF NOT EXISTS custom_skill_versions (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      skill_key TEXT NOT NULL,
+      version TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL,
+      assets_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'draft',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(project_id, skill_key, version)
+    );
+
     CREATE TABLE IF NOT EXISTS expert_skill_bindings (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,

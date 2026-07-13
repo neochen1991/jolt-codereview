@@ -7,6 +7,9 @@ const routes = read("mr-backend", "src", "backend", "routes", "review.routes.ts"
 const migrations = read("mr-backend", "src", "backend", "db", "migrations.ts");
 const repository = read("mr-backend", "src", "backend", "repositories", "ReviewJobRepository.ts");
 const sessionRepository = read("mr-backend", "src", "backend", "repositories", "SkillDebugSessionRepository.ts");
+const skillRepository = read("mr-backend", "src", "backend", "repositories", "RuleDocumentRepository.ts");
+const snapshotService = read("mr-backend", "src", "backend", "services", "SkillDebugSnapshotService.ts");
+const ruleRoutes = read("mr-backend", "src", "backend", "routes", "rules.routes.ts");
 const worker = read("mr-backend", "worker", "review_runtime.py");
 const debugWorker = read("mr-backend", "worker", "skill_debug.py");
 const router = read("mr-backend", "worker", "orchestration", "nodes", "route_agents.py");
@@ -17,10 +20,17 @@ const checks = [
   [migrations, "skill_debug_sessions", "isolated debug session table"],
   [migrations, "execution_kind", "review job execution classification"],
   [migrations, "skill_debug_candidate", "candidate debug variant"],
+  [migrations, "custom_skill_versions", "immutable skill version bundles"],
   [sessionRepository, "class SkillDebugSessionRepository", "debug session repository"],
   [repository, "debug_context_json", "queue persistence"],
   [repository, "enqueueDebug", "non-idempotent debug queue insertion"],
   [repository, "production_review", "production job isolation"],
+  [skillRepository, "findCustomSkillVersion", "selectable skill versions"],
+  [skillRepository, "activateCustomSkillVersion", "version activation projection"],
+  [snapshotService, "class SkillDebugSnapshotService", "server-side snapshot builder"],
+  [snapshotService, "snapshot_sha256", "deterministic snapshot hash"],
+  [snapshotService, "stableStringify", "stable snapshot serialization"],
+  [ruleRoutes, "/api/projects/:projectId/custom-skills/:skillKey/versions/:version/activate", "audited skill activation"],
   [routes, "/api/mr-review/projects/:projectId/skill-debug-sessions", "debug session create and history routes"],
   [routes, "/api/mr-review/skill-debug-sessions/:sessionId", "stable debug session detail route"],
   [routes, "/api/mr-review/skill-debug-sessions/:sessionId/cancel", "debug cancellation route"],

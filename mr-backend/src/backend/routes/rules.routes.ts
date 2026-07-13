@@ -453,6 +453,12 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       if (denied) return denied;
       return ruleDocumentRepository.listCustomSkills(params.projectId);
     }),
+    route("GET", "/api/projects/:projectId/custom-skills/:skillKey/versions", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      return ruleDocumentRepository.listCustomSkillVersions(params.projectId, params.skillKey);
+    }),
     route("POST", "/api/projects/:projectId/custom-skills/validate", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
@@ -484,6 +490,22 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       });
       auditLog({ userId: actorId, projectId: params.projectId, action: "custom_skills.upsert", resourceType: "custom_skill", resourceId: skillKey, summary: `upsert custom skill ${skillKey}` });
       return skill;
+    }),
+    route("POST", "/api/projects/:projectId/custom-skills/:skillKey/versions/:version/activate", ({ params, req }) => {
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
+      if (denied) return denied;
+      const activated = ruleDocumentRepository.activateCustomSkillVersion(params.projectId, params.skillKey, params.version);
+      if (!activated) return notFound();
+      auditLog({
+        userId: actorId,
+        projectId: params.projectId,
+        action: "custom_skills.activate_version",
+        resourceType: "custom_skill",
+        resourceId: `${params.skillKey}:${params.version}`,
+        summary: `activate ${params.skillKey} ${params.version}`
+      });
+      return activated;
     }),
     route("GET", "/api/projects/:projectId/expert-skill-bindings", ({ params, req }) => {
       const actorId = currentUserId(req);
@@ -545,6 +567,25 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
           error: "invalid_skill_asset",
           message: "Skill asset contains field-like bullet syntax; move it under a section sentence, for example '永久配置 key，例如 system:refund:config'.",
         };
+      }
+      const version = String(input.version || "").trim();
+      if (version) {
+        try {
+          const versioned = ruleDocumentRepository.upsertCustomSkillVersionAsset({
+            projectId: params.projectId,
+            skillKey,
+            version,
+            assetPath,
+            assetType,
+            content,
+            executable: Boolean(input.executable ?? assetType === "script")
+          });
+          if (!versioned) return notFound();
+          auditLog({ userId: actorId, projectId: params.projectId, action: "custom_skill_versions.asset_upsert", resourceType: "custom_skill_version", resourceId: `${skillKey}:${version}:${assetPath}`, summary: `upsert draft skill asset ${skillKey}/${assetPath}` });
+          return versioned;
+        } catch (error) {
+          return badRequest((error as Error).message);
+        }
       }
       const asset = ruleDocumentRepository.upsertCustomSkillAsset({
         id: id("skill_asset"),

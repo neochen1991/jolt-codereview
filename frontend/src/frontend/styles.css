@@ -6978,3 +6978,25 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
     overflow-wrap: anywhere;
   }
 }
+.agent-binding-debug-button {
+  border: 1px solid #67a3ff;
+  border-radius: 8px;
+  background: #eef5ff;
+  color: #1756a9;
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.skill-debug-workbench { width: min(1180px, 94vw); max-height: 92vh; overflow: auto; background: var(--surface, #fff); border-radius: 18px; padding: 22px; }
+.skill-debug-workbench > header { display: flex; justify-content: space-between; gap: 18px; border-bottom: 1px solid #dfe5ec; padding-bottom: 14px; }
+.skill-debug-workbench > header strong { display: block; font-size: 24px; }
+.skill-debug-controls { display: grid; grid-template-columns: 2fr 1.4fr auto; gap: 12px; align-items: end; padding: 18px 0 8px; }
+.skill-debug-controls label { display: grid; gap: 6px; }
+.skill-debug-controls select { min-height: 40px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0 10px; }
+.skill-debug-mode-note { color: #526172; }
+.skill-debug-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
+.skill-debug-body section { border: 1px solid #dde4ec; border-radius: 12px; padding: 14px; min-width: 0; }
+.skill-debug-body pre { max-height: 330px; overflow: auto; white-space: pre-wrap; word-break: break-word; background: #f6f8fb; padding: 10px; border-radius: 8px; font-size: 12px; }
+.skill-debug-metrics { display: flex; flex-wrap: wrap; gap: 8px; }
+.skill-debug-metrics span { background: #edf3fa; border-radius: 999px; padding: 5px 9px; }
+@media (max-width: 820px) { .skill-debug-controls, .skill-debug-body { grid-template-columns: 1fr; } }

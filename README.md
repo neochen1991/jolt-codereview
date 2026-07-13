@@ -69,6 +69,14 @@ cp mr-backend/config.example.json mr-backend/config.json
 cp frontend/.env.example frontend/.env
 ```
 
+Windows PowerShell 等价命令：
+
+```powershell
+Copy-Item common-backend/config.example.json common-backend/config.json
+Copy-Item mr-backend/config.example.json mr-backend/config.json
+Copy-Item frontend/.env.example frontend/.env
+```
+
 至少需要在 `common-backend/config.json` 和 `mr-backend/config.json` 中配置 PostgreSQL。Common 负责账号、权限、项目配置和模型配置；MR Backend 负责仓库、MR、队列和 Worker：
 
 ```json
@@ -84,12 +92,103 @@ cp frontend/.env.example frontend/.env
 }
 ```
 
+`common-backend/config.json` 建议同时放模型配置。内网部署优先接公司模型网关；不要依赖外网代理一定可用：
+
+```json
+{
+  "llm": {
+    "default_provider": "dashscope-openai-compatible",
+    "default_base_url": "https://your-llm-gateway/v1",
+    "default_model": "your-model",
+    "default_api_key_env": "JOLT_LLM_API_KEY",
+    "request_timeout_seconds": 600,
+    "max_output_tokens": 8192,
+    "enable_stream": true
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "common_port": 9022,
+    "database_driver": "postgres",
+    "postgres_url": "postgresql://USER:PASSWORD@PG_HOST:5432/jolt_codereview",
+    "postgres_query_timeout_seconds": 120
+  }
+}
+```
+
+`mr-backend/config.json` 建议放 VCS、PostgreSQL、Python 路径、队列配置：
+
+```json
+{
+  "github": {
+    "default_token_env": "GITHUB_TOKEN",
+    "default_endpoint": "https://api.github.com"
+  },
+  "codehub": {
+    "default_token_env": "CODEHUB_TOKEN",
+    "default_endpoint": "https://codehub.company.local"
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "mr_port": 9021,
+    "common_port": 9022,
+    "database_driver": "postgres",
+    "postgres_url": "postgresql://USER:PASSWORD@PG_HOST:5432/jolt_codereview",
+    "postgres_query_timeout_seconds": 120
+  },
+  "runtime": {
+    "python_bin": "C:\\path\\to\\jolt-codereview\\mr-backend\\.venv\\Scripts\\python.exe"
+  },
+  "queue_policy": {
+    "poll_interval_seconds": 300,
+    "max_concurrency": 1,
+    "max_attempts": 3,
+    "heartbeat_timeout_seconds": 600,
+    "worker_pool_size": 1,
+    "max_worker_pool_size": 20,
+    "worker_reconcile_seconds": 30
+  }
+}
+```
+
+Token 和 API Key 可以直接写入 `config.json`，例如 `default_token`、`default_api_key`，但多人调试和内网环境不建议这么做，避免把密钥提交到 Git。推荐在配置里写 `*_env`，再由每台机器设置自己的环境变量。
+
 如果配置文件不在默认位置，可以分别指定服务配置路径：
 
 ```bash
 export COMMON_CONFIG_PATH=/absolute/path/to/common-config.json
 export MR_CONFIG_PATH=/absolute/path/to/mr-config.json
 ```
+
+Windows PowerShell:
+
+```powershell
+$env:COMMON_CONFIG_PATH="$PWD\common-backend\config.json"
+$env:MR_CONFIG_PATH="$PWD\mr-backend\config.json"
+```
+
+### 启动环境变量清单
+
+以下变量建议作为本机启动脚本或 PowerShell 配置保存。它们不适合只写进 `config.json`，因为有些变量用于告诉启动脚本去哪读配置，有些变量用于服务间鉴权或本地初始化。
+
+| 环境变量 | 是否必需 | 用途 | 能否放进 config.json |
+| --- | --- | --- | --- |
+| `COMMON_CONFIG_PATH` | 可选 | 指定 Common 配置文件路径；默认 `common-backend/config.json` | 否 |
+| `MR_CONFIG_PATH` | 可选 | 指定 MR Backend 配置文件路径；默认 `mr-backend/config.json` | 否 |
+| `JOLT_INTERNAL_SERVICE_TOKEN` | 必需 | Common、MR Backend、Worker 内部通信鉴权 | 当前必须用环境变量 |
+| `JOLT_SEED_DEV_DATA` | 本地首次调试建议 | 创建默认项目、默认管理员和基础配置 | 当前必须用环境变量 |
+| `JOLT_LOCAL_ADMIN_PASSWORD` | 本地首次调试建议 | 设置 `local-admin` 初始化密码；默认 `admin123` | 当前必须用环境变量 |
+| `JOLT_LLM_API_KEY` | 使用 LLM 时必需 | 模型网关 API Key，对应 `llm.default_api_key_env` | 可以直接写 `llm.default_api_key`，但不推荐 |
+| `CODEHUB_TOKEN` | 接内网 CodeHub 时必需 | CodeHub API Token，对应 `codehub.default_token_env` | 可以直接写 `codehub.default_token`，但不推荐 |
+| `GITHUB_TOKEN` | 接 GitHub 时可选 | GitHub API Token，对应 `github.default_token_env` | 可以直接写 `github.default_token`，但不推荐 |
+| `PYTHON_BIN` | 可选 | Python Worker 解释器路径；优先级高于 `runtime.python_bin` | 可以放 `mr-backend.config.runtime.python_bin` |
+| `JOLT_FRONTEND_HOST` | 内网访问时建议 | Frontend Gateway 监听地址；默认 `127.0.0.1` | 否，Frontend Gateway 从环境变量或 `frontend/.env` 读 |
+| `JOLT_FRONTEND_PORT` | 可选 | Frontend Gateway 端口；默认 `9020` | 否 |
+| `JOLT_VITE_PORT` | 可选 | Vite dev server 端口；默认 `9023` | 否 |
+| `COMMON_API_BASE` | 可选 | Frontend Gateway 到 Common 的地址；默认按配置推导 | 否 |
+| `MR_API_BASE` | 可选 | Frontend Gateway 到 MR Backend 的地址；默认按配置推导 | 否 |
+| `JOLT_AUTO_SYNC_DISABLED` | 可选 | 设为 `1` 或 `true` 可关闭 MR 自动同步调度 | 否 |
+| `HTTP_PROXY` / `HTTPS_PROXY` | 内网代理场景可选 | 访问外网或模型网关代理 | 否 |
+| `NO_PROXY` / `no_proxy` | 内网代理场景建议 | 排除本机、PostgreSQL、CodeHub 内网地址不走代理 | 否 |
 
 ## 本仓三模块联调启动
 
@@ -102,6 +201,45 @@ npm --prefix frontend install
 python3 -m venv mr-backend/.venv
 mr-backend/.venv/bin/pip install -r mr-backend/requirements.txt
 ```
+
+Windows PowerShell:
+
+```powershell
+npm --prefix common-backend install
+npm --prefix mr-backend install
+npm --prefix frontend install
+py -3 -m venv mr-backend\.venv
+mr-backend\.venv\Scripts\python.exe -m pip install -r mr-backend\requirements.txt
+```
+
+如果只在当前仓库联调，推荐用根目录启动脚本一次拉起 Common Backend、MR Backend、Frontend Gateway 和 Vite：
+
+```bash
+JOLT_SEED_DEV_DATA=1 \
+JOLT_LOCAL_ADMIN_PASSWORD=admin123 \
+JOLT_INTERNAL_SERVICE_TOKEN=local-internal-token \
+PYTHON_BIN=$PWD/mr-backend/.venv/bin/python \
+npm run dev
+```
+
+Windows PowerShell:
+
+```powershell
+$env:JOLT_SEED_DEV_DATA="1"
+$env:JOLT_LOCAL_ADMIN_PASSWORD="admin123"
+$env:JOLT_INTERNAL_SERVICE_TOKEN="local-internal-token"
+$env:PYTHON_BIN="$PWD\mr-backend\.venv\Scripts\python.exe"
+$env:JOLT_LLM_API_KEY="your-llm-api-key"
+$env:CODEHUB_TOKEN="your-codehub-token"
+$env:NO_PROXY="127.0.0.1,localhost,PG_HOST,codehub.company.local"
+$env:no_proxy="127.0.0.1,localhost,PG_HOST,codehub.company.local"
+npm run dev
+```
+
+`JOLT_SEED_DEV_DATA=1` 只建议用于本地调试或初始化测试库。它会创建默认项目和默认管理员。默认管理员账号是：
+
+- 用户名：`local-admin`
+- 密码：`JOLT_LOCAL_ADMIN_PASSWORD`，未设置时为 `admin123`
 
 启动 Common Backend：
 
@@ -130,6 +268,57 @@ MR_API_BASE=http://127.0.0.1:9021 \
 npm --prefix frontend run dev
 ```
 
+### Windows 内网访问
+
+单机调试时保持默认即可：
+
+```powershell
+$env:JOLT_FRONTEND_HOST="127.0.0.1"
+npm run dev
+```
+
+浏览器访问：
+
+```text
+http://127.0.0.1:9020
+```
+
+如果要让同事从内网访问这台 Windows 机器上的页面，设置 Frontend Gateway 监听所有网卡：
+
+```powershell
+$env:JOLT_FRONTEND_HOST="0.0.0.0"
+$env:JOLT_FRONTEND_PORT="9020"
+npm run dev
+```
+
+同事浏览器访问：
+
+```text
+http://你的Windows内网IP:9020
+```
+
+只需要对外放通 `9020`。`9021`、`9022`、`9023` 默认不需要暴露给其他机器，浏览器只访问 Frontend Gateway，由 Gateway 转发到 Common Backend 和 MR Backend。
+
+Windows 防火墙示例：
+
+```powershell
+New-NetFirewallRule -DisplayName "Jolt CodeReview Frontend 9020" -Direction Inbound -Protocol TCP -LocalPort 9020 -Action Allow
+```
+
+公司代理环境下，建议明确排除本机、PostgreSQL 和内网 CodeHub：
+
+```powershell
+$env:NO_PROXY="127.0.0.1,localhost,PG_HOST,codehub.company.local"
+$env:no_proxy="127.0.0.1,localhost,PG_HOST,codehub.company.local"
+```
+
+如果访问外网模型网关、GitHub 或其它外部服务必须走代理，再设置：
+
+```powershell
+$env:HTTP_PROXY="http://proxy.company.local:8080"
+$env:HTTPS_PROXY="http://proxy.company.local:8080"
+```
+
 访问：
 
 - Frontend: `http://127.0.0.1:9020`
@@ -146,7 +335,7 @@ npm --prefix frontend run dev
 默认本机 root 账号：
 
 - 用户名：`local-admin`
-- 密码：`admin123`
+- 密码：`JOLT_LOCAL_ADMIN_PASSWORD`，未设置时为 `admin123`
 
 生产环境必须先改初始化密码和密码策略。
 

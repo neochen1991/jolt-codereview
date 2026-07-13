@@ -14,12 +14,13 @@ export class ReviewJobRepository {
     priority: number;
     effortLevel?: string;
     requestedBy?: string | null;
+    debugContext?: Record<string, unknown> | null;
   }) {
     return this.db.prepare(`
-      INSERT INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level, requested_by)
-      VALUES ($1, $2, $3, 'queued', $4, $5, $6)
+      INSERT INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level, requested_by, debug_context_json)
+      VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7)
       ON CONFLICT DO NOTHING
-    `).run(input.id, input.mergeRequestId, input.headSha, input.priority, input.effortLevel ?? "standard", input.requestedBy ?? null);
+    `).run(input.id, input.mergeRequestId, input.headSha, input.priority, input.effortLevel ?? "standard", input.requestedBy ?? null, JSON.stringify(input.debugContext ?? {}));
   }
 
   enqueueOrReset(input: {
@@ -29,20 +30,22 @@ export class ReviewJobRepository {
     priority: number;
     effortLevel: string;
     requestedBy?: string | null;
+    debugContext?: Record<string, unknown> | null;
   }) {
     this.db.prepare(`
-      INSERT INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level, requested_by)
-      VALUES ($1, $2, $3, 'queued', $4, $5, $6)
+      INSERT INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level, requested_by, debug_context_json)
+      VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7)
       ON CONFLICT(merge_request_id, head_sha) DO UPDATE SET
         status = 'queued',
         requested_effort_level = excluded.requested_effort_level,
         requested_by = COALESCE(excluded.requested_by, review_jobs.requested_by),
+        debug_context_json = excluded.debug_context_json,
         attempt = 0,
         locked_at = NULL,
         locked_by = NULL,
         heartbeat_at = NULL,
         updated_at = CURRENT_TIMESTAMP
-    `).run(input.id, input.mergeRequestId, input.headSha, input.priority, input.effortLevel, input.requestedBy ?? null);
+    `).run(input.id, input.mergeRequestId, input.headSha, input.priority, input.effortLevel, input.requestedBy ?? null, JSON.stringify(input.debugContext ?? {}));
   }
 
   supersedeQueued(mergeRequestId: string) {

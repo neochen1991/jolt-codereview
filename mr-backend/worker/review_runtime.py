@@ -99,6 +99,7 @@ def ensure_worker_schema(conn: Any) -> None:
     add_column_if_missing("review_findings", "quality_trace_json", "TEXT NOT NULL DEFAULT '{}'")
     add_column_if_missing("review_findings", "evidence_score_json", "TEXT NOT NULL DEFAULT '{}'")
     add_column_if_missing("review_jobs", "pr_summary", "TEXT NOT NULL DEFAULT '{}'")
+    add_column_if_missing("review_jobs", "debug_context_json", "TEXT NOT NULL DEFAULT '{}'")
     add_column_if_missing("review_jobs", "requested_by", "TEXT")
     add_column_if_missing("review_runs", "coverage_json", "TEXT NOT NULL DEFAULT '{}'")
     add_column_if_missing("rule_precision_history", "recent_accepted_count", "INTEGER NOT NULL DEFAULT 0")
@@ -4758,8 +4759,16 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
         )
         finalize_node = make_finalize_node(conn=conn, job=job, mr=mr, run_id=run_id, recorder=recorder)
 
+        try:
+            debug_context = json.loads(str(job.get("debug_context_json") or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            debug_context = {}
+        if debug_context.get("kind") == "skill_debug":
+            debug_span = recorder.span("skill_debug", str(debug_context.get("agent_key") or "router_agent"))
+            recorder.event(debug_span, "skill_debug_context_loaded", "Skill 调试上下文已进入正式 Review Worker 图", debug_context)
+            recorder.finish(debug_span)
         invoke_review_graph(
-            {"run_id": run_id, "job_id": job["id"]},
+            {"run_id": run_id, "job_id": job["id"], "debug_context": debug_context},
             [
                 ("fetch_mr", fetch_node),
                 ("choose_effort", choose_effort_node),

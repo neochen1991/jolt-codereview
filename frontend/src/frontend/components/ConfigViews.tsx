@@ -2292,6 +2292,7 @@ export function AgentProfileCard({
   const [maxToolCalls, setMaxToolCalls] = useState(String(row.max_tool_calls ?? "12"));
   const [bindingDetail, setBindingDetail] = useState<AgentBindingDetail | null>(null);
   const [bindingEditorOpen, setBindingEditorOpen] = useState(false);
+  const [debugSkill, setDebugSkill] = useState<AgentBindingDetail | null>(null);
 
   async function saveProfile() {
     await api(`/api/projects/${projectId}/expert-profiles/${agentKey}`, {
@@ -2399,6 +2400,13 @@ export function AgentProfileCard({
                     {detail.assets?.length ? <span className="agent-binding-file-preview">{skillAssetPathPreview(detail.assets)}</span> : null}
                   </button>
                   <button
+                    className="agent-binding-debug-button"
+                    type="button"
+                    onClick={() => setDebugSkill(detail)}
+                    disabled={!canEdit}
+                    title="使用真实 MR 调试这个 Skill"
+                  >调试 Skill</button>
+                  <button
                     className="agent-binding-remove-button"
                     type="button"
                     onClick={() => { removeSkillBinding(detail).catch((error) => setMessage(error instanceof Error ? error.message : String(error))); }}
@@ -2445,6 +2453,7 @@ export function AgentProfileCard({
         <button type="button" onClick={saveProfile} disabled={!canEdit}>保存</button>
       </div>
       {bindingDetail && <AgentBindingDetailModal detail={bindingDetail} onClose={() => setBindingDetail(null)} />}
+      {debugSkill && <SkillDebugWorkbench projectId={projectId} agentKey={agentKey} skill={debugSkill} onClose={() => setDebugSkill(null)} />}
       {bindingEditorOpen && (
         <AgentBindingEditorModal
           projectId={projectId}
@@ -2461,6 +2470,77 @@ export function AgentProfileCard({
         />
       )}
     </article>
+  );
+}
+
+function SkillDebugWorkbench({ projectId, agentKey, skill, onClose }: { projectId: string; agentKey: string; skill: AgentBindingDetail; onClose: () => void }) {
+  const [mrs, setMrs] = useState<Record<string, unknown>[]>([]);
+  const [mrId, setMrId] = useState("");
+  const [mode, setMode] = useState<"targeted" | "production_route">("targeted");
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+  const [detail, setDetail] = useState<Record<string, any> | null>(null);
+
+  useEffect(() => {
+    api<Record<string, unknown>[] | { items?: Record<string, unknown>[] }>(`/api/mr-review/projects/${projectId}/merge-requests?limit=100`)
+      .then((value) => {
+        const items = listItems(value);
+        setMrs(items);
+        if (items[0]?.id) setMrId(String(items[0].id));
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+  }, [projectId]);
+
+  async function startDebug() {
+    if (!mrId || !skill.skillKey) return;
+    setRunning(true);
+    setError("");
+    try {
+      const job = await api<Record<string, any>>(`/api/mr-review/merge-requests/${mrId}/skill-debug-runs`, {
+        method: "POST",
+        body: JSON.stringify({ skill_key: skill.skillKey, agent_key: agentKey, mode })
+      });
+      const load = async () => {
+        const next = await api<Record<string, any>>(`/api/mr-review/skill-debug-runs/${job.id}`);
+        setDetail(next);
+        if (["queued", "fetching", "pre_scanning", "reviewing", "judging", "running"].includes(String(next.job?.status || next.run?.status || ""))) {
+          window.setTimeout(() => { load().catch(() => undefined); }, 1800);
+        } else setRunning(false);
+      };
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      setRunning(false);
+    }
+  }
+
+  const context = detail?.debug_context || {};
+  const trace = detail?.trace || [];
+  const checkpoints = detail?.skill_trace?.checkpoints || detail?.skill_trace?.events || [];
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Skill 调试工作台" onClick={onClose}>
+      <section className="skill-debug-workbench" onClick={(event) => event.stopPropagation()}>
+        <header><div><span>真实 MR · 正式执行链</span><strong>Skill 调试工作台</strong><p>{skill.title} → {agentKey}</p></div><button type="button" className="modal-close-button" onClick={onClose}><X size={18} /></button></header>
+        <div className="skill-debug-controls">
+          <label><span>真实 MR</span><select value={mrId} onChange={(event) => setMrId(event.target.value)}>{mrs.map((mr) => <option key={String(mr.id)} value={String(mr.id)}>{String(mr.title || mr.external_id || mr.id)}</option>)}</select></label>
+          <label><span>运行方式</span><select value={mode} onChange={(event) => setMode(event.target.value as "targeted" | "production_route")}><option value="targeted">Skill 定向调试</option><option value="production_route">严格生产路由</option></select></label>
+          <button type="button" onClick={startDebug} disabled={running || !mrId}>{running ? "运行中…" : "开始真实调试"}</button>
+        </div>
+        <p className="skill-debug-mode-note">{mode === "targeted" ? "在正式路由结果上追加目标 Agent，用于验证 Skill 效果；不代表生产路由一定选择它。" : "不干预 Agent 路由，与真实任务的路由选择保持一致。"}</p>
+        {error && <div className="form-error">{error}</div>}
+        {detail && <div className="skill-debug-body">
+          <section><h3>概览</h3><div className="skill-debug-metrics"><span>状态 {String(detail.run?.status || detail.job?.status || "等待")}</span><span>模式 {context.mode === "production_route" ? "严格生产路由" : "定向调试"}</span><span>Trace {trace.length}</span><span>LLM {detail.llm_calls?.length || 0}</span><span>工具 {detail.tool_calls?.length || 0}</span><span>Findings {detail.findings?.length || 0}</span></div></section>
+          <section><h3>加载与绑定</h3><pre>{JSON.stringify(context, null, 2)}</pre></section>
+          <section><h3>路由</h3><pre>{JSON.stringify(trace.filter((item: any) => String(item.event_type || "").includes("route") || String(item.event_type || "").includes("skill_debug")), null, 2)}</pre></section>
+          <section><h3>Prompt 与 LLM</h3><pre>{JSON.stringify(detail.llm_calls || [], null, 2)}</pre></section>
+          <section><h3>工具调用</h3><pre>{JSON.stringify(detail.tool_calls || [], null, 2)}</pre></section>
+          <section><h3>Checkpoints</h3><pre>{JSON.stringify(checkpoints, null, 2)}</pre></section>
+          <section><h3>Findings</h3><pre>{JSON.stringify(detail.findings || [], null, 2)}</pre></section>
+          <section><h3>原始日志</h3><pre>{JSON.stringify(trace, null, 2)}</pre></section>
+          <section><h3>一致性证据</h3><p>执行链：production_review_pipeline_v1 · MR SHA：{String(context.head_sha || "待验证")} · Skill 版本：{String(context.skill_version || "待验证")} · 发布：已禁止</p></section>
+        </div>}
+      </section>
+    </div>
   );
 }
 

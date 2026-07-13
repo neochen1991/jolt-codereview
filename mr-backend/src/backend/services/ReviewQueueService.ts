@@ -7,6 +7,7 @@ export interface EnqueueReviewJobInput {
   priority: number;
   effortLevel?: string;
   requestedBy?: string | null;
+  debugContext?: Record<string, unknown> | null;
 }
 
 export class ReviewQueueService {
@@ -20,6 +21,7 @@ export class ReviewQueueService {
       priority: input.priority,
       effortLevel: input.effortLevel ?? "standard",
       requestedBy: input.requestedBy ?? null
+      ,debugContext: input.debugContext ?? null
     });
     return {
       job: this.reviewJobRepository.findByMergeRequestAndHead(input.mergeRequestId, input.headSha),
@@ -35,6 +37,7 @@ export class ReviewQueueService {
       priority: input.priority,
       effortLevel: input.effortLevel ?? "standard",
       requestedBy: input.requestedBy ?? null
+      ,debugContext: input.debugContext ?? null
     });
     return this.reviewJobRepository.findByMergeRequestAndHead(input.mergeRequestId, input.headSha);
   }

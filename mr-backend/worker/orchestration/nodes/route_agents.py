@@ -75,6 +75,24 @@ DDD_CATEGORIES = {
 }
 
 
+def apply_skill_debug_routing(
+    selected_agents: list[dict[str, Any]],
+    agent_configs: list[dict[str, Any]],
+    debug_context: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Apply the only debug-specific execution change after production routing."""
+    context = debug_context or {}
+    if context.get("kind") != "skill_debug" or context.get("mode") != "targeted":
+        return selected_agents, False
+    target = str(context.get("agent_key") or "")
+    if not target or any(str(agent.get("agent_id")) == target for agent in selected_agents):
+        return selected_agents, False
+    target_agent = next((agent for agent in agent_configs if str(agent.get("agent_id")) == target), None)
+    if not target_agent:
+        return selected_agents, False
+    return [*selected_agents, target_agent], True
+
+
 def _agent_ids_for_tool_observations(tool_observations: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, str]]]:
     required: list[str] = []
     evidence: list[dict[str, str]] = []
@@ -177,6 +195,18 @@ def make_route_agents_node(
             agent_configs,
             state.get("tool_observations") or [],
         )
+        selected_agents, debug_overridden = apply_skill_debug_routing(
+            selected_agents,
+            agent_configs,
+            state.get("debug_context"),
+        )
+        if debug_overridden:
+            recorder.event(
+                router_span,
+                "skill_debug_targeted_override",
+                "Skill 定向调试：在正式路由结果上追加目标 Agent",
+                {"agent_key": state.get("debug_context", {}).get("agent_key"), "production_selected_agents": [agent.get("agent_id") for agent in selected_agents[:-1]]},
+            )
         if tool_augmented_agents:
             recorder.event(
                 router_span,

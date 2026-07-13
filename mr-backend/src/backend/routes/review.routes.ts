@@ -1049,6 +1049,83 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       runWorkerOnce();
       return job;
     }),
+    route("POST", "/api/mr-review/merge-requests/:mrId/skill-debug-runs", ({ params, body, req }) => {
+      const actorId = currentUserId(req);
+      const mr = mergeRequestRepository.findById(params.mrId) as Record<string, any> | undefined;
+      if (!mr) return notFound();
+      const repo = repositoryRepository.findById(mr.repository_id) as Record<string, any> | undefined;
+      if (!repo) return notFound();
+      const denied = ensureProjectRole(repo.project_id, actorId, "reviewer");
+      if (denied) return denied;
+      const input = (body || {}) as Record<string, unknown>;
+      const skillKey = String(input.skill_key || "").trim();
+      const agentKey = String(input.agent_key || "").trim();
+      const mode = String(input.mode || "targeted");
+      if (!skillKey || !agentKey) return badRequest("skill_key and agent_key are required");
+      if (!["targeted", "production_route"].includes(mode)) return badRequest("mode must be targeted or production_route");
+      const binding = get<Record<string, any>>(`
+        SELECT esb.*, cs.version AS skill_version, cs.status AS skill_status
+        FROM expert_skill_bindings esb
+        JOIN custom_skills cs ON cs.project_id = esb.project_id AND cs.skill_key = esb.skill_key
+        WHERE esb.project_id = $1 AND esb.agent_key = $2 AND esb.skill_key = $3 AND esb.enabled = 1
+      `, [repo.project_id, agentKey, skillKey]);
+      if (!binding || binding.skill_status !== "active") return badRequest("enabled active Skill binding not found");
+      const debugContext = {
+        kind: "skill_debug",
+        mode,
+        project_id: repo.project_id,
+        skill_key: skillKey,
+        skill_version: binding.skill_version,
+        agent_key: agentKey,
+        mr_id: params.mrId,
+        head_sha: mr.latest_head_sha,
+        requested_by: actorId,
+        created_at: new Date().toISOString(),
+        publish_allowed: false,
+        consistency_contract: "production_review_pipeline_v1"
+      };
+      const job = reviewQueueService.enqueueOrReset({
+        mergeRequestId: params.mrId,
+        headSha: mr.latest_head_sha,
+        priority: Number(mr.risk_score || 0),
+        effortLevel: String(input.effort_level || "standard"),
+        requestedBy: actorId,
+        debugContext
+      }) as Record<string, any>;
+      mergeRequestRepository.updateReviewStatus(params.mrId, "queued");
+      auditLog({ userId: actorId, projectId: repo.project_id, action: "skill_debug.enqueue", resourceType: "review_job", resourceId: String(job?.id || ""), summary: `debug ${skillKey} with ${mode}` });
+      runWorkerOnce();
+      return { ...job, debug_context: debugContext };
+    }),
+    route("GET", "/api/mr-review/projects/:projectId/skill-debug-runs", ({ params, req, url }) => {
+      const denied = ensureProjectRead(params.projectId, req);
+      if (denied) return denied;
+      const limit = boundedQueryLimit(url, "limit", 50, 200);
+      return { items: all(`
+        SELECT rj.*, mr.title AS mr_title, rr.id AS review_run_id, rr.status AS run_status
+        FROM review_jobs rj
+        JOIN merge_requests mr ON mr.id = rj.merge_request_id
+        JOIN repositories r ON r.id = mr.repository_id
+        LEFT JOIN review_runs rr ON rr.review_job_id = rj.id
+        WHERE r.project_id = $1 AND rj.debug_context_json <> '{}'
+        ORDER BY rj.updated_at DESC LIMIT $2
+      `, [params.projectId, limit]) };
+    }),
+    route("GET", "/api/mr-review/skill-debug-runs/:jobId", ({ params, req }) => {
+      const job = reviewJobRepository.findWithProject(params.jobId) as Record<string, any> | undefined;
+      if (!job) return notFound();
+      const denied = ensureProjectRead(String(job.project_id), req);
+      if (denied) return denied;
+      const run = get<Record<string, any>>("SELECT * FROM review_runs WHERE review_job_id = $1 ORDER BY started_at DESC LIMIT 1", [params.jobId]);
+      const debugContext = parseRecord(job.debug_context_json);
+      if (debugContext.kind !== "skill_debug") return notFound();
+      const runId = String(run?.id || "");
+      const trace = runId ? all<Record<string, any>>(`SELECT e.*, s.span_key, s.agent_id FROM agent_trace_events e JOIN agent_trace_spans s ON s.id=e.span_id WHERE s.review_run_id=$1 ORDER BY e.created_at`, [runId]) : [];
+      const llmCalls = runId ? all<Record<string, any>>(`SELECT l.*, s.span_key, s.agent_id FROM llm_call_records l JOIN agent_trace_spans s ON s.id=l.span_id WHERE s.review_run_id=$1 ORDER BY l.created_at`, [runId]) : [];
+      const toolCalls = runId ? all<Record<string, any>>(`SELECT t.*, s.span_key, s.agent_id FROM tool_call_records t JOIN agent_trace_spans s ON s.id=t.span_id WHERE s.review_run_id=$1 ORDER BY t.created_at`, [runId]) : [];
+      const findings = runId ? all<Record<string, any>>("SELECT * FROM review_findings WHERE review_run_id=$1 ORDER BY created_at", [runId]) : [];
+      return { job, run: run || null, debug_context: debugContext, trace, skill_trace: buildSkillTracePayload(run || {}, trace.map(normalizeLegacyEvidenceTraceRow), llmCalls), llm_calls: llmCalls, tool_calls: toolCalls, findings, publish_guard: "skill_debug.publish_forbidden" };
+    }),
     route("POST", "/api/mr-review/merge-requests/:mrId/pause", ({ params, req }) => {
       const actorId = currentUserId(req);
       const mr = mergeRequestRepository.findById(params.mrId);
@@ -1413,6 +1490,10 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       if (!repo) return notFound();
       const denied = ensureProjectRole(repo.project_id, currentUserId(req), "reviewer");
       if (denied) return denied;
+      const latestJob = get<Record<string, any>>("SELECT debug_context_json FROM review_jobs WHERE merge_request_id = $1 ORDER BY updated_at DESC LIMIT 1", [params.mrId]);
+      if (parseRecord(latestJob?.debug_context_json).kind === "skill_debug") {
+        return { statusCode: 409, error: "skill_debug.publish_forbidden", message: "Skill 调试任务不可发布 MR 评论，请先执行正式检视" };
+      }
       const closed = await ensureMergeRequestOpenForAction(params.mrId, "提交检视意见");
       if (closed) return closed;
       return publishFindings(params.mrId, (input.finding_ids as string[] | undefined) ?? [], Boolean(input.dry_run), currentUserId(req));

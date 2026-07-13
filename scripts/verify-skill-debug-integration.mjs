@@ -236,11 +236,19 @@ try {
     }
   });
 
-  const completedFirst = await waitFor(mrBase, `/api/mr-review/skill-debug-sessions/${firstId}`, (json) => json.session?.status === "completed", adminToken);
-  assert(completedFirst.session.snapshot_sha256 === firstSnapshotHash, "Skill edit changed the frozen session snapshot");
-  assert(completedFirst.baseline?.job?.id !== completedFirst.candidate?.job?.id, "baseline and candidate must use different jobs");
-  assert(completedFirst.diagnostics?.baseline?.skill_loaded === false, "baseline must not report the target Skill as loaded");
-  assert(completedFirst.diagnostics?.candidate?.skill_loaded === true, "candidate must report the target Skill as loaded");
+  const terminalFirst = await waitFor(
+    mrBase,
+    `/api/mr-review/skill-debug-sessions/${firstId}`,
+    (json) => ["completed", "degraded", "inconclusive"].includes(String(json.session?.status || "")),
+    adminToken
+  );
+  assert(terminalFirst.session.snapshot_sha256 === firstSnapshotHash, "Skill edit changed the frozen session snapshot");
+  assert(terminalFirst.baseline?.job?.id !== terminalFirst.candidate?.job?.id, "baseline and candidate must use different jobs");
+  assert(terminalFirst.diagnostics?.baseline?.skill_loaded === false, "baseline must not report the target Skill as loaded");
+  assert(terminalFirst.diagnostics?.candidate?.skill_loaded === true, "candidate must report the target Skill as loaded");
+  assert(terminalFirst.session.status === "degraded", `unreachable VCS/LLM fixture must be degraded, got ${terminalFirst.session.status}`);
+  assert(terminalFirst.validity?.conclusive === false, "degraded fixture must not be conclusive");
+  assert(Array.isArray(terminalFirst.validity?.reasons) && terminalFirst.validity.reasons.length > 0, "degraded fixture must explain validity reasons");
 
   const staleDetail = await waitFor(mrBase, `/api/mr-review/skill-debug-sessions/${staleId}`, (json) => json.session?.status === "stale_head", adminToken);
   assert(staleDetail.session.failure_reason === "mr_head_changed", "stale head reason is not visible");
@@ -248,18 +256,22 @@ try {
   const second = await request(mrBase, "/api/mr-review/projects/project_default/skill-debug-sessions", { method: "POST", token: adminToken, body: { ...createBody, mr_id: mrId } });
   assert(second.status === 200, `second same-SHA session failed: ${second.status}`);
   assert(second.json.session.id !== firstId, "same MR/SHA debug session must have a new session id");
-  assert(second.json.baseline?.job?.id !== completedFirst.baseline?.job?.id, "same MR/SHA baseline job was reused");
-  assert(second.json.candidate?.job?.id !== completedFirst.candidate?.job?.id, "same MR/SHA candidate job was reused");
+  assert(second.json.baseline?.job?.id !== terminalFirst.baseline?.job?.id, "same MR/SHA baseline job was reused");
+  assert(second.json.candidate?.job?.id !== terminalFirst.candidate?.job?.id, "same MR/SHA candidate job was reused");
   const cancelled = await request(mrBase, `/api/mr-review/skill-debug-sessions/${second.json.session.id}/cancel`, { method: "POST", token: adminToken, body: {} });
   assert(cancelled.status === 200 && cancelled.json.session?.status === "cancelled", "cancelled status is not visible");
 
   const rerun = await request(mrBase, `/api/mr-review/skill-debug-sessions/${firstId}/rerun`, { method: "POST", token: adminToken, body: {} });
-  assert(rerun.status === 200, `snapshot rerun failed: ${rerun.status}`);
-  assert(rerun.json.session.snapshot_sha256 === firstSnapshotHash, "rerun did not preserve the frozen snapshot hash");
-  await request(mrBase, `/api/mr-review/skill-debug-sessions/${rerun.json.session.id}/cancel`, { method: "POST", token: adminToken, body: {} });
+  if (terminalFirst.session.input_artifact_sha256) {
+    assert(rerun.status === 200, `snapshot rerun failed: ${rerun.status}`);
+    assert(rerun.json.session.snapshot_sha256 === firstSnapshotHash, "rerun did not preserve the frozen snapshot hash");
+    await request(mrBase, `/api/mr-review/skill-debug-sessions/${rerun.json.session.id}/cancel`, { method: "POST", token: adminToken, body: {} });
+  } else {
+    assert(rerun.status === 400, `rerun without a frozen input artifact must be rejected, got ${rerun.status}`);
+  }
 
-  const debugRunId = completedFirst.candidate?.run?.id;
-  assert(debugRunId, "completed candidate run is required for publish protection test");
+  const debugRunId = terminalFirst.candidate?.run?.id;
+  assert(debugRunId, "terminal candidate run is required for publish protection test");
   const debugFindingId = `finding_skill_debug_it_${suffix}`;
   db.prepare(`
     INSERT INTO review_findings (

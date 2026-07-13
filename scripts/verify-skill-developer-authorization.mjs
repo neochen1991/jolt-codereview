@@ -15,7 +15,9 @@ const checks = [
   [reviewRoutes, "requested_by !== actorId", "own-session isolation"],
   [sessions, "requestedBy", "history ownership filter"],
   [frontend, 'value="skill_developer"', "member role selection"],
-  [frontend, "skill_developer", "Skill workspace role rendering"]
+  [frontend, "skill_developer", "Skill workspace role rendering"],
+  [frontend, "canActivateSkill={!skillDeveloperOnly}", "Skill developers cannot activate versions from the UI"],
+  [frontend, "canActivate && <button", "activation control is capability-gated"]
 ];
 const failures = checks.filter(([source, snippet]) => !source.includes(snippet)).map(([, , label]) => label);
 if (failures.length) throw new Error(`skill developer authorization verification failed:\n${failures.join("\n")}`);

@@ -129,7 +129,10 @@ export class RuleDocumentRepository {
 
   listCustomSkills(projectId: string) {
     return this.db.prepare(`
-      SELECT * FROM custom_skills WHERE project_id = $1
+      SELECT cs.id, cs.project_id, cs.skill_key, cs.name, cs.description, cs.content,
+             cs.version, cs.status, cs.created_at, cs.updated_at
+      FROM custom_skills cs
+      WHERE cs.project_id = $1
       UNION ALL
       SELECT csv.id, csv.project_id, csv.skill_key, csv.name, csv.description, csv.content,
              csv.version, csv.status, csv.created_at, csv.updated_at

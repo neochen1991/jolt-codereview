@@ -1390,6 +1390,7 @@ export function ConfigWorkspace({
                     setMessage={setMessage}
                     toggleAgent={toggleAgent}
                     canEdit={canEdit}
+                    canActivateSkill={!skillDeveloperOnly}
                   />
                 ))}
                 {!rows.length && <div className="config-table-empty">暂无专家 Agent，请先在创建页签中新增。</div>}
@@ -2289,7 +2290,8 @@ export function AgentProfileCard({
   reload,
   setMessage,
   toggleAgent,
-  canEdit
+  canEdit,
+  canActivateSkill
 }: {
   row: Record<string, unknown>;
   projectId: string;
@@ -2306,6 +2308,7 @@ export function AgentProfileCard({
   setMessage: (value: string) => void;
   toggleAgent: (row: Record<string, unknown>) => Promise<void>;
   canEdit: boolean;
+  canActivateSkill: boolean;
 }) {
   const agentKey = String(row.agent_key || row.agent_id);
   const boundRuleResolutionRate = Number(quality.bound_rule_resolution_rate);
@@ -2479,7 +2482,7 @@ export function AgentProfileCard({
         <button type="button" onClick={saveProfile} disabled={!canEdit}>保存</button>
       </div>
       {bindingDetail && <AgentBindingDetailModal detail={bindingDetail} onClose={() => setBindingDetail(null)} />}
-      {debugSkill && <SkillDebugWorkbench projectId={projectId} agentKey={agentKey} skill={debugSkill} onClose={() => setDebugSkill(null)} />}
+      {debugSkill && <SkillDebugWorkbench projectId={projectId} agentKey={agentKey} skill={debugSkill} canActivate={canActivateSkill} onClose={() => setDebugSkill(null)} />}
       {bindingEditorOpen && (
         <AgentBindingEditorModal
           projectId={projectId}
@@ -2499,7 +2502,7 @@ export function AgentProfileCard({
   );
 }
 
-function SkillDebugWorkbench({ projectId, agentKey, skill, onClose }: { projectId: string; agentKey: string; skill: AgentBindingDetail; onClose: () => void }) {
+function SkillDebugWorkbench({ projectId, agentKey, skill, canActivate, onClose }: { projectId: string; agentKey: string; skill: AgentBindingDetail; canActivate: boolean; onClose: () => void }) {
   const [mrs, setMrs] = useState<Record<string, unknown>[]>([]);
   const [versions, setVersions] = useState<Record<string, unknown>[]>([]);
   const [history, setHistory] = useState<Record<string, unknown>[]>([]);
@@ -2639,7 +2642,7 @@ function SkillDebugWorkbench({ projectId, agentKey, skill, onClose }: { projectI
           <label><span>运行方式</span><select value={mode} onChange={(event) => setMode(event.target.value as "targeted" | "production_route")}><option value="targeted">Skill 定向调试</option><option value="production_route">严格生产路由</option></select></label>
           <button type="button" onClick={startDebug} disabled={running || !mrId}>{running ? "运行中…" : "开始真实调试"}</button>
         </div>
-        {selectedVersion && String(selectedVersion.status) !== "active" && <div className="skill-debug-draft-banner"><span>当前选择草稿版本，不会进入正式 MR 检视。</span><button type="button" onClick={activateSelectedVersion}>激活此版本</button></div>}
+        {selectedVersion && String(selectedVersion.status) !== "active" && <div className="skill-debug-draft-banner"><span>当前选择草稿版本，不会进入正式 MR 检视。{canActivate ? "" : " 调试证据通过后由项目管理员激活。"}</span>{canActivate && <button type="button" onClick={activateSelectedVersion}>激活此版本</button>}</div>}
         <p className="skill-debug-mode-note">{mode === "targeted" ? "同一生产执行图运行 baseline 与 candidate：两边都加入目标 Agent，baseline 移除目标 Skill，candidate 加载目标 Skill。预计 2 次 Review 执行。" : "不干预 Agent 路由，与真实任务路由完全一致；若目标 Agent 未被选中，会明确显示 Skill 未执行。预计 1 次 Review 执行。"}</p>
         {error && <div className="form-error">{error}</div>}
         {detail && <>
@@ -2658,7 +2661,7 @@ function SkillDebugWorkbench({ projectId, agentKey, skill, onClose }: { projectI
             <section><h3>有效性</h3><div className="skill-debug-metrics"><span>{validity.conclusive ? "证据完整" : "证据不足"}</span><span>可检视文件 {String(validity.fetched_file_count || 0)}</span></div>{Array.isArray(validity.reasons) && validity.reasons.length > 0 && <pre>{JSON.stringify(validity.reasons, null, 2)}</pre>}</section>
             <section><h3>资源差异</h3><p>Token 差值 {String(comparison.token_delta ?? 0)}</p><p>耗时差值 {String(comparison.duration_delta_ms ?? 0)} ms</p></section>
             <section className="skill-debug-wide"><h3>一致性证据</h3><p>执行链：{String(diagnostics.contract || "待验证")} · MR SHA：{String(diagnostics.head_sha || "待验证")} · 快照：{String(diagnostics.snapshot_sha256 || "待验证")} · 调试数据不修改正式 MR 状态、历史和发布结果。</p></section>
-            <section className="skill-debug-wide"><button type="button" className="skill-debug-advanced-toggle" onClick={() => setAdvancedOpen(!advancedOpen)}>{advancedOpen ? "收起高级日志" : "展开高级日志"}</button>{advancedOpen && <><p className="skill-debug-warning">高级日志可能包含源码上下文，仅项目管理员可见；服务端已执行递归脱敏。</p><pre>{JSON.stringify({ baseline, candidate }, null, 2)}</pre></>}</section>
+            <section className="skill-debug-wide"><button type="button" className="skill-debug-advanced-toggle" onClick={() => setAdvancedOpen(!advancedOpen)}>{advancedOpen ? "收起高级日志" : "展开高级日志"}</button>{advancedOpen && <><p className="skill-debug-warning">高级日志可能包含源码上下文，仅本次会话发起者和项目管理员可见；服务端已执行递归脱敏。</p><pre>{JSON.stringify({ baseline, candidate }, null, 2)}</pre></>}</section>
           </div>
         </>}
         <section className="skill-debug-history"><h3>调试历史</h3><div className="skill-debug-history-list">{history.map((item) => <button type="button" key={String(item.id)} onClick={() => openSession(String(item.id))}><strong>{String(item.skill_key)} · {String(item.skill_version)}</strong><span>{String(item.mode)} · {String(item.status)} · {String(item.mr_title || item.merge_request_id)}</span></button>)}{!history.length && <p>暂无调试历史</p>}</div></section>

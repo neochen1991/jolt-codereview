@@ -52,6 +52,18 @@ export function resolveCanonicalSkillVersion(db: Db, projectId: string, skillKey
 export class RuleDocumentRepository {
   constructor(private readonly db: Db) {}
 
+  private transaction<T>(action: () => T): T {
+    this.db.exec("BEGIN");
+    try {
+      const result = action();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   listRuleSets(projectId: string) {
     return this.db.prepare("SELECT * FROM rule_sets WHERE project_id = $1 ORDER BY updated_at DESC").all(projectId);
   }
@@ -262,11 +274,35 @@ export class RuleDocumentRepository {
     });
     next.sort((left, right) => String(left.asset_path).localeCompare(String(right.asset_path)));
     this.db.prepare(`
-      UPDATE custom_skill_versions SET assets_json = $1, updated_at = CURRENT_TIMESTAMP
-      WHERE project_id = $2 AND skill_key = $3 AND version = $4
-    `).run(JSON.stringify(next), input.projectId, input.skillKey, input.version);
+      UPDATE custom_skill_versions
+      SET assets_json = $1,
+          content = CASE WHEN $2 = 'SKILL.md' THEN $3 ELSE content END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE project_id = $4 AND skill_key = $5 AND version = $6
+    `).run(JSON.stringify(next), input.assetPath, input.content, input.projectId, input.skillKey, input.version);
     this.refreshCustomSkillVersionHash(input.projectId, input.skillKey, input.version);
     return this.findCustomSkillVersion(input.projectId, input.skillKey, input.version);
+  }
+
+  upsertCustomSkillVersionAssetWithCompilation(
+    input: {
+      projectId: string;
+      skillKey: string;
+      version: string;
+      assetPath: string;
+      assetType: string;
+      content: string;
+      executable: boolean;
+    },
+    validation: Record<string, any>
+  ) {
+    return this.transaction(() => {
+      const versioned = this.upsertCustomSkillVersionAsset(input);
+      if (!versioned) return undefined;
+      this.updateCustomSkillVersionCompilation(input.projectId, input.skillKey, input.version, validation);
+      this.refreshCustomSkillVersionHash(input.projectId, input.skillKey, input.version);
+      return this.findCustomSkillVersion(input.projectId, input.skillKey, input.version);
+    });
   }
 
   refreshCustomSkillVersionHash(projectId: string, skillKey: string, version: string) {

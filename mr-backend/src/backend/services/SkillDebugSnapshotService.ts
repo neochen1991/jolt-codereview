@@ -23,6 +23,31 @@ export function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function parseStoredObject(value: unknown, label: string) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, any>;
+  const raw = String(value || "").trim();
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, any> : {};
+  } catch {
+    throw new Error(`Skill latest checkpoint compilation failed: malformed ${label}`);
+  }
+}
+
+export function assertSkillVersionCompilationReady(skill: Record<string, any>) {
+  const validation = parseStoredObject(skill.validation_json, "validation report");
+  const manifest = parseStoredObject(skill.checkpoint_manifest_json, "checkpoint manifest");
+  if (validation.ok === false || manifest.ok === false) {
+    const failures = Array.isArray(validation.failures) ? validation.failures : [];
+    const detail = failures
+      .slice(0, 3)
+      .map((item: Record<string, any>) => String(item.message || item.code || "checkpoint compilation error"))
+      .join("; ");
+    throw new Error(`Skill latest checkpoint compilation failed${detail ? `: ${detail}` : ""}`);
+  }
+}
+
 export class SkillDebugSnapshotService {
   constructor(private readonly db: Db) {}
 
@@ -37,6 +62,7 @@ export class SkillDebugSnapshotService {
   }) {
     const skill = resolveCanonicalSkillVersion(this.db, input.projectId, input.skillKey, input.skillVersion);
     if (!skill) throw new Error("Skill version not found");
+    assertSkillVersionCompilationReady(skill);
     const agent = this.db.prepare("SELECT * FROM expert_profiles WHERE project_id = $1 AND agent_key = $2")
       .get(input.projectId, input.agentKey) as Record<string, any> | undefined;
     if (!agent) throw new Error("Agent not found");
@@ -64,7 +90,9 @@ export class SkillDebugSnapshotService {
       skill: {
         id: skill.id, skill_key: skill.skill_key, version: skill.version, name: skill.name,
         description: skill.description, content: skill.content, status: skill.status,
-        bundle_sha256: skill.bundle_sha256 || canonicalSkillBundleHash(skill)
+        bundle_sha256: skill.bundle_sha256 || canonicalSkillBundleHash(skill),
+        checkpoint_manifest: parseStoredObject(skill.checkpoint_manifest_json, "checkpoint manifest"),
+        checkpoint_compiler_version: skill.checkpoint_compiler_version
       },
       assets: JSON.parse(String(skill.assets_json || "[]")),
       agent,

@@ -708,17 +708,30 @@ export function ConfigWorkspace({
 
   async function uploadSkillAsset() {
     const targetSkillKey = skillAssetSkillKey.trim() || skillKey.trim();
-    if (!targetSkillKey || !skillAssetPath.trim() || !skillAssetContent.trim()) return;
-    await api(`/api/projects/${projectId}/custom-skill-assets`, {
+    const targetVersion = skillVersion.trim() || "v1";
+    if (!targetSkillKey || !targetVersion || !skillAssetPath.trim() || !skillAssetContent.trim()) return;
+    const saved = await api<Record<string, unknown>>(`/api/projects/${projectId}/custom-skill-assets`, {
       method: "POST",
       body: JSON.stringify({
         skill_key: targetSkillKey,
+        version: targetVersion,
         asset_path: skillAssetPath.trim(),
         content: skillAssetContent,
         executable: false
       })
     });
-    setMessage("Skill 资源已保存");
+    let validation: Record<string, unknown> | null = null;
+    try {
+      const raw = saved.validation_json;
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      validation = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+    } catch {
+      validation = null;
+    }
+    setSkillValidationReport(validation);
+    setMessage(validation?.ok
+      ? `Skill 资源已保存，${String((validation.checkpoints as unknown[])?.length ?? 0)} 个 checkpoint 已重新编译`
+      : "Skill 资源已保存，但最新 Bundle 编译未通过；请按下方错误继续修改");
     await loadConfigView();
   }
 
@@ -1338,10 +1351,11 @@ export function ConfigWorkspace({
                 <div className="rule-upload-panel compact-upload-card">
                   <div>
                     <strong>补充单个 Skill 资源</strong>
-                    <span>用于追加或覆盖某个 Skill 的 reference/script/asset 文件。</span>
+                    <span>用于追加或覆盖草稿版本的 reference/script/asset 文件；保存后立即重新编译完整 Bundle。</span>
                   </div>
                   <div className="rule-upload-form compact-upload-form">
                     <input value={skillAssetSkillKey} onChange={(event) => setSkillAssetSkillKey(event.target.value)} placeholder="skill-key" disabled={!canEdit} />
+                    <input value={skillVersion} onChange={(event) => setSkillVersion(event.target.value)} placeholder="草稿版本，例如 v1" disabled={!canEdit} />
                     <input value={skillAssetPath} onChange={(event) => setSkillAssetPath(event.target.value)} placeholder="references/rules.md 或 scripts/check.py" disabled={!canEdit} />
                     <button type="button" onClick={uploadSkillAsset} disabled={!canEdit}>保存资源</button>
                   </div>

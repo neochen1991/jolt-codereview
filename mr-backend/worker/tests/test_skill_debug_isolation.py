@@ -22,7 +22,14 @@ def test_production_side_effect_policy_keeps_production_mutations() -> None:
 
 def _snapshot() -> dict:
     return {
-        "skill": {"skill_key": "target-skill", "content": "target instructions"},
+        "skill": {
+            "skill_key": "target-skill",
+            "content": "target instructions",
+            "checkpoint_manifest": {
+                "ok": True,
+                "checkpoints": [{"checkpoint_id": "DRAFT-001"}],
+            },
+        },
         "assets": [{"skill_key": "target-skill", "asset_path": "SKILL.md", "content": "target instructions"}],
         "agent": {"agent_id": "security_agent", "custom_skills": ["other-skill", "target-skill"], "skills": ["other-skill", "target-skill"]},
     }
@@ -36,9 +43,31 @@ def test_targeted_baseline_removes_only_target_skill() -> None:
 
 
 def test_targeted_candidate_keeps_target_skill() -> None:
-    agents = apply_debug_snapshot([_snapshot()["agent"]], _snapshot(), "candidate")
+    current = {
+        **_snapshot()["agent"],
+        "skill_checkpoint_manifests": {
+            "target-skill": {"checkpoints": [{"checkpoint_id": "ACTIVE-001"}]},
+            "other-skill": {"checkpoints": [{"checkpoint_id": "OTHER-001"}]},
+        },
+    }
+    agents = apply_debug_snapshot([current], _snapshot(), "candidate")
     assert agents[0]["custom_skills"] == ["other-skill", "target-skill"]
     assert agents[0]["skill_assets"][0]["skill_key"] == "target-skill"
+    assert agents[0]["skill_checkpoint_manifests"]["target-skill"]["checkpoints"][0]["checkpoint_id"] == "DRAFT-001"
+    assert agents[0]["skill_checkpoint_manifests"]["other-skill"]["checkpoints"][0]["checkpoint_id"] == "OTHER-001"
+
+
+def test_targeted_baseline_removes_target_skill_manifest() -> None:
+    current = {
+        **_snapshot()["agent"],
+        "skill_checkpoint_manifests": {
+            "target-skill": {"checkpoints": [{"checkpoint_id": "ACTIVE-001"}]},
+            "other-skill": {"checkpoints": [{"checkpoint_id": "OTHER-001"}]},
+        },
+    }
+    agents = apply_debug_snapshot([current], _snapshot(), "baseline")
+    assert "target-skill" not in agents[0]["skill_checkpoint_manifests"]
+    assert "other-skill" in agents[0]["skill_checkpoint_manifests"]
 
 
 def test_debug_snapshot_redacts_secret_fields() -> None:
@@ -53,4 +82,5 @@ if __name__ == "__main__":
     test_production_side_effect_policy_keeps_production_mutations()
     test_targeted_baseline_removes_only_target_skill()
     test_targeted_candidate_keeps_target_skill()
+    test_targeted_baseline_removes_target_skill_manifest()
     test_debug_snapshot_redacts_secret_fields()

@@ -57,6 +57,7 @@ def apply_debug_snapshot(agent_configs: list[dict[str, Any]], snapshot: dict[str
     snapshot_custom_skills = _strings(snapshot_agent.get("custom_skills")) or _strings(bound_skills)
     snapshot_skills = _strings(snapshot_agent.get("skills")) or list(snapshot_custom_skills)
     assets = [dict(item) for item in (snapshot.get("assets") or []) if isinstance(item, dict)]
+    snapshot_manifest = copy.deepcopy(skill.get("checkpoint_manifest"))
     for index, current in enumerate(agents):
         agent_id = str(current.get("agent_id") or current.get("agent_key") or "")
         if agent_id != target_agent:
@@ -81,10 +82,12 @@ def apply_debug_snapshot(agent_configs: list[dict[str, Any]], snapshot: dict[str
                     merged[target] = snapshot_agent[source]
         custom_skills = list(snapshot_custom_skills)
         skills = list(snapshot_skills)
+        manifests = copy.deepcopy(merged.get("skill_checkpoint_manifests") or {})
         if variant == "baseline":
             custom_skills = [item for item in custom_skills if item != target_skill]
             skills = [item for item in skills if item != target_skill]
             assets = [item for item in assets if str(item.get("skill_key") or target_skill) != target_skill]
+            manifests.pop(target_skill, None)
         elif target_skill:
             if target_skill not in custom_skills:
                 custom_skills.append(target_skill)
@@ -92,9 +95,17 @@ def apply_debug_snapshot(agent_configs: list[dict[str, Any]], snapshot: dict[str
                 skills.append(target_skill)
             for asset in assets:
                 asset.setdefault("skill_key", target_skill)
+            if isinstance(snapshot_manifest, dict):
+                manifests[target_skill] = {
+                    **snapshot_manifest,
+                    "skill_key": str(snapshot_manifest.get("skill_key") or target_skill),
+                    "skill_version": str(skill.get("version") or snapshot_manifest.get("skill_version") or ""),
+                    "bundle_sha256": str(skill.get("bundle_sha256") or snapshot_manifest.get("bundle_sha256") or ""),
+                }
         merged["custom_skills"] = custom_skills
         merged["skills"] = skills
         merged["skill_assets"] = assets
+        merged["skill_checkpoint_manifests"] = manifests
         agents[index] = merged
         break
     return agents

@@ -167,7 +167,9 @@ Skill 新版本统一保存为 draft，不能直接进入正式检视。服务�
 
 ### Skill Checkpoint 编译与真实任务指标
 
-新建 Skill 版本时，服务端会把 `SKILL.md` 和 `references/*.md` 确定性编译为 Checkpoint Manifest。Manifest 与版本一起固化；Skill Debug 和正式 MR 检视读取同一个编译产物，Worker 不会再次解释新版本 Markdown。支持以下写法：
+新建或整包上传 Skill 版本时，服务端会把 `SKILL.md` 和 `references/*.md` 确定性编译为 Checkpoint Manifest。单独新增或覆盖草稿版本资源时，必须同时指定 `skill_key` 和 `version`；每次保存都会重新编译当前版本的完整 Bundle，并更新 `validation_json`、Manifest、编译器版本和 Bundle hash。草稿编译失败时资源仍会保存，页面会显示具体错误，方便继续修改，但该版本不能激活或进入调试执行。
+
+激活时服务端会对当前资源使用同一编译器再次强校验，通过后 Manifest 与不可变版本一起固化。Skill Debug 和正式 MR 检视读取同一个版本化编译产物，Worker 不会再次解释新版本 Markdown。因此流程是：`草稿保存 -> 即时编译反馈 -> 调试读取该草稿 Manifest -> 激活重检 -> 正式任务读取该激活 Manifest`。支持以下写法：
 
 - `## SEC-CMD-001 命令执行检查` 形式的显式 ID 标题。
 - “检查点 / Checkpoints / Rules”章节下的子标题，并通过 `id`、`check`、`required_evidence` 等字段描述。

@@ -64,7 +64,7 @@ function parseFrontmatter(content: string) {
   );
 }
 
-function validateSkillBundlePayload(raw: Record<string, unknown>) {
+export function validateSkillBundlePayload(raw: Record<string, unknown>) {
   const skillKey = normalizeSkillKey(String(raw.skill_key || raw.name || "uploaded-skill")) || "uploaded-skill";
   const rawAssets = Array.isArray(raw.assets) ? raw.assets : [];
   const assets = rawAssets
@@ -133,6 +133,38 @@ function validateSkillBundlePayload(raw: Record<string, unknown>) {
     checkpoint_compiler_version: SKILL_CHECKPOINT_COMPILER_VERSION,
     checkpoint_manifest: checkpointManifest
   };
+}
+
+export function compileStoredSkillVersion(
+  selected: Record<string, any>,
+  replacement?: { asset_path: string; asset_type?: string; content: string }
+) {
+  let storedAssets: Array<Record<string, unknown>> = [];
+  try {
+    const parsed = JSON.parse(String(selected.assets_json || "[]"));
+    storedAssets = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    storedAssets = [];
+  }
+  if (!storedAssets.length && String(selected.content || "").trim()) {
+    storedAssets = [{ asset_path: "SKILL.md", asset_type: "skill", content: String(selected.content) }];
+  }
+  if (replacement) {
+    storedAssets = storedAssets.filter((asset) => String(asset.asset_path || "") !== replacement.asset_path);
+    storedAssets.push({
+      skill_key: String(selected.skill_key || ""),
+      asset_path: replacement.asset_path,
+      asset_type: replacement.asset_type || inferSkillAssetType(replacement.asset_path),
+      content: replacement.content,
+      executable: false
+    });
+  }
+  return validateSkillBundlePayload({
+    skill_key: String(selected.skill_key || ""),
+    name: String(selected.name || selected.skill_key || ""),
+    content: String(selected.content || ""),
+    assets: storedAssets
+  });
 }
 
 type ParsedRuleDetail = {
@@ -532,7 +564,14 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       const version = String(input.version || "").trim();
       if (version) {
         try {
-          const versioned = ruleDocumentRepository.upsertCustomSkillVersionAsset({
+          const selected = ruleDocumentRepository.findCustomSkillVersion(params.projectId, skillKey, version) as Record<string, any> | undefined;
+          if (!selected) return notFound();
+          const validation = compileStoredSkillVersion(selected, {
+            asset_path: assetPath,
+            asset_type: assetType,
+            content
+          });
+          const versioned = ruleDocumentRepository.upsertCustomSkillVersionAssetWithCompilation({
             projectId: params.projectId,
             skillKey,
             version,
@@ -540,9 +579,21 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
             assetType,
             content,
             executable: false
-          });
+          }, validation);
           if (!versioned) return notFound();
-          auditLog({ userId: actorId, projectId: params.projectId, action: "custom_skill_versions.asset_upsert", resourceType: "custom_skill_version", resourceId: `${skillKey}:${version}:${assetPath}`, summary: `upsert draft skill asset ${skillKey}/${assetPath}` });
+          auditLog({
+            userId: actorId,
+            projectId: params.projectId,
+            action: "custom_skill_versions.asset_upsert",
+            resourceType: "custom_skill_version",
+            resourceId: `${skillKey}:${version}:${assetPath}`,
+            summary: `upsert and compile draft skill asset ${skillKey}/${assetPath}`,
+            metadata: {
+              compilation_ok: validation.ok,
+              checkpoint_count: validation.checkpoints.length,
+              failure_count: validation.failures.length
+            }
+          });
           return versioned;
         } catch (error) {
           return badRequest((error as Error).message);

@@ -14,6 +14,7 @@ export interface CreateSkillDebugSessionInput {
   requestedBy: string;
   snapshot: Record<string, unknown>;
   snapshotSha256: string;
+  bundleSha256?: string | null;
   expiresAt?: string | null;
 }
 
@@ -25,12 +26,12 @@ export class SkillDebugSessionRepository {
       INSERT INTO skill_debug_sessions (
         id, project_id, repository_id, merge_request_id, head_sha,
         skill_key, skill_version, agent_key, mode, status,
-        requested_effort_level, requested_by, snapshot_json, snapshot_sha256, expires_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'queued', $10, $11, $12, $13, $14)
+        requested_effort_level, requested_by, snapshot_json, snapshot_sha256, bundle_sha256, expires_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'queued', $10, $11, $12, $13, $14, $15)
     `).run(
       input.id, input.projectId, input.repositoryId, input.mergeRequestId, input.headSha,
       input.skillKey, input.skillVersion, input.agentKey, input.mode, input.effortLevel,
-      input.requestedBy, JSON.stringify(input.snapshot), input.snapshotSha256, input.expiresAt ?? null
+      input.requestedBy, JSON.stringify(input.snapshot), input.snapshotSha256, input.bundleSha256 ?? "", input.expiresAt ?? null
     );
     return this.findById(input.id);
   }

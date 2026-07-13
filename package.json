@@ -27,6 +27,7 @@
     "verify:skill-trace-api": "node scripts/verify-skill-trace-api.mjs",
     "verify:skill-debug-workbench": "python3 mr-backend/worker/tests/test_skill_debug_mode.py && python3 mr-backend/worker/tests/test_skill_debug_isolation.py && node scripts/verify-skill-debug-workbench.mjs",
     "verify:skill-version-canonicalization": "node scripts/verify-skill-version-canonicalization.mjs",
+    "verify:skill-activation-policy": "node scripts/verify-skill-activation-policy.mjs",
     "verify:skill-debug-integration": "node scripts/verify-skill-debug-integration.mjs",
     "verify:skill-quality-metrics": "node scripts/verify-skill-quality-metrics.mjs",
     "verify:bound-rule-skill-full-read": "node scripts/verify-bound-rule-skill-full-read.mjs",

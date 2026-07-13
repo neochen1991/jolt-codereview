@@ -815,6 +815,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       requestedBy: actorId,
       snapshot: snapshotResult.snapshot,
       snapshotSha256: snapshotResult.snapshot_sha256,
+      bundleSha256: String((snapshotResult.snapshot.skill as Record<string, any>)?.bundle_sha256 || ""),
       expiresAt
     }) as Record<string, any>;
     const baseContext = {

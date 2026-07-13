@@ -295,7 +295,7 @@ export function ConfigWorkspace({
   const [skillName, setSkillName] = useState("团队自定义检视 Skill");
   const [skillKey, setSkillKey] = useState("team-custom-review");
   const [skillVersion, setSkillVersion] = useState("v1");
-  const [skillStatus, setSkillStatus] = useState<"draft" | "active">("active");
+  const skillStatus: "draft" = "draft";
   const [skillAgentKey, setSkillAgentKey] = useState("team_custom_agent");
   const [skillBundleFiles, setSkillBundleFiles] = useState<File[]>([]);
   const [skillBundleInfo, setSkillBundleInfo] = useState("");
@@ -608,7 +608,7 @@ export function ConfigWorkspace({
         skillKey,
         files: skillBundleFiles,
         version: skillVersion,
-        status: skillStatus
+        status: "draft"
       });
       setSkillKey(result.skillKey);
       setSkillValidationReport(result.validation || null);
@@ -634,7 +634,8 @@ export function ConfigWorkspace({
         description: "项目级零代码自定义检视 Skill",
         content: skillContent,
         version: skillVersion.trim() || "v1",
-        status: skillStatus
+        status: "draft",
+        assets: templateAssets
       })
     });
     const createdSkillKey = String(skill.skill_key || skillKey);
@@ -642,7 +643,7 @@ export function ConfigWorkspace({
       method: "POST",
       body: JSON.stringify({
         skill_key: createdSkillKey,
-        ...(skillStatus === "draft" ? { version: skillVersion.trim() || "v1" } : {}),
+        version: skillVersion.trim() || "v1",
         asset_path: "SKILL.md",
         asset_type: "skill",
         content: skillContent,
@@ -654,7 +655,7 @@ export function ConfigWorkspace({
         method: "POST",
         body: JSON.stringify({
           skill_key: createdSkillKey,
-          ...(skillStatus === "draft" ? { version: skillVersion.trim() || "v1" } : {}),
+          version: skillVersion.trim() || "v1",
           asset_path: asset.asset_path,
           asset_type: "reference",
           content: asset.content,
@@ -1289,7 +1290,7 @@ export function ConfigWorkspace({
                     <input value={skillName} onChange={(event) => setSkillName(event.target.value)} placeholder="Skill 名称" disabled={!canEdit} />
                     <input value={skillKey} onChange={(event) => setSkillKey(event.target.value)} placeholder="skill-key" disabled={!canEdit} />
                     <input value={skillVersion} onChange={(event) => setSkillVersion(event.target.value)} placeholder="版本，例如 v2" disabled={!canEdit} />
-                    <select value={skillStatus} onChange={(event) => setSkillStatus(event.target.value as "draft" | "active")} disabled={!canEdit}><option value="draft">保存为草稿（先调试）</option><option value="active">直接激活</option></select>
+                    <select value={skillStatus} disabled><option value="draft">保存为草稿（调试通过后激活）</option></select>
                     <select value={skillAgentKey} onChange={(event) => setSkillAgentKey(event.target.value)} disabled={!canEdit}>
                       {rows.map((row, index) => {
                         const agentKey = String(row.agent_key || row.agent_id || `agent_${index}`);
@@ -2806,7 +2807,8 @@ export function AgentBindingEditorModal({
           description: "通过专家绑定弹窗上传的自定义 Skill",
           content,
           version: "v1",
-          status: "active"
+          status: "draft",
+          assets: templateAssets
         })
       });
       const createdSkillKey = String(skill.skill_key || newSkillKey.trim() || name);
@@ -2814,6 +2816,7 @@ export function AgentBindingEditorModal({
         method: "POST",
         body: JSON.stringify({
           skill_key: createdSkillKey,
+          version: "v1",
           asset_path: "SKILL.md",
           asset_type: "skill",
           content,
@@ -2825,6 +2828,7 @@ export function AgentBindingEditorModal({
           method: "POST",
           body: JSON.stringify({
             skill_key: createdSkillKey,
+            version: "v1",
             asset_path: asset.asset_path,
             asset_type: "reference",
             content: asset.content,

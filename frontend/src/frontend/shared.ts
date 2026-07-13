@@ -530,7 +530,7 @@ export async function uploadSkillBundleToProject(input: {
   const skillName = input.skillName.trim() || rootName || "项目自定义 Skill";
   const skillKey = input.skillKey.trim() || rootName || skillName;
   const version = input.version?.trim() || "v1";
-  const status = input.status || "active";
+  const status = "draft";
   const skill = await api<Record<string, unknown>>(`/api/projects/${input.projectId}/custom-skills`, {
     method: "POST",
     body: JSON.stringify({
@@ -539,7 +539,8 @@ export async function uploadSkillBundleToProject(input: {
       description: "项目级标准 Skill Bundle",
       content: skillContent,
       version,
-      status
+      status,
+      assets
     })
   });
   const createdSkillKey = String(skill.skill_key || skillKey);
@@ -548,7 +549,7 @@ export async function uploadSkillBundleToProject(input: {
       method: "POST",
       body: JSON.stringify({
         skill_key: createdSkillKey,
-        ...(status === "draft" ? { version } : {}),
+        version,
         asset_path: asset.asset_path,
         content: asset.content,
         executable: asset.executable

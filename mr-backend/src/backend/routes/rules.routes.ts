@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
 import type { FindingRow } from "../types.js";
 import type { BackendRouteContext } from "./context.js";
+import { SkillActivationPolicyService } from "../services/SkillActivationPolicyService.js";
 
 function normalizeSkillKey(value: string) {
   return value
@@ -313,6 +314,7 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
     currentUserId,
     ensureProjectRole,
     ensureProjectWrite,
+    ensureRoot,
     auditLog,
     syncProject,
     publishFindings,
@@ -324,6 +326,7 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
     ruleDocumentRepository,
     auditRepository
   } = ctx;
+  const skillActivationPolicyService = new SkillActivationPolicyService(db);
   const routes: Route[] = [
     route("GET", "/api/projects/:projectId/rule-sets", ({ params, req }) => {
       const actorId = currentUserId(req);
@@ -474,8 +477,12 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
       if (!skillKey) return badRequest("skill_key or name is required");
       const content = String(input.content ?? "").trim();
       if (!content) return badRequest("content is required");
-      const validation = validateSkillBundlePayload({ ...input, assets: [{ asset_path: "SKILL.md", asset_type: "skill", content }] });
-      if (input.enforce_validation === true && !validation.ok) {
+      const submittedAssets = Array.isArray(input.assets) ? input.assets : [];
+      const validation = validateSkillBundlePayload({
+        ...input,
+        assets: submittedAssets.length ? submittedAssets : [{ asset_path: "SKILL.md", asset_type: "skill", content }]
+      });
+      if (!validation.ok) {
         return { statusCode: 400, error: "invalid_skill_bundle", message: "Skill validation failed", validation };
       }
       const skill = ruleDocumentRepository.upsertCustomSkill({
@@ -486,15 +493,31 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
         description: String(input.description ?? ""),
         content,
         version: String(input.version ?? "v1"),
-        status: String(input.status ?? "active")
+        status: "draft",
+        assets: submittedAssets as Array<Record<string, unknown>>,
+        validationJson: validation,
+        createdBy: actorId
       });
       auditLog({ userId: actorId, projectId: params.projectId, action: "custom_skills.upsert", resourceType: "custom_skill", resourceId: skillKey, summary: `upsert custom skill ${skillKey}` });
       return skill;
     }),
-    route("POST", "/api/projects/:projectId/custom-skills/:skillKey/versions/:version/activate", ({ params, req }) => {
+    route("POST", "/api/projects/:projectId/custom-skills/:skillKey/versions/:version/activate", ({ params, body, req }) => {
       const actorId = currentUserId(req);
       const denied = ensureProjectRole(params.projectId, actorId, "project_admin");
       if (denied) return denied;
+      const selected = ruleDocumentRepository.findCustomSkillVersion(params.projectId, params.skillKey, params.version) as Record<string, any> | undefined;
+      if (!selected) return notFound();
+      const input = (body || {}) as Record<string, unknown>;
+      const breakGlassReason = String(input.break_glass_reason || "").trim();
+      if (breakGlassReason) {
+        const rootDenied = ensureRoot(actorId);
+        if (rootDenied) return rootDenied;
+      } else {
+        const gate = skillActivationPolicyService.check(params.projectId, params.skillKey, params.version, String(selected.bundle_sha256 || ""));
+        if (!gate.allowed) {
+          return { statusCode: 409, error: "skill_activation_gate_failed", message: "Skill activation requires conclusive targeted and production-route debug evidence", gate };
+        }
+      }
       const activated = ruleDocumentRepository.activateCustomSkillVersion(params.projectId, params.skillKey, params.version);
       if (!activated) return notFound();
       auditLog({
@@ -503,7 +526,8 @@ export function createRuleRoutes(ctx: BackendRouteContext): Route[] {
         action: "custom_skills.activate_version",
         resourceType: "custom_skill",
         resourceId: `${params.skillKey}:${params.version}`,
-        summary: `activate ${params.skillKey} ${params.version}`
+        summary: `activate ${params.skillKey} ${params.version}`,
+        metadata: breakGlassReason ? { break_glass_reason: breakGlassReason } : {}
       });
       return activated;
     }),

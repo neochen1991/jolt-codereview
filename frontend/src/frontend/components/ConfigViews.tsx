@@ -294,6 +294,8 @@ export function ConfigWorkspace({
   const [ruleDocUploadInfo, setRuleDocUploadInfo] = useState("");
   const [skillName, setSkillName] = useState("团队自定义检视 Skill");
   const [skillKey, setSkillKey] = useState("team-custom-review");
+  const [skillVersion, setSkillVersion] = useState("v1");
+  const [skillStatus, setSkillStatus] = useState<"draft" | "active">("active");
   const [skillAgentKey, setSkillAgentKey] = useState("team_custom_agent");
   const [skillBundleFiles, setSkillBundleFiles] = useState<File[]>([]);
   const [skillBundleInfo, setSkillBundleInfo] = useState("");
@@ -604,7 +606,9 @@ export function ConfigWorkspace({
         agentKey: skillAgentKey,
         skillName,
         skillKey,
-        files: skillBundleFiles
+        files: skillBundleFiles,
+        version: skillVersion,
+        status: skillStatus
       });
       setSkillKey(result.skillKey);
       setSkillValidationReport(result.validation || null);
@@ -629,8 +633,8 @@ export function ConfigWorkspace({
         name: skillName.trim(),
         description: "项目级零代码自定义检视 Skill",
         content: skillContent,
-        version: "v1",
-        status: "active"
+        version: skillVersion.trim() || "v1",
+        status: skillStatus
       })
     });
     const createdSkillKey = String(skill.skill_key || skillKey);
@@ -638,6 +642,7 @@ export function ConfigWorkspace({
       method: "POST",
       body: JSON.stringify({
         skill_key: createdSkillKey,
+        ...(skillStatus === "draft" ? { version: skillVersion.trim() || "v1" } : {}),
         asset_path: "SKILL.md",
         asset_type: "skill",
         content: skillContent,
@@ -649,6 +654,7 @@ export function ConfigWorkspace({
         method: "POST",
         body: JSON.stringify({
           skill_key: createdSkillKey,
+          ...(skillStatus === "draft" ? { version: skillVersion.trim() || "v1" } : {}),
           asset_path: asset.asset_path,
           asset_type: "reference",
           content: asset.content,
@@ -1282,6 +1288,8 @@ export function ConfigWorkspace({
                   <div className="rule-upload-form compact-upload-form">
                     <input value={skillName} onChange={(event) => setSkillName(event.target.value)} placeholder="Skill 名称" disabled={!canEdit} />
                     <input value={skillKey} onChange={(event) => setSkillKey(event.target.value)} placeholder="skill-key" disabled={!canEdit} />
+                    <input value={skillVersion} onChange={(event) => setSkillVersion(event.target.value)} placeholder="版本，例如 v2" disabled={!canEdit} />
+                    <select value={skillStatus} onChange={(event) => setSkillStatus(event.target.value as "draft" | "active")} disabled={!canEdit}><option value="draft">保存为草稿（先调试）</option><option value="active">直接激活</option></select>
                     <select value={skillAgentKey} onChange={(event) => setSkillAgentKey(event.target.value)} disabled={!canEdit}>
                       {rows.map((row, index) => {
                         const agentKey = String(row.agent_key || row.agent_id || `agent_${index}`);
@@ -2475,73 +2483,159 @@ export function AgentProfileCard({
 
 function SkillDebugWorkbench({ projectId, agentKey, skill, onClose }: { projectId: string; agentKey: string; skill: AgentBindingDetail; onClose: () => void }) {
   const [mrs, setMrs] = useState<Record<string, unknown>[]>([]);
+  const [versions, setVersions] = useState<Record<string, unknown>[]>([]);
+  const [history, setHistory] = useState<Record<string, unknown>[]>([]);
   const [mrId, setMrId] = useState("");
+  const [skillVersion, setSkillVersion] = useState("");
   const [mode, setMode] = useState<"targeted" | "production_route">("targeted");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [detail, setDetail] = useState<Record<string, any> | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
-    api<Record<string, unknown>[] | { items?: Record<string, unknown>[] }>(`/api/mr-review/projects/${projectId}/merge-requests?limit=100`)
-      .then((value) => {
-        const items = listItems(value);
-        setMrs(items);
-        if (items[0]?.id) setMrId(String(items[0].id));
+    Promise.all([
+      api<Record<string, unknown>[] | { items?: Record<string, unknown>[] }>(`/api/mr-review/projects/${projectId}/merge-requests?limit=100`),
+      api<Record<string, unknown>[] | { items?: Record<string, unknown>[] }>(`/api/projects/${projectId}/custom-skills/${encodeURIComponent(String(skill.skillKey || ""))}/versions`),
+      api<Record<string, unknown>[] | { items?: Record<string, unknown>[] }>(`/api/mr-review/projects/${projectId}/skill-debug-sessions?limit=50`)
+    ]).then(([mrValue, versionValue, historyValue]) => {
+        const mrItems = listItems(mrValue);
+        const versionItems = listItems(versionValue);
+        setMrs(mrItems);
+        setVersions(versionItems);
+        setHistory(listItems(historyValue));
+        if (mrItems[0]?.id) setMrId(String(mrItems[0].id));
+        if (versionItems[0]?.version) setSkillVersion(String(versionItems[0].version));
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-  }, [projectId]);
+  }, [projectId, skill.skillKey]);
+
+  async function refreshHistory() {
+    const value = await api<Record<string, unknown>[] | { items?: Record<string, unknown>[] }>(`/api/mr-review/projects/${projectId}/skill-debug-sessions?limit=50`);
+    setHistory(listItems(value));
+  }
+
+  async function pollSession(sessionId: string) {
+    const next = await api<Record<string, any>>(`/api/mr-review/skill-debug-sessions/${sessionId}`);
+    setDetail(next);
+    const status = String(next.session?.status || "");
+    if (["queued", "running"].includes(status)) {
+      window.setTimeout(() => { pollSession(sessionId).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason))); }, 1800);
+    } else {
+      setRunning(false);
+      await refreshHistory();
+    }
+  }
 
   async function startDebug() {
     if (!mrId || !skill.skillKey) return;
     setRunning(true);
     setError("");
     try {
-      const job = await api<Record<string, any>>(`/api/mr-review/merge-requests/${mrId}/skill-debug-runs`, {
+      const created = await api<Record<string, any>>(`/api/mr-review/projects/${projectId}/skill-debug-sessions`, {
         method: "POST",
-        body: JSON.stringify({ skill_key: skill.skillKey, agent_key: agentKey, mode })
+        body: JSON.stringify({ mr_id: mrId, skill_key: skill.skillKey, skill_version: skillVersion, agent_key: agentKey, mode })
       });
-      const load = async () => {
-        const next = await api<Record<string, any>>(`/api/mr-review/skill-debug-runs/${job.id}`);
-        setDetail(next);
-        if (["queued", "fetching", "pre_scanning", "reviewing", "judging", "running"].includes(String(next.job?.status || next.run?.status || ""))) {
-          window.setTimeout(() => { load().catch(() => undefined); }, 1800);
-        } else setRunning(false);
-      };
-      await load();
+      setDetail(created);
+      await pollSession(String(created.session?.id));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
       setRunning(false);
     }
   }
 
-  const context = detail?.debug_context || {};
-  const trace = detail?.trace || [];
-  const checkpoints = detail?.skill_trace?.checkpoints || detail?.skill_trace?.events || [];
+  async function openSession(sessionId: string) {
+    setRunning(true);
+    setError("");
+    try { await pollSession(sessionId); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setRunning(false); }
+  }
+
+  async function cancelDebug() {
+    if (!detail?.session?.id) return;
+    const value = await api<Record<string, any>>(`/api/mr-review/skill-debug-sessions/${detail.session.id}/cancel`, { method: "POST" });
+    setDetail(value);
+    setRunning(false);
+    await refreshHistory();
+  }
+
+  async function rerunDebug() {
+    if (!detail?.session?.id) return;
+    setRunning(true);
+    const value = await api<Record<string, any>>(`/api/mr-review/skill-debug-sessions/${detail.session.id}/rerun`, { method: "POST" });
+    setDetail(value);
+    await pollSession(String(value.session?.id));
+  }
+
+  async function exportDiagnostics() {
+    if (!detail?.session?.id) return;
+    const value = await api<{ filename: string; content: string }>(`/api/mr-review/skill-debug-sessions/${detail.session.id}/export`);
+    const blob = new Blob([value.content], { type: "application/json;charset=utf-8" });
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = value.filename;
+    anchor.click();
+    URL.revokeObjectURL(href);
+  }
+
+  async function activateSelectedVersion() {
+    if (!skill.skillKey || !skillVersion) return;
+    await api(`/api/projects/${projectId}/custom-skills/${encodeURIComponent(skill.skillKey)}/versions/${encodeURIComponent(skillVersion)}/activate`, { method: "POST" });
+    setVersions((items) => items.map((item) => ({ ...item, status: String(item.version) === skillVersion ? "active" : item.status === "active" ? "reviewed" : item.status })));
+  }
+
+  async function copySessionLink() {
+    if (!detail?.session?.id) return;
+    const link = `${window.location.origin}${window.location.pathname}#skill-debug=${detail.session.id}`;
+    await navigator.clipboard.writeText(link);
+  }
+
+  const session = detail?.session || {};
+  const diagnostics = detail?.diagnostics || {};
+  const comparison = diagnostics.comparison || {};
+  const baseline = detail?.baseline || null;
+  const candidate = detail?.candidate || null;
+  const isActive = ["queued", "running"].includes(String(session.status || ""));
+  const selectedVersion = versions.find((item) => String(item.version) === skillVersion);
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Skill 调试工作台" onClick={onClose}>
       <section className="skill-debug-workbench" onClick={(event) => event.stopPropagation()}>
         <header><div><span>真实 MR · 正式执行链</span><strong>Skill 调试工作台</strong><p>{skill.title} → {agentKey}</p></div><button type="button" className="modal-close-button" onClick={onClose}><X size={18} /></button></header>
-        <div className="skill-debug-controls">
+        <div className="skill-debug-controls skill-debug-controls-complete">
           <label><span>真实 MR</span><select value={mrId} onChange={(event) => setMrId(event.target.value)}>{mrs.map((mr) => <option key={String(mr.id)} value={String(mr.id)}>{String(mr.title || mr.external_id || mr.id)}</option>)}</select></label>
+          <label><span>Skill 版本</span><select value={skillVersion} onChange={(event) => setSkillVersion(event.target.value)}>{versions.map((version) => <option key={String(version.version)} value={String(version.version)}>{String(version.version)} · {String(version.status || "draft")}</option>)}</select></label>
           <label><span>运行方式</span><select value={mode} onChange={(event) => setMode(event.target.value as "targeted" | "production_route")}><option value="targeted">Skill 定向调试</option><option value="production_route">严格生产路由</option></select></label>
           <button type="button" onClick={startDebug} disabled={running || !mrId}>{running ? "运行中…" : "开始真实调试"}</button>
         </div>
-        <p className="skill-debug-mode-note">{mode === "targeted" ? "在正式路由结果上追加目标 Agent，用于验证 Skill 效果；不代表生产路由一定选择它。" : "不干预 Agent 路由，与真实任务的路由选择保持一致。"}</p>
+        {selectedVersion && String(selectedVersion.status) !== "active" && <div className="skill-debug-draft-banner"><span>当前选择草稿版本，不会进入正式 MR 检视。</span><button type="button" onClick={activateSelectedVersion}>激活此版本</button></div>}
+        <p className="skill-debug-mode-note">{mode === "targeted" ? "同一生产执行图运行 baseline 与 candidate：两边都加入目标 Agent，baseline 移除目标 Skill，candidate 加载目标 Skill。预计 2 次 Review 执行。" : "不干预 Agent 路由，与真实任务路由完全一致；若目标 Agent 未被选中，会明确显示 Skill 未执行。预计 1 次 Review 执行。"}</p>
         {error && <div className="form-error">{error}</div>}
-        {detail && <div className="skill-debug-body">
-          <section><h3>概览</h3><div className="skill-debug-metrics"><span>状态 {String(detail.run?.status || detail.job?.status || "等待")}</span><span>模式 {context.mode === "production_route" ? "严格生产路由" : "定向调试"}</span><span>Trace {trace.length}</span><span>LLM {detail.llm_calls?.length || 0}</span><span>工具 {detail.tool_calls?.length || 0}</span><span>Findings {detail.findings?.length || 0}</span></div></section>
-          <section><h3>加载与绑定</h3><pre>{JSON.stringify(context, null, 2)}</pre></section>
-          <section><h3>路由</h3><pre>{JSON.stringify(trace.filter((item: any) => String(item.event_type || "").includes("route") || String(item.event_type || "").includes("skill_debug")), null, 2)}</pre></section>
-          <section><h3>Prompt 与 LLM</h3><pre>{JSON.stringify(detail.llm_calls || [], null, 2)}</pre></section>
-          <section><h3>工具调用</h3><pre>{JSON.stringify(detail.tool_calls || [], null, 2)}</pre></section>
-          <section><h3>Checkpoints</h3><pre>{JSON.stringify(checkpoints, null, 2)}</pre></section>
-          <section><h3>Findings</h3><pre>{JSON.stringify(detail.findings || [], null, 2)}</pre></section>
-          <section><h3>原始日志</h3><pre>{JSON.stringify(trace, null, 2)}</pre></section>
-          <section><h3>一致性证据</h3><p>执行链：production_review_pipeline_v1 · MR SHA：{String(context.head_sha || "待验证")} · Skill 版本：{String(context.skill_version || "待验证")} · 发布：已禁止</p></section>
-        </div>}
+        {detail && <>
+          <div className="skill-debug-session-actions">
+            <button type="button" onClick={cancelDebug} disabled={!isActive}>取消调试</button>
+            <button type="button" onClick={rerunDebug} disabled={isActive}>再次运行</button>
+            <button type="button" onClick={copySessionLink}>复制链接</button>
+            <button type="button" onClick={exportDiagnostics}>导出诊断包</button>
+          </div>
+          <div className="skill-debug-body">
+            <section className="skill-debug-wide"><h3>诊断概览</h3><div className="skill-debug-metrics"><span>状态 {String(session.status || "等待")}</span><span>模式 {session.mode === "production_route" ? "严格生产路由" : "定向 A/B"}</span><span>目标 Agent {diagnostics.target_executed ? "已执行" : "未执行"}</span><span>版本 {String(session.skill_version || "待验证")}</span><span>SHA {String(session.snapshot_sha256 || "待验证").slice(0, 12)}</span><span>发布 已禁止</span></div>{diagnostics.target_not_executed_reason && <p className="skill-debug-warning">{String(diagnostics.target_not_executed_reason)}</p>}</section>
+            <section><h3>baseline（不含目标 Skill）</h3><VariantSummary summary={diagnostics.baseline} detail={baseline} /></section>
+            <section><h3>candidate（加载目标 Skill）</h3><VariantSummary summary={diagnostics.candidate} detail={candidate} /></section>
+            <section><h3>A/B Findings 差异</h3><div className="skill-debug-diff-counts"><span>新增 {comparison.added?.length || 0}</span><span>消失 {comparison.removed?.length || 0}</span><span>相同 {comparison.unchanged?.length || 0}</span></div><pre>{JSON.stringify({ added: comparison.added || [], removed: comparison.removed || [] }, null, 2)}</pre></section>
+            <section><h3>资源差异</h3><p>Token 差值 {String(comparison.token_delta ?? 0)}</p><p>耗时差值 {String(comparison.duration_delta_ms ?? 0)} ms</p></section>
+            <section className="skill-debug-wide"><h3>一致性证据</h3><p>执行链：{String(diagnostics.contract || "待验证")} · MR SHA：{String(diagnostics.head_sha || "待验证")} · 快照：{String(diagnostics.snapshot_sha256 || "待验证")} · 调试数据不修改正式 MR 状态、历史和发布结果。</p></section>
+            <section className="skill-debug-wide"><button type="button" className="skill-debug-advanced-toggle" onClick={() => setAdvancedOpen(!advancedOpen)}>{advancedOpen ? "收起高级日志" : "展开高级日志"}</button>{advancedOpen && <><p className="skill-debug-warning">高级日志可能包含源码上下文，仅项目管理员可见；服务端已执行递归脱敏。</p><pre>{JSON.stringify({ baseline, candidate }, null, 2)}</pre></>}</section>
+          </div>
+        </>}
+        <section className="skill-debug-history"><h3>调试历史</h3><div className="skill-debug-history-list">{history.map((item) => <button type="button" key={String(item.id)} onClick={() => openSession(String(item.id))}><strong>{String(item.skill_key)} · {String(item.skill_version)}</strong><span>{String(item.mode)} · {String(item.status)} · {String(item.mr_title || item.merge_request_id)}</span></button>)}{!history.length && <p>暂无调试历史</p>}</div></section>
       </section>
     </div>
   );
+}
+
+function VariantSummary({ summary, detail }: { summary: Record<string, any> | null | undefined; detail: Record<string, any> | null }) {
+  if (!summary) return <p>等待执行</p>;
+  return <div className="skill-debug-variant-summary"><div className="skill-debug-metrics"><span>{String(summary.status)}</span><span>Agent {summary.agent_executed ? "已执行" : "未执行"}</span><span>Skill {summary.skill_loaded ? "已加载" : "未加载"}</span><span>Checkpoint {String(summary.checkpoints?.completed || 0)}/{String(summary.checkpoints?.total || 0)}</span><span>LLM {String(summary.llm?.succeeded || 0)}/{String(summary.llm?.total || 0)}</span><span>工具 {String(summary.tools?.succeeded || 0)}/{String(summary.tools?.total || 0)}</span><span>Findings {String(summary.findings || 0)}</span></div><p>Run {String(detail?.run?.id || "待创建")}</p></div>;
 }
 
 export function AgentBindingEditorModal({

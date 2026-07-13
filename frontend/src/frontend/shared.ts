@@ -516,6 +516,8 @@ export async function uploadSkillBundleToProject(input: {
   skillName: string;
   skillKey: string;
   files: File[];
+  version?: string;
+  status?: "draft" | "active";
 }) {
   if (!input.files.length) throw new Error("请选择标准 Skill 文件夹");
   const validation = await validateSkillBundle({ projectId: input.projectId, skillName: input.skillName, skillKey: input.skillKey, files: input.files });
@@ -527,6 +529,8 @@ export async function uploadSkillBundleToProject(input: {
   const rootName = skillRootNameFromFiles(input.files);
   const skillName = input.skillName.trim() || rootName || "项目自定义 Skill";
   const skillKey = input.skillKey.trim() || rootName || skillName;
+  const version = input.version?.trim() || "v1";
+  const status = input.status || "active";
   const skill = await api<Record<string, unknown>>(`/api/projects/${input.projectId}/custom-skills`, {
     method: "POST",
     body: JSON.stringify({
@@ -534,8 +538,8 @@ export async function uploadSkillBundleToProject(input: {
       name: skillName,
       description: "项目级标准 Skill Bundle",
       content: skillContent,
-      version: "v1",
-      status: "active"
+      version,
+      status
     })
   });
   const createdSkillKey = String(skill.skill_key || skillKey);
@@ -544,6 +548,7 @@ export async function uploadSkillBundleToProject(input: {
       method: "POST",
       body: JSON.stringify({
         skill_key: createdSkillKey,
+        ...(status === "draft" ? { version } : {}),
         asset_path: asset.asset_path,
         content: asset.content,
         executable: asset.executable

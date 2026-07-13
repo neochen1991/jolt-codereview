@@ -80,9 +80,20 @@ export class RuleDocumentRepository {
 
   listCustomSkills(projectId: string) {
     return this.db.prepare(`
-      SELECT *
-      FROM custom_skills
-      WHERE project_id = $1
+      SELECT * FROM custom_skills WHERE project_id = $1
+      UNION ALL
+      SELECT csv.id, csv.project_id, csv.skill_key, csv.name, csv.description, csv.content,
+             csv.version, csv.status, csv.created_at, csv.updated_at
+      FROM custom_skill_versions csv
+      WHERE csv.project_id = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM custom_skills cs
+          WHERE cs.project_id = csv.project_id AND cs.skill_key = csv.skill_key
+        )
+        AND csv.updated_at = (
+          SELECT MAX(latest.updated_at) FROM custom_skill_versions latest
+          WHERE latest.project_id = csv.project_id AND latest.skill_key = csv.skill_key
+        )
       ORDER BY updated_at DESC, name
     `).all(projectId);
   }
@@ -133,7 +144,7 @@ export class RuleDocumentRepository {
       input.name,
       input.description,
       input.content,
-      JSON.stringify(this.listCustomSkillAssets(input.projectId, input.skillKey)),
+      JSON.stringify(input.status === "active" ? this.listCustomSkillAssets(input.projectId, input.skillKey) : []),
       input.status
     );
     return this.findCustomSkillVersion(input.projectId, input.skillKey, input.version);

@@ -708,6 +708,36 @@ export function migrate(db: Db) {
     CREATE INDEX IF NOT EXISTS idx_review_artifacts_run_created
       ON review_artifacts(review_run_id, created_at);
   `);
+  db.exec(`
+    INSERT INTO custom_skill_versions (
+      id, project_id, skill_key, version, name, description, content, assets_json, status, created_at, updated_at
+    )
+    SELECT
+      'skill_version_' || cs.id,
+      cs.project_id,
+      cs.skill_key,
+      cs.version,
+      cs.name,
+      cs.description,
+      cs.content,
+      COALESCE((
+        SELECT json_agg(json_build_object(
+          'id', csa.id,
+          'skill_key', csa.skill_key,
+          'asset_path', csa.asset_path,
+          'asset_type', csa.asset_type,
+          'content', csa.content,
+          'executable', csa.executable
+        ) ORDER BY csa.asset_path)::text
+        FROM custom_skill_assets csa
+        WHERE csa.project_id = cs.project_id AND csa.skill_key = cs.skill_key
+      ), '[]'),
+      cs.status,
+      cs.created_at,
+      cs.updated_at
+    FROM custom_skills cs
+    ON CONFLICT(project_id, skill_key, version) DO NOTHING;
+  `);
   addColumnIfMissing(db, "review_findings", "covered_rules_json", "TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing(db, "review_findings", "skipped_rules_json", "TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing(db, "review_findings", "suggested_code", "TEXT NOT NULL DEFAULT ''");

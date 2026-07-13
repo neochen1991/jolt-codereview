@@ -112,6 +112,23 @@ export function migrate(db: Db) {
       completed_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS review_input_snapshots (
+      id TEXT PRIMARY KEY,
+      source_review_job_id TEXT NOT NULL,
+      source_review_run_id TEXT NOT NULL UNIQUE,
+      merge_request_id TEXT NOT NULL,
+      head_sha TEXT NOT NULL,
+      artifact_json TEXT NOT NULL,
+      artifact_sha256 TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_review_input_snapshots_mr_head
+      ON review_input_snapshots(merge_request_id, head_sha);
+    CREATE INDEX IF NOT EXISTS idx_review_input_snapshots_expires
+      ON review_input_snapshots(expires_at);
+
     CREATE TABLE IF NOT EXISTS review_findings (
       id TEXT PRIMARY KEY,
       review_run_id TEXT NOT NULL,

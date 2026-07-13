@@ -50,6 +50,12 @@ from orchestration.nodes.verify_findings import rejected_reason_counts, verify_c
 from orchestration.state import EXECUTED_GRAPH_NODE_KEYS as GRAPH_NODE_KEYS
 from review_queue.job_consumer import ACTIVE_STATUSES, MAX_ATTEMPTS, RECLAIM_AFTER_SECONDS, start_heartbeat
 from token_usage_reporter import report_token_usage
+from quality_shadow import (
+    apply_shadow_execution_controls,
+    load_shadow_input_artifact,
+    save_review_input_snapshot,
+    should_capture_review_input,
+)
 from skill_debug import (
     SkillDebugStopped,
     apply_debug_snapshot,
@@ -60,6 +66,7 @@ from skill_debug import (
     debug_variant,
     is_debug_job,
     is_non_production_job,
+    is_shadow_job,
     load_debug_context,
     production_side_effects_allowed,
 )
@@ -168,6 +175,21 @@ def ensure_worker_schema(conn: Any) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_mr_finding_history_mr_status
           ON mr_finding_history(merge_request_id, status);
+        CREATE TABLE IF NOT EXISTS review_input_snapshots (
+          id TEXT PRIMARY KEY,
+          source_review_job_id TEXT NOT NULL,
+          source_review_run_id TEXT NOT NULL UNIQUE,
+          merge_request_id TEXT NOT NULL,
+          head_sha TEXT NOT NULL,
+          artifact_json TEXT NOT NULL,
+          artifact_sha256 TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_review_input_snapshots_mr_head
+          ON review_input_snapshots(merge_request_id, head_sha);
+        CREATE INDEX IF NOT EXISTS idx_review_input_snapshots_expires
+          ON review_input_snapshots(expires_at);
         CREATE TABLE IF NOT EXISTS rule_suppression_hints (
           project_id TEXT NOT NULL,
           rule_id TEXT NOT NULL,
@@ -4817,18 +4839,46 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     if is_debug_job(job):
         project_config = apply_snapshot_config(project_config, dict(debug_context.get("snapshot") or {}))
         project_config = apply_debug_execution_controls(project_config, debug_context)
+    if is_shadow_job(job):
+        project_config = apply_shadow_execution_controls(project_config, job)
     review_quality = normalize_review_quality_config(project_config)
     project_config["review_quality"] = review_quality
     project_config["llm"] = {**(project_config.get("llm") or {}), "exchange_mode": review_quality["llm_replay"]}
     if is_debug_job(job):
         project_config["llm"]["exchange_mode"] = str(debug_context.get("llm_replay") or "record")
-    recorder.config = project_config
 
+    try:
+        shadow_input_artifact = load_shadow_input_artifact(conn, job) if is_shadow_job(job) else None
+    except ValueError as exc:
+        conn.execute(
+            """
+            UPDATE review_jobs
+            SET status = 'failed', locked_at = NULL, locked_by = NULL,
+                heartbeat_at = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (job["id"],),
+        )
+        conn.commit()
+        write_worker_log(
+            config,
+            "shadow_input_validation_failed",
+            {"review_job_id": job["id"], "merge_request_id": job["merge_request_id"], "error_message": str(exc)},
+            "error",
+        )
+        return True
     size_guard_files: list[ChangedFile] | None = None
     size_decision = evaluate_mr_size_policy(mr, None, project_config)
     if size_decision["allowed"]:
         try:
-            size_guard_files = fetch_changed_files(project_config, repo, mr)
+            if shadow_input_artifact:
+                size_guard_files = [
+                    changed_file_from_vcs_row(row)
+                    for row in list(shadow_input_artifact.get("files") or [])
+                    if isinstance(row, dict)
+                ]
+            else:
+                size_guard_files = fetch_changed_files(project_config, repo, mr)
             size_decision = evaluate_mr_size_policy(mr, size_guard_files, project_config)
         except Exception as exc:
             write_worker_log(
@@ -4879,7 +4929,7 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     run_id = new_id("run")
     sandbox_dir = ROOT / "data" / "sandboxes" / run_id
     sandbox_dir.mkdir(parents=True, exist_ok=True)
-    recorder = Recorder(conn, run_id, config=config)
+    recorder = Recorder(conn, run_id, config=project_config)
     write_worker_log(
         config,
         "review_run_started",
@@ -4933,6 +4983,23 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     project_config["_review_run_id"] = str(run_id)
 
     try:
+        load_frozen_input_artifact = None
+        save_frozen_input_artifact = None
+        if is_debug_job(job):
+            load_frozen_input_artifact = lambda: load_skill_debug_input_artifact(conn, str(job.get("debug_session_id") or ""))
+            save_frozen_input_artifact = lambda artifact: save_skill_debug_input_artifact(conn, str(job.get("debug_session_id") or ""), artifact)
+        elif shadow_input_artifact:
+            load_frozen_input_artifact = lambda: shadow_input_artifact
+        elif should_capture_review_input(project_config, job):
+            save_frozen_input_artifact = lambda artifact: save_review_input_snapshot(
+                conn,
+                snapshot_id=new_id("snapshot"),
+                source_review_job_id=str(job["id"]),
+                source_review_run_id=str(run_id),
+                merge_request_id=str(job["merge_request_id"]),
+                head_sha=str(job["head_sha"]),
+                artifact=artifact,
+            )
         fetch_node = make_fetch_mr_node(
             recorder=recorder,
             sandbox_dir=sandbox_dir,
@@ -4949,8 +5016,8 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             apply_data_policy_to_files=apply_data_policy_to_files,
             prepare_source_worktree=prepare_source_worktree,
             load_incremental_context=lambda: load_incremental_context(conn, str(job["merge_request_id"]), str(job["head_sha"])),
-            load_debug_input_artifact=(lambda: load_skill_debug_input_artifact(conn, str(job.get("debug_session_id") or ""))) if is_debug_job(job) else None,
-            save_debug_input_artifact=(lambda artifact: save_skill_debug_input_artifact(conn, str(job.get("debug_session_id") or ""), artifact)) if is_debug_job(job) else None,
+            load_debug_input_artifact=load_frozen_input_artifact,
+            save_debug_input_artifact=save_frozen_input_artifact,
             hydrate_changed_files=lambda rows: [changed_file_from_vcs_row(row) for row in rows if isinstance(row, dict)],
         )
         choose_effort_node = make_choose_effort_node(

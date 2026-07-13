@@ -38,9 +38,9 @@ def make_fetch_mr_node(
             worktree_errors: list[dict[str, Any]] = []
             if prepare_source_worktree:
                 source_worktree_path, worktree_errors = prepare_source_worktree(project_config, repo, mr)
-            incremental_context = load_incremental_context() if load_incremental_context else {"incremental_diff_only": False}
-            recorder.tool_call(fetch_span, "skill_debug.input_artifact", "completed", int((time.time() - fetch_started) * 1000), args_summary=repo_ref, output_summary=f"reused {len(files)} frozen changed files", tool_version="skill-debug-input-v1")
-            recorder.event(fetch_span, "skill_debug_input_reused", "复用同一 Skill 调试输入工件", {"file_count": len(files), "input_artifact_sha256": frozen_input.get("input_artifact_sha256")})
+            incremental_context = dict(frozen_input.get("incremental_context") or {"incremental_diff_only": False})
+            recorder.tool_call(fetch_span, "review.input_artifact", "completed", int((time.time() - fetch_started) * 1000), args_summary=repo_ref, output_summary=f"reused {len(files)} frozen changed files", tool_version="review-input-v1")
+            recorder.event(fetch_span, "skill_debug_input_reused", "复用冻结 Review 输入工件", {"file_count": len(files), "input_artifact_sha256": frozen_input.get("input_artifact_sha256")})
             recorder.finish(fetch_span)
             return {
                 **state, "files": files, "llm_files": llm_files, "policy_decisions": policy_decisions,
@@ -72,14 +72,6 @@ def make_fetch_mr_node(
             recorder.event(fetch_span, "github_files", f"拉取 {len(files)} 个变更文件", {"files": [f.filename for f in files]})
             content_started = time.time()
             source_file_contents, source_errors = fetch_changed_file_contents(project_config, repo, mr, files)
-            if save_debug_input_artifact:
-                saved_input = save_debug_input_artifact({
-                    "version": "skill_debug_input_v1",
-                    "head_sha": str(job["head_sha"]),
-                    "files": [item.to_record() for item in files],
-                    "source_file_contents": source_file_contents,
-                })
-                recorder.event(fetch_span, "skill_debug_input_frozen", "冻结 Skill 调试输入工件供 A/B 复用", {"file_count": len(files), "input_artifact_sha256": saved_input.get("input_artifact_sha256")})
             source_artifact = write_json_artifact(
                 recorder,
                 sandbox_dir,
@@ -145,6 +137,15 @@ def make_fetch_mr_node(
                 )
             llm_files, policy_decisions = apply_data_policy_to_files(recorder, fetch_span, sandbox_dir, files, data_policy)
             incremental_context = load_incremental_context() if load_incremental_context else {"incremental_diff_only": False}
+            if save_debug_input_artifact:
+                saved_input = save_debug_input_artifact({
+                    "version": "review_input_v1",
+                    "head_sha": str(job["head_sha"]),
+                    "files": [item.to_record() for item in files],
+                    "source_file_contents": source_file_contents,
+                    "incremental_context": incremental_context,
+                })
+                recorder.event(fetch_span, "review_input_frozen", "冻结 Review 输入工件供同输入复用", {"file_count": len(files), "input_artifact_sha256": saved_input.get("input_artifact_sha256")})
             recorder.event(
                 fetch_span,
                 "incremental_context",

@@ -19,7 +19,7 @@ export class ReviewJobRepository {
     return this.db.prepare(`
       INSERT INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level, requested_by, debug_context_json)
       VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7)
-      ON CONFLICT DO NOTHING
+      ON CONFLICT (merge_request_id, head_sha) WHERE execution_kind = 'production_review' DO NOTHING
     `).run(input.id, input.mergeRequestId, input.headSha, input.priority, input.effortLevel ?? "standard", input.requestedBy ?? null, JSON.stringify(input.debugContext ?? {}));
   }
 
@@ -35,7 +35,7 @@ export class ReviewJobRepository {
     this.db.prepare(`
       INSERT INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level, requested_by, debug_context_json)
       VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7)
-      ON CONFLICT(merge_request_id, head_sha) DO UPDATE SET
+      ON CONFLICT(merge_request_id, head_sha) WHERE execution_kind = 'production_review' DO UPDATE SET
         status = 'queued',
         requested_effort_level = excluded.requested_effort_level,
         requested_by = COALESCE(excluded.requested_by, review_jobs.requested_by),
@@ -46,6 +46,30 @@ export class ReviewJobRepository {
         heartbeat_at = NULL,
         updated_at = CURRENT_TIMESTAMP
     `).run(input.id, input.mergeRequestId, input.headSha, input.priority, input.effortLevel, input.requestedBy ?? null, JSON.stringify(input.debugContext ?? {}));
+  }
+
+  enqueueDebug(input: {
+    id: string;
+    mergeRequestId: string;
+    headSha: string;
+    priority: number;
+    effortLevel: string;
+    requestedBy: string;
+    debugSessionId: string;
+    debugVariant: "baseline" | "candidate";
+    debugContext: Record<string, unknown>;
+  }) {
+    this.db.prepare(`
+      INSERT INTO review_jobs (
+        id, merge_request_id, head_sha, status, priority, requested_effort_level,
+        requested_by, debug_context_json, execution_kind, debug_session_id, debug_variant
+      ) VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10)
+    `).run(
+      input.id, input.mergeRequestId, input.headSha, input.priority, input.effortLevel,
+      input.requestedBy, JSON.stringify(input.debugContext), `skill_debug_${input.debugVariant}`,
+      input.debugSessionId, input.debugVariant
+    );
+    return this.findById(input.id);
   }
 
   supersedeQueued(mergeRequestId: string) {
@@ -84,7 +108,7 @@ export class ReviewJobRepository {
   }
 
   findByMergeRequestAndHead(mergeRequestId: string, headSha: string) {
-    return this.db.prepare("SELECT * FROM review_jobs WHERE merge_request_id = $1 AND head_sha = $2").get(mergeRequestId, headSha);
+    return this.db.prepare("SELECT * FROM review_jobs WHERE merge_request_id = $1 AND head_sha = $2 AND execution_kind = 'production_review'").get(mergeRequestId, headSha);
   }
 
   findWithProject(jobId: string) {

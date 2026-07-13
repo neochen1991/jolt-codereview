@@ -61,9 +61,36 @@ export function migrate(db: Db) {
       requested_by TEXT,
       pr_summary TEXT NOT NULL DEFAULT '{}',
       debug_context_json TEXT NOT NULL DEFAULT '{}',
+      execution_kind TEXT NOT NULL DEFAULT 'production_review',
+      debug_session_id TEXT,
+      debug_variant TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(merge_request_id, head_sha)
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS skill_debug_sessions (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      repository_id TEXT NOT NULL,
+      merge_request_id TEXT NOT NULL,
+      head_sha TEXT NOT NULL,
+      skill_key TEXT NOT NULL,
+      skill_version TEXT NOT NULL,
+      agent_key TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      requested_effort_level TEXT NOT NULL DEFAULT 'standard',
+      requested_by TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL DEFAULT '{}',
+      snapshot_sha256 TEXT NOT NULL,
+      baseline_job_id TEXT,
+      candidate_job_id TEXT,
+      comparison_json TEXT NOT NULL DEFAULT '{}',
+      failure_reason TEXT,
+      cancelled_at TEXT,
+      expires_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS review_runs (
@@ -630,6 +657,12 @@ export function migrate(db: Db) {
     CREATE INDEX IF NOT EXISTS idx_review_jobs_status_heartbeat
       ON review_jobs(status, heartbeat_at, locked_at, updated_at);
 
+    CREATE INDEX IF NOT EXISTS idx_skill_debug_sessions_project_created
+      ON skill_debug_sessions(project_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_skill_debug_sessions_status_created
+      ON skill_debug_sessions(status, created_at);
+
     CREATE INDEX IF NOT EXISTS idx_review_runs_job_started
       ON review_runs(review_job_id, started_at DESC);
 
@@ -671,6 +704,10 @@ export function migrate(db: Db) {
   addColumnIfMissing(db, "review_jobs", "pr_summary", "TEXT NOT NULL DEFAULT '{}'");
   addColumnIfMissing(db, "review_jobs", "debug_context_json", "TEXT NOT NULL DEFAULT '{}'");
   addColumnIfMissing(db, "review_jobs", "requested_by", "TEXT");
+  addColumnIfMissing(db, "review_jobs", "execution_kind", "TEXT NOT NULL DEFAULT 'production_review'");
+  addColumnIfMissing(db, "review_jobs", "debug_session_id", "TEXT");
+  addColumnIfMissing(db, "review_jobs", "debug_variant", "TEXT");
+  replaceLegacyReviewJobUniqueness(db);
   addColumnIfMissing(db, "merge_requests", "created_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
   addColumnIfMissing(db, "rule_precision_history", "recent_accepted_count", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "rule_precision_history", "recent_rejected_count", "INTEGER NOT NULL DEFAULT 0");
@@ -681,6 +718,28 @@ export function migrate(db: Db) {
   addColumnIfMissing(db, "full_review_jobs", "heartbeat_at", "TEXT");
   addColumnIfMissing(db, "full_review_jobs", "failure_reason", "TEXT");
   addColumnIfMissing(db, "llm_response_cache", "project_id", "TEXT NOT NULL DEFAULT 'project_default'");
+}
+
+function replaceLegacyReviewJobUniqueness(db: Db) {
+  const constraints = db.prepare(`
+    SELECT c.conname AS name
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+      AND t.relname = 'review_jobs'
+      AND c.contype = 'u'
+      AND pg_get_constraintdef(c.oid) = 'UNIQUE (merge_request_id, head_sha)'
+  `).all() as Array<{ name: string }>;
+  for (const constraint of constraints) {
+    const quoted = String(constraint.name).replaceAll('"', '""');
+    db.exec(`ALTER TABLE review_jobs DROP CONSTRAINT "${quoted}"`);
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_review_jobs_production_mr_head
+    ON review_jobs(merge_request_id, head_sha)
+    WHERE execution_kind = 'production_review';
+  `);
 }
 
 function addColumnIfMissing(db: Db, table: string, column: string, definition: string) {

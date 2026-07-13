@@ -42,6 +42,24 @@ export class ReviewQueueService {
     return this.reviewJobRepository.findByMergeRequestAndHead(input.mergeRequestId, input.headSha);
   }
 
+  enqueueDebug(input: EnqueueReviewJobInput & {
+    debugSessionId: string;
+    debugVariant: "baseline" | "candidate";
+    requestedBy: string;
+  }) {
+    return this.reviewJobRepository.enqueueDebug({
+      id: id("job"),
+      mergeRequestId: input.mergeRequestId,
+      headSha: input.headSha,
+      priority: input.priority,
+      effortLevel: input.effortLevel ?? "standard",
+      requestedBy: input.requestedBy,
+      debugSessionId: input.debugSessionId,
+      debugVariant: input.debugVariant,
+      debugContext: input.debugContext ?? {}
+    });
+  }
+
   supersedeQueued(mergeRequestId: string) {
     return this.reviewJobRepository.supersedeQueued(mergeRequestId);
   }

@@ -5300,6 +5300,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   margin-bottom: 2px;
 }
 
+.review-quality-card[data-context-status="full"] { border-left: 4px solid #16a34a; }
+.review-quality-card[data-context-status="partial"] { border-left: 4px solid #f59e0b; }
+.review-quality-card[data-context-status="patch_only"],
+.review-quality-card[data-context-status="blocked"] { border-left: 4px solid #dc2626; }
+.review-quality-card .quality-warning { background: #fff7ed; }
+
 .coverage-card > div {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);

@@ -93,7 +93,9 @@ def build_repo_index(worktree: Path, repository_id: str, commit_sha: str, cache_
         index_data = _load_index(index_path)
         return {
             "status": "cached",
-            "index_kind": "repo_symbol_index",
+            "index_kind": "regex_repo_symbol_index",
+            "resolver": "regex_fallback",
+            "confidence": "heuristic",
             "storage_uri": str(index_path),
             "symbol_count": len(index_data.get("symbols") or []),
             "ref_count": len(index_data.get("refs") or []),
@@ -132,7 +134,9 @@ def build_repo_index(worktree: Path, repository_id: str, commit_sha: str, cache_
     index_path.write_text(json.dumps({"symbols": symbols, "refs": refs}, ensure_ascii=False), "utf-8")
     return {
         "status": "indexed",
-        "index_kind": "repo_symbol_index",
+        "index_kind": "regex_repo_symbol_index",
+        "resolver": "regex_fallback",
+        "confidence": "heuristic",
         "storage_uri": str(index_path),
         "file_count": len(source_files),
         "skipped_large_files": skipped_large,
@@ -319,6 +323,8 @@ def resolve_diff_symbols(index_info: dict[str, Any], worktree: Path, files: list
                         "file": ref["file"],
                         "line": int(ref["line"]),
                         "snippet": _snippet_from_lines(ref_lines, int(ref["line"]), 8) if ref_lines else "",
+                        "confidence": "heuristic",
+                        "resolver": "regex_name_match",
                     }
                 )
             related_tests = _related_test_files(worktree, name, str(definition["file"]))
@@ -351,6 +357,8 @@ def resolve_diff_symbols(index_info: dict[str, Any], worktree: Path, files: list
     return {
         "status": "resolved",
         "format": "related_context_v2",
+        "resolver": "regex_fallback",
+        "confidence": "heuristic",
         "modified_symbols": modified_symbols,
         "changed_symbols": [
             {

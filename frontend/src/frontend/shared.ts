@@ -214,6 +214,7 @@ export type Detail = {
     skill_calls?: Array<Record<string, unknown>>;
     artifacts: Array<Record<string, unknown>>;
   };
+  quality?: Record<string, unknown>;
 };
 
 export type MrChangedFile = {

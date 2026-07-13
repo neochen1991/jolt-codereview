@@ -9,13 +9,14 @@ from typing import Any
 
 from db_postgres import open_app_database
 from llm_router import candidate_providers
+from llm.exchange import derive_seed, execute_chat_exchange, replay_mode_from_config
 from llm.retry import call_with_retry
-from prompts.builder import build_prompt
+from prompts.builder import build_context_unit_prompt, build_prompt
 from prompts.system import REVIEW_SYSTEM_PROMPT
 
 LLM_REVIEW_SEED = 13
-LLM_REVIEW_SCHEMA_NAME = "review_findings_v1"
-LLM_REVIEW_FALLBACK_SCHEMA_NAME = "review_findings_v1_unstructured"
+LLM_REVIEW_SCHEMA_NAME = "review_findings_v2"
+LLM_REVIEW_FALLBACK_SCHEMA_NAME = "review_findings_v2_unstructured"
 _SCHEMA_UNSUPPORTED_PROVIDERS: set[tuple[str, str]] = set()
 
 
@@ -224,6 +225,9 @@ def review_findings_response_format() -> dict[str, Any]:
             "line_end",
             "title",
             "problem_description",
+            "trigger_condition",
+            "impact",
+            "semantic_evidence",
             "recommendation",
             "suggested_code",
             "evidence",
@@ -238,6 +242,21 @@ def review_findings_response_format() -> dict[str, Any]:
             "line_end": {"type": "integer"},
             "title": {"type": "string"},
             "problem_description": {"type": "string"},
+            "trigger_condition": {"type": "string"},
+            "impact": {"type": "string"},
+            "semantic_evidence": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["symbol_id", "relation", "file_path"],
+                    "properties": {
+                        "symbol_id": {"type": "string"},
+                        "relation": {"type": "string"},
+                        "file_path": {"type": "string"},
+                    },
+                },
+            },
             "recommendation": {"type": "string"},
             "suggested_code": {"type": "string"},
             "evidence": {"type": "string"},
@@ -474,6 +493,20 @@ def parse_llm_findings(agent_id: str, content: str, files: list[Any], max_findin
                 "line_end": line_end,
                 "title": title,
                 "problem_description": str(item.get("problem_description") or title),
+                "trigger_condition": str(item.get("trigger_condition") or "").strip()[:1000],
+                "impact": str(item.get("impact") or "").strip()[:1000],
+                "semantic_evidence": [
+                    {
+                        "symbol_id": str(ref.get("symbol_id") or "")[:300],
+                        "relation": str(ref.get("relation") or "")[:80],
+                        "file_path": str(ref.get("file_path") or "")[:500],
+                    }
+                    for ref in (item.get("semantic_evidence") or [])
+                    if isinstance(ref, dict)
+                    and str(ref.get("symbol_id") or "")
+                    and str(ref.get("relation") or "")
+                    and str(ref.get("file_path") or "")
+                ][:20],
                 "recommendation": recommendation,
                 "suggested_code": suggested_code[:4000],
                 "evidence": evidence[:500],
@@ -640,6 +673,8 @@ def summarize_pr_with_llm(
     }
     provider = str(first_provider.get("provider"))
     model = str(first_provider.get("model"))
+    exchange_mode = replay_mode_from_config(config)
+    head_sha = str(_row_value(mr, "latest_head_sha", "") or _row_value(mr, "head_sha", ""))
     if budget_tracker and budget_tracker.should_stop():
         recorder.llm_call(span_id, provider, model, prompt, f"skipped_by_budget:{budget_tracker.truncated_reason}", 0, prompt_tokens, 0)
         return normalize_pr_summary({}, {**fallback, "source": "fallback", "skipped": True, "skip_reason": str(budget_tracker.truncated_reason)})
@@ -671,40 +706,43 @@ def summarize_pr_with_llm(
         timeout_seconds = llm_request_timeout_seconds(llm, "summary")
         stream_enabled = llm_stream_enabled(llm)
         try:
-            response = call_with_retry(
-                lambda: http_json(
-                    chat_completions_url(base_url),
-                    {"Authorization": f"Bearer {api_key}"},
-                    method="POST",
-                    body={
-                        "model": model,
-                        "messages": messages,
-                        "temperature": 0.1,
-                        "max_tokens": min(2048, llm_max_output_tokens(llm)),
-                    },
-                    timeout_seconds=timeout_seconds,
-                    stream=stream_enabled,
-                )
+            exchange = execute_chat_exchange(
+                recorder=recorder,
+                span_id=span_id,
+                operation="summary",
+                agent_id="summary_agent",
+                context_unit_id="",
+                checkpoint_id="",
+                head_sha=head_sha,
+                provider=provider,
+                model=model,
+                prompt=prompt,
+                messages=messages,
+                temperature=0.1,
+                replay_mode=exchange_mode,
+                invoke=lambda seed: call_with_retry(
+                    lambda: http_json(
+                        chat_completions_url(base_url),
+                        {"Authorization": f"Bearer {api_key}"},
+                        method="POST",
+                        body={
+                            "model": model,
+                            "messages": messages,
+                            "temperature": 0.1,
+                            "seed": seed,
+                            "max_tokens": min(2048, llm_max_output_tokens(llm)),
+                        },
+                        timeout_seconds=timeout_seconds,
+                        stream=stream_enabled,
+                    )
+                ),
             )
+            response = exchange.response
             duration_ms = int((time.time() - started) * 1000)
             usage = response.get("usage") or {}
             input_tokens = int(usage.get("prompt_tokens", prompt_tokens))
             output_tokens = int(usage.get("completion_tokens", 0))
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-            response_debug_text = json.dumps({"content": content, "stream": response.get("_jolt_stream") or {"enabled": False}}, ensure_ascii=False)
-            recorder.llm_call(
-                span_id,
-                provider,
-                model,
-                prompt,
-                "completed",
-                duration_ms,
-                input_tokens,
-                output_tokens,
-                str(response.get("id") or ""),
-                messages,
-                response_debug_text,
-            )
             if budget_tracker:
                 budget_tracker.charge_llm(model, input_tokens, output_tokens)
             return normalize_pr_summary({**_json_object_from_content(content), "source": "llm"}, fallback)
@@ -732,7 +770,17 @@ def call_llm(
     llm = config.get("llm", {})
     project_id = str(config.get("_project_id") or "project_default")
     budget_tracker = agent.get("budget_tracker")
-    prompt, safety = build_prompt(agent, files, skill_summary)
+    context_unit = agent.get("context_unit")
+    context_unit_id = str(getattr(context_unit, "unit_id", "") or (context_unit.get("unit_id") if isinstance(context_unit, dict) else ""))
+    context_hash = str(getattr(context_unit, "context_hash", "") or (context_unit.get("context_hash") if isinstance(context_unit, dict) else ""))
+    checkpoint_ids = getattr(context_unit, "skill_checkpoint_ids", ()) if context_unit is not None else ()
+    checkpoint_id = ",".join(str(item) for item in checkpoint_ids) if checkpoint_ids else str(agent.get("checkpoint_id") or "")
+    head_sha = str(agent.get("head_sha") or config.get("_head_sha") or "")
+    exchange_mode = replay_mode_from_config(config)
+    if context_unit is not None:
+        prompt, safety = build_context_unit_prompt(agent, context_unit, skill_summary)
+    else:
+        prompt, safety = build_prompt(agent, files, skill_summary)
     prompt_tokens = estimate_tokens(prompt)
     providers = candidate_providers(llm, required_context=prompt_tokens)
     first_provider = providers[0] if providers else {
@@ -788,24 +836,29 @@ def call_llm(
                 "provider/model 已标记为不支持 strict JSON schema，本次直接使用无 schema JSON 输出",
                 {"provider": provider, "model": model},
             )
-        cache_key = llm_cache_key(provider, model, prompt, seed=LLM_REVIEW_SEED, schema_name=schema_name, project_id=project_id)
-        cached = _read_cached_llm_response(config, cache_key, project_id)
+        operation_seed = derive_seed(head_sha, "expert", agent_id, context_unit_id, checkpoint_id)
+        cache_key = llm_cache_key(provider, model, prompt, seed=operation_seed, schema_name=schema_name, project_id=project_id)
+        cached = None if exchange_mode in {"replay", "live_repeat"} else _read_cached_llm_response(config, cache_key, project_id)
         if cached is not None:
-            usage = cached.get("usage") if isinstance(cached.get("usage"), dict) else {}
-            content = cached.get("choices", [{}])[0].get("message", {}).get("content", "[]")
-            recorder.llm_call(
-                span_id,
-                provider,
-                model,
-                prompt,
-                "cache_hit",
-                0,
-                int(usage.get("prompt_tokens", prompt_tokens)),
-                int(usage.get("completion_tokens", 0)),
-                str(cached.get("id") or ""),
-                messages,
-                json.dumps({"content": content, "cache_key": cache_key}, ensure_ascii=False),
+            exchange = execute_chat_exchange(
+                recorder=recorder,
+                span_id=span_id,
+                operation="expert",
+                agent_id=agent_id,
+                context_unit_id=context_unit_id,
+                checkpoint_id=checkpoint_id,
+                head_sha=head_sha,
+                provider=provider,
+                model=model,
+                prompt=prompt,
+                messages=messages,
+                temperature=0.1,
+                replay_mode="record" if exchange_mode == "record" else "off",
+                invoke=lambda _seed: cached,
+                context_hash=context_hash,
+                response_source="legacy_response_cache",
             )
+            content = exchange.response.get("choices", [{}])[0].get("message", {}).get("content", "[]")
             try:
                 max_findings = int(agent.get("max_findings_per_mr") or agent.get("max_findings") or 32)
             except (TypeError, ValueError):
@@ -814,36 +867,38 @@ def call_llm(
         timeout_seconds = llm_request_timeout_seconds(llm, "expert")
         stream_enabled = llm_stream_enabled(llm)
         try:
-            try:
-                response = call_with_retry(
-                    lambda: http_json(
-                        chat_completions_url(base_url),
-                        {"Authorization": f"Bearer {api_key}"},
-                        method="POST",
-                        body=payload,
-                        timeout_seconds=timeout_seconds,
-                        stream=stream_enabled,
+            def invoke_expert(seed: int) -> dict[str, Any]:
+                nonlocal schema_name, cache_key
+                seeded_payload = {**payload, "seed": seed}
+                try:
+                    return call_with_retry(
+                        lambda: http_json(
+                            chat_completions_url(base_url),
+                            {"Authorization": f"Bearer {api_key}"},
+                            method="POST",
+                            body=seeded_payload,
+                            timeout_seconds=timeout_seconds,
+                            stream=stream_enabled,
+                        )
                     )
-                )
-            except (urllib.error.HTTPError, json.JSONDecodeError) as schema_exc:
-                if schema_name == LLM_REVIEW_FALLBACK_SCHEMA_NAME or not _schema_error_is_unsupported(schema_exc):
-                    raise
-                fallback_payload = {key: value for key, value in payload.items() if key != "response_format"}
-                fallback_schema_name = LLM_REVIEW_FALLBACK_SCHEMA_NAME
-                fallback_cache_key = llm_cache_key(provider, model, prompt, seed=LLM_REVIEW_SEED, schema_name=fallback_schema_name, project_id=project_id)
-                cached_fallback = _read_cached_llm_response(config, fallback_cache_key, project_id)
-                if cached_fallback is not None:
-                    mark_schema_strict_disabled(provider, model)
-                    response = cached_fallback
-                    schema_name = fallback_schema_name
-                    cache_key = fallback_cache_key
-                    recorder.event(
-                        span_id,
-                        "llm_schema_cache_fallback",
-                        "strict JSON schema 响应不可用，命中无 schema 降级缓存",
-                        {"provider": provider, "model": model, "error": type(schema_exc).__name__},
-                    )
-                else:
+                except (urllib.error.HTTPError, json.JSONDecodeError) as schema_exc:
+                    if schema_name == LLM_REVIEW_FALLBACK_SCHEMA_NAME or not _schema_error_is_unsupported(schema_exc):
+                        raise
+                    fallback_payload = {key: value for key, value in seeded_payload.items() if key != "response_format"}
+                    fallback_schema_name = LLM_REVIEW_FALLBACK_SCHEMA_NAME
+                    fallback_cache_key = llm_cache_key(provider, model, prompt, seed=seed, schema_name=fallback_schema_name, project_id=project_id)
+                    cached_fallback = _read_cached_llm_response(config, fallback_cache_key, project_id)
+                    if cached_fallback is not None and exchange_mode != "replay":
+                        mark_schema_strict_disabled(provider, model)
+                        schema_name = fallback_schema_name
+                        cache_key = fallback_cache_key
+                        recorder.event(
+                            span_id,
+                            "llm_schema_cache_fallback",
+                            "strict JSON schema 响应不可用，命中无 schema 降级缓存",
+                            {"provider": provider, "model": model, "error": type(schema_exc).__name__},
+                        )
+                        return cached_fallback
                     mark_schema_strict_disabled(provider, model)
                     recorder.event(
                         span_id,
@@ -863,6 +918,26 @@ def call_llm(
                     )
                     schema_name = fallback_schema_name
                     cache_key = fallback_cache_key
+                    return response
+
+            exchange = execute_chat_exchange(
+                recorder=recorder,
+                span_id=span_id,
+                operation="expert",
+                agent_id=agent_id,
+                context_unit_id=context_unit_id,
+                checkpoint_id=checkpoint_id,
+                head_sha=head_sha,
+                provider=provider,
+                model=model,
+                prompt=prompt,
+                messages=messages,
+                temperature=0.1,
+                replay_mode=exchange_mode,
+                invoke=invoke_expert,
+                context_hash=context_hash,
+            )
+            response = exchange.response
             duration_ms = int((time.time() - started) * 1000)
             usage = response.get("usage") or {}
             input_tokens = int(usage.get("prompt_tokens", prompt_tokens))
@@ -875,23 +950,9 @@ def call_llm(
                 provider=provider,
                 model=model,
                 schema_name=schema_name,
-                seed=LLM_REVIEW_SEED,
+                seed=operation_seed,
                 prompt=prompt,
                 response=response,
-            )
-            response_debug_text = json.dumps({"content": content, "stream": response.get("_jolt_stream") or {"enabled": False}}, ensure_ascii=False)
-            recorder.llm_call(
-                span_id,
-                provider,
-                model,
-                prompt,
-                "completed",
-                duration_ms,
-                input_tokens,
-                output_tokens,
-                str(response.get("id") or ""),
-                messages,
-                response_debug_text,
             )
             if budget_tracker:
                 budget_tracker.charge_llm(model, input_tokens, output_tokens)

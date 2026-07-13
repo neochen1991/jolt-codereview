@@ -5,6 +5,7 @@ import re
 from typing import Any, Callable
 from skill_debug import production_side_effects_allowed
 
+from context.context_executor import call_llm_for_context_units
 from orchestration.deepagents_runner import run_bounded_deepagent
 from prompts.example_retriever import retrieve_examples
 from rules.skill_checkpoint_parser import parse_skill_checkpoints
@@ -764,6 +765,9 @@ def make_run_experts_node(
         conn.commit()
         all_findings: list[dict[str, Any]] = []
         bound_review_coverage_records: list[dict[str, Any]] = []
+        context_units = list(state.get("context_units") or [])
+        executed_context_unit_ids: set[str] = set()
+        unresolved_context_units = list(state.get("unresolved_context_units") or [])
         tool_observations = state.get("tool_observations") or load_tool_observations(conn, run_id)
         suppression_hints = _load_suppression_hints_for_prompt(conn, project_id, llm_files or files)
         if effort == "trivial":
@@ -847,6 +851,7 @@ def make_run_experts_node(
                 "tool_observations": tool_observations,
                 "related_context": state.get("related_context") or {},
                 "budget_tracker": budget_tracker,
+                "head_sha": str(job["head_sha"]),
             }
             if suppression_hints:
                 agent_context["suppression_hints"] = suppression_hints
@@ -964,6 +969,11 @@ def make_run_experts_node(
                         tool_observations=tool_observations,
                         llm_config=project_config.get("llm", {}),
                         max_tool_calls=max_tool_calls,
+                        source_worktree_path=state.get("source_worktree_path"),
+                        head_sha=str(job["head_sha"]),
+                        semantic_graph=state.get("semantic_graph"),
+                        exchange_recorder=recorder,
+                        exchange_span_id=span,
                         llm_trace=lambda fields: recorder.llm_call(
                             span,
                             str(fields.get("provider") or project_config.get("llm", {}).get("default_provider") or ""),
@@ -1041,7 +1051,19 @@ def make_run_experts_node(
                     batch_skill_summary = skill_summary
                     if batch.get("skill_key"):
                         batch_skill_summary = load_skill_summary(str(batch["skill_key"]), files)
-                    batch_items = call_llm(project_config, recorder, span, batch_agent, llm_files, batch_skill_summary)
+                    batch_items, executed_units, unresolved_units = call_llm_for_context_units(
+                        call_llm=call_llm,
+                        config=project_config,
+                        recorder=recorder,
+                        span=span,
+                        agent=batch_agent,
+                        files=llm_files,
+                        skill_summary=batch_skill_summary,
+                        context_units=context_units,
+                        budget_tracker=budget_tracker,
+                    )
+                    executed_context_unit_ids.update(executed_units)
+                    unresolved_context_units.extend(unresolved_units)
                     batch_items, rejected_batch_items = _enforce_bound_batch_findings(batch, batch_items)
                     retry_count = 0
                     retry_hit = False
@@ -1068,7 +1090,19 @@ def make_run_experts_node(
                             retry_skill_summary = batch_skill_summary
                             if retry_batch.get("skill_key"):
                                 retry_skill_summary = load_skill_summary(str(retry_batch["skill_key"]), files)
-                            retry_items = call_llm(project_config, recorder, span, retry_agent, llm_files, retry_skill_summary)
+                            retry_items, retry_executed_units, retry_unresolved_units = call_llm_for_context_units(
+                                call_llm=call_llm,
+                                config=project_config,
+                                recorder=recorder,
+                                span=span,
+                                agent=retry_agent,
+                                files=llm_files,
+                                skill_summary=retry_skill_summary,
+                                context_units=context_units,
+                                budget_tracker=budget_tracker,
+                            )
+                            executed_context_unit_ids.update(retry_executed_units)
+                            unresolved_context_units.extend(retry_unresolved_units)
                             retry_items, retry_rejected_items = _enforce_bound_batch_findings(batch, retry_items)
                             retry_count = 1
                             retry_hit = bool(retry_items)
@@ -1170,9 +1204,26 @@ def make_run_experts_node(
                     {"alerts": bound_review_coverage.get("alerts"), "missed": bound_review_coverage.get("missed")},
                 )
             recorder.finish(coverage_span)
+        unique_unresolved = {
+            (str(item.get("unit_id") or item.get("hunk_id") or ""), str(item.get("reason") or "unresolved")): item
+            for item in unresolved_context_units
+            if isinstance(item, dict)
+        }
+        context_health = dict(state.get("context_health") or {})
+        context_health.update(
+            {
+                "context_units_total": len(context_units),
+                "context_units_executed": len(executed_context_unit_ids),
+                "context_units_unresolved": len(unique_unresolved),
+                "status": "partial" if unique_unresolved else context_health.get("status", "full"),
+            }
+        )
         return {
             **state,
             "all_findings": all_findings,
+            "executed_context_unit_ids": sorted(executed_context_unit_ids),
+            "unresolved_context_units": list(unique_unresolved.values()),
+            "context_health": context_health,
             "candidate_quality": {
                 **(state.get("candidate_quality") or {}),
                 "bound_review_coverage": bound_review_coverage,

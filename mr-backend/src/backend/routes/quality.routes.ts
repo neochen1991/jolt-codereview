@@ -1,5 +1,6 @@
 import { route, type Route } from "../http.js";
 import type { BackendRouteContext } from "./context.js";
+import { summarizeBoundRuleCoverage, summarizeContextHealth, summarizeSkillRuntimeDashboard } from "../services/ObservabilityService.js";
 
 interface EvaluationReportRow {
   id: string;
@@ -38,6 +39,25 @@ export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
       const accepted = Number(feedback.find((item) => item.feedback_type === "accepted")?.count ?? 0);
       const falsePositive = Number(feedback.find((item) => item.feedback_type === "false_positive")?.count ?? 0);
       const reviewedFeedback = accepted + falsePositive;
+      const runs = all<{ id: string; started_at?: string | null; coverage_json?: string | null; execution_kind?: string | null }>(`
+        SELECT rr.id, rr.started_at, rr.coverage_json, rj.execution_kind
+        FROM review_runs rr
+        JOIN review_jobs rj ON rj.id = rr.review_job_id
+        JOIN merge_requests mr ON mr.id = rj.merge_request_id
+        JOIN repositories r ON r.id = mr.repository_id
+        WHERE r.project_id = $1
+        ORDER BY rr.started_at DESC LIMIT 200
+      `, [params.projectId]);
+      const runtimeFindings = all<{ id: string; run_id: string; agent_id?: string | null; covered_rules_json?: string | null; feedback?: string | null }>(`
+        SELECT rf.id, rf.review_run_id AS run_id, rf.agent_id, rf.covered_rules_json, uf.feedback_type AS feedback
+        FROM review_findings rf
+        JOIN review_runs rr ON rr.id = rf.review_run_id
+        JOIN review_jobs rj ON rj.id = rr.review_job_id
+        JOIN merge_requests mr ON mr.id = rj.merge_request_id
+        JOIN repositories r ON r.id = mr.repository_id
+        LEFT JOIN user_feedback uf ON uf.finding_id = rf.id
+        WHERE r.project_id = $1
+      `, [params.projectId]).map((row) => ({ ...row, covered_rules: (() => { try { return JSON.parse(String(row.covered_rules_json || "[]")); } catch { return []; } })() }));
       return {
         project_id: params.projectId,
         llm_calls: llmCalls,
@@ -60,7 +80,10 @@ export function createQualityRoutes(ctx: BackendRouteContext): Route[] {
           false_positive_findings: falsePositive,
           reviewed_feedback_count: reviewedFeedback,
           precision_estimate: reviewedFeedback ? accepted / reviewedFeedback : null
-        }
+        },
+        context_health: summarizeContextHealth(runs),
+        skill_checkpoint_metrics: summarizeBoundRuleCoverage(runs),
+        skill_runtime_dashboard: summarizeSkillRuntimeDashboard(params.projectId, runs, runtimeFindings)
       };
     }),
 

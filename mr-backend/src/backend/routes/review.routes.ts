@@ -333,6 +333,88 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     return parseRecord(candidateQuality.bound_review_coverage ?? coverage.bound_review_coverage);
   }
 
+  function contextHealthFromRun(run: Record<string, any> | undefined) {
+    const coverage = parseRecord(run?.coverage_json);
+    const health = parseRecord(coverage.context_health);
+    return Object.keys(health).length ? health : {
+      version: "context_health_v1",
+      context_engine: "unknown",
+      status: "unavailable"
+    };
+  }
+
+  function reviewQualityForRun(run: Record<string, any> | undefined) {
+    const runId = String(run?.id || "");
+    const empty = {
+      context_health: contextHealthFromRun(run),
+      candidate_recall: { value: null, metric_type: "candidate_funnel_retention", generated: 0, verifier_accepted: 0 },
+      verify_rejection_reasons: [],
+      judge_rejection_reasons: [],
+      published_precision: { value: null, accepted: 0, false_positive: 0, labeled: 0, confidence: "unlabeled" },
+      skill_checkpoint_metrics: boundReviewCoverageFromRun(run),
+      reproducibility: { status: "unavailable", llm_call_count: 0, fingerprint_complete_rate: null, exact_replay_ready: false },
+      unresolved_candidates: []
+    };
+    if (!runId) return empty;
+    const candidates = all<Record<string, any>>(`SELECT * FROM candidate_findings WHERE review_run_id = $1 ORDER BY created_at`, [runId]);
+    const generated = new Set(candidates.map((row) => String(row.dedupe_hash || "")).filter(Boolean)).size;
+    const verifierAccepted = new Set(candidates.filter((row) => row.stage === "verifier" && row.status === "accepted").map((row) => String(row.dedupe_hash || ""))).size;
+    const reasonsFor = (stage: string) => {
+      const counts = new Map<string, number>();
+      for (const row of candidates.filter((item) => item.stage === stage && ["rejected", "merged"].includes(String(item.status)))) {
+        const details = Array.isArray(parseJsonValue(row.decision_reason_json)) ? parseJsonValue(row.decision_reason_json) : [];
+        for (const detail of details) {
+          const code = String((detail as Record<string, any>)?.code || "judge_unclassified_rejection");
+          counts.set(code, (counts.get(code) || 0) + 1);
+        }
+      }
+      return [...counts.entries()].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
+    };
+    const feedback = get<Record<string, any>>(`
+      SELECT
+        SUM(CASE WHEN uf.feedback_type = 'accepted' THEN 1 ELSE 0 END) AS accepted,
+        SUM(CASE WHEN uf.feedback_type = 'false_positive' THEN 1 ELSE 0 END) AS false_positive
+      FROM review_findings rf
+      LEFT JOIN user_feedback uf ON uf.finding_id = rf.id
+      WHERE rf.review_run_id = $1
+    `, [runId]) || {};
+    const accepted = Number(feedback.accepted || 0);
+    const falsePositive = Number(feedback.false_positive || 0);
+    const labeled = accepted + falsePositive;
+    const llmCalls = all<Record<string, any>>(`SELECT l.* FROM llm_call_records l JOIN agent_trace_spans s ON s.id = l.span_id WHERE s.review_run_id = $1 ORDER BY l.created_at`, [runId]);
+    const fingerprintComplete = llmCalls.filter((row) => row.seed !== null && row.seed !== undefined && row.request_hash && row.response_hash).length;
+    const replayRecords = Number(get<Record<string, any>>(`
+      SELECT COUNT(DISTINCT exchange.cache_key) AS count
+      FROM llm_call_records call
+      JOIN agent_trace_spans span ON span.id = call.span_id
+      JOIN llm_exchange_records exchange
+        ON exchange.cache_key = call.cache_key
+       AND (exchange.expires_at IS NULL OR exchange.expires_at = '' OR NULLIF(exchange.expires_at, '')::timestamptz > CURRENT_TIMESTAMP)
+      WHERE span.review_run_id = $1
+    `, [runId])?.count || 0);
+    const replayKeys = new Set(llmCalls.map((row) => String(row.cache_key || "")).filter(Boolean));
+    const exactReplayReady = replayKeys.size > 0 && replayRecords === replayKeys.size;
+    const judgeHashes = new Set(candidates.filter((row) => row.stage === "judge").map((row) => String(row.dedupe_hash || "")));
+    const unresolved = candidates.filter((row) => row.stage === "verifier" && row.status === "accepted" && !judgeHashes.has(String(row.dedupe_hash || ""))).slice(0, 50);
+    return {
+      context_health: contextHealthFromRun(run),
+      candidate_recall: { value: generated ? verifierAccepted / generated : null, metric_type: "candidate_funnel_retention", generated, verifier_accepted: verifierAccepted },
+      verify_rejection_reasons: reasonsFor("verifier"),
+      judge_rejection_reasons: reasonsFor("judge"),
+      published_precision: { value: labeled ? accepted / labeled : null, accepted, false_positive: falsePositive, labeled, confidence: labeled >= 30 ? "measured" : labeled ? "low_sample" : "unlabeled" },
+      skill_checkpoint_metrics: boundReviewCoverageFromRun(run),
+      reproducibility: {
+        status: !llmCalls.length ? "no_llm_calls" : fingerprintComplete === llmCalls.length ? (exactReplayReady ? "replay_ready" : "fingerprinted") : "partial",
+        llm_call_count: llmCalls.length,
+        fingerprint_complete_rate: llmCalls.length ? fingerprintComplete / llmCalls.length : null,
+        exact_replay_ready: exactReplayReady,
+        stored_exchange_count: replayRecords,
+        replayed_call_count: llmCalls.filter((row) => row.replay_source === "recorded_response").length
+      },
+      unresolved_candidates: unresolved.map((row) => ({ id: row.id, dedupe_hash: row.dedupe_hash, title: row.title, file_path: row.file_path, line_start: row.line_start, stage: row.stage, status: row.status }))
+    };
+  }
+
   function compactRejectedItems(value: unknown) {
     if (!Array.isArray(value)) return [];
     return value.slice(0, 20).map((item) => {
@@ -851,6 +933,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       publish_allowed: false, consistency_contract: "production_review_pipeline_v1",
       snapshot_sha256: snapshotResult.snapshot_sha256, snapshot: snapshotResult.snapshot,
       max_duration_seconds: debugPolicy.max_duration_seconds, replay_mode: sameInput ? "same_input" : "latest_head",
+      snapshot_mode: "frozen", trace_level: "full", llm_replay: String(input.llm_replay || "record"),
       input_artifact_sha256: String(input.input_artifact_sha256 || ""),
       expires_at: expiresAt
     };
@@ -1181,7 +1264,8 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         tool_observations: toolObservations,
         trace,
         session_logs: sessionLogs,
-        compare: compareRunsForMr(params.mrId, compareLimit)
+        compare: compareRunsForMr(params.mrId, compareLimit),
+        quality: reviewQualityForRun(latestRun as Record<string, any> | undefined)
       };
     }),
     route("DELETE", "/api/mr-review/merge-requests/:mrId", ({ params, req }) => {
@@ -1445,7 +1529,14 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     route("GET", "/api/mr-review/review-runs/:runId", ({ params, req }) => {
       const denied = ensureRunRead(params.runId, req);
       if (denied) return denied;
-      return get("SELECT * FROM review_runs WHERE id = $1", [params.runId]) ?? notFound();
+      const run = get<Record<string, any>>("SELECT * FROM review_runs WHERE id = $1", [params.runId]);
+      if (!run) return notFound();
+      return {
+        ...run,
+        coverage: parseRecord(run.coverage_json),
+        context_health: contextHealthFromRun(run),
+        quality: reviewQualityForRun(run)
+      };
     }),
     route("GET", "/api/mr-review/review-runs/:runId/trace", ({ params, req, url }) => {
       const denied = ensureRunRead(params.runId, req);

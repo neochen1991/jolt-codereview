@@ -5,7 +5,8 @@ import time
 import urllib.error
 from typing import Any
 
-from llm.client import chat_completions_url, estimate_tokens, http_json, llm_request_timeout_seconds, llm_stream_enabled
+from llm.client import estimate_tokens, http_json, llm_request_timeout_seconds, llm_stream_enabled
+from llm.exchange import execute_chat_exchange, invoke_openai_chat, replay_mode_from_config
 from llm.retry import call_with_retry
 from llm_router import candidate_providers
 
@@ -251,27 +252,28 @@ def run_targeted_debate_with_llm(
                 timeout_seconds = llm_request_timeout_seconds(llm, "debate")
                 stream_enabled = llm_stream_enabled(llm)
                 try:
-                    response = call_with_retry(
-                        lambda: http_json(
-                            chat_completions_url(base_url),
-                            {"Authorization": f"Bearer {api_key}"},
-                            method="POST",
-                            body={
-                                "model": model,
-                                "messages": messages,
-                                "temperature": 0.1,
-                            },
-                            timeout_seconds=timeout_seconds,
-                            stream=stream_enabled,
-                        )
+                    exchange = execute_chat_exchange(
+                        recorder=recorder,
+                        span_id=span_id,
+                        operation="targeted_debate",
+                        agent_id="debate_moderator",
+                        context_unit_id=",".join(sorted({str(item.get("context_unit_id") or "") for item in related if item.get("context_unit_id")})),
+                        checkpoint_id=",".join(sorted({str(item.get("checkpoint_id") or "") for item in related if item.get("checkpoint_id")})),
+                        head_sha=str(next((item.get("head_sha") for item in related if item.get("head_sha")), "")),
+                        provider=provider,
+                        model=model,
+                        prompt=prompt,
+                        messages=messages,
+                        temperature=0.1,
+                        replay_mode=replay_mode_from_config(config),
+                        invoke=lambda seed: invoke_openai_chat(base_url=base_url, api_key=str(api_key), payload={"model": model, "messages": messages, "temperature": 0.1, "seed": seed}, timeout_seconds=timeout_seconds, stream=stream_enabled, transport=http_json, retry=call_with_retry),
                     )
+                    response = exchange.response
                     duration_ms = int((time.time() - started) * 1000)
                     usage = response.get("usage") or {}
                     input_tokens = int(usage.get("prompt_tokens", prompt_tokens))
                     output_tokens = int(usage.get("completion_tokens", 0))
                     content = response.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-                    response_debug_text = json.dumps({"content": content, "stream": response.get("_jolt_stream") or {"enabled": False}}, ensure_ascii=False)
-                    recorder.llm_call(span_id, provider, model, prompt, "completed", duration_ms, input_tokens, output_tokens, str(response.get("id") or ""), messages, response_debug_text)
                     if budget_tracker:
                         budget_tracker.charge_llm(model, input_tokens, output_tokens)
                     verdict = _parse_verdict(content, fallback)

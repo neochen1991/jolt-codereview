@@ -80,6 +80,12 @@ export interface AppConfig {
   };
   publish_policy?: Record<string, unknown>;
   data_policy?: Record<string, unknown>;
+  review_quality?: {
+    context_engine?: "v1" | "v2";
+    semantic_index?: "regex" | "tree_sitter" | "typed";
+    llm_replay?: "off" | "record" | "replay" | "live_repeat";
+    quality_shadow_mode?: boolean;
+  };
 }
 
 export interface RepositoryConfig {

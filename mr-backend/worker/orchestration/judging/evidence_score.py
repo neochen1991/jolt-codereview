@@ -7,6 +7,7 @@ from typing import Any
 
 from diff.slicer import extract_added_lines
 from rules.registry import rule_for_tool_observation, signature_keys_for
+from orchestration.judging.evidence_pack import build_evidence_pack
 
 
 SEVERITY_DOWNGRADE = {"critical": "high", "high": "medium", "medium": "low", "low": "info", "info": "info"}
@@ -298,10 +299,18 @@ def score(
     source_observations: list[dict[str, Any]] | None = None,
     peer_findings: list[dict[str, Any]] | None = None,
     suppression_hints: list[dict[str, Any]] | None = None,
+    context_health: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     index = line_index if line_index is not None else changed_line_index(files or [])
     tool_score, matching_tools = _tool_backing_score(finding, tool_observations or [])
     consensus_score, consensus_agents = _consensus_score(finding, peer_findings or [finding])
+    evidence_pack = build_evidence_pack(
+        finding,
+        semantic_paths=finding.get("semantic_paths") or [],
+        tool_observations=source_observations or [],
+        contradictions=finding.get("contradictions") or [],
+        context_health=context_health or finding.get("context_health") or {},
+    )
     components = {
         "tool_backing": round(tool_score, 4),
         "source_location": round(_source_location_score(finding, index), 4),
@@ -310,14 +319,20 @@ def score(
         "rule_alignment": round(_rule_alignment_score(finding, source_observations or []), 4),
         "symbol_alignment": round(_symbol_alignment_score(finding, related_context or {}), 4),
         "consensus": round(consensus_score, 4),
+        "semantic_path_strength": round(evidence_pack.semantic_path_strength * 0.15, 4),
+        "trigger_specificity": round(evidence_pack.trigger_specificity * 0.1, 4),
+        "context_completeness": round(evidence_pack.context_completeness * 0.1, 4),
     }
     suppression_penalty, matched_suppression_hint = _suppression_penalty(finding, suppression_hints or [])
-    total = round(max(0.0, min(1.0, sum(components.values())) - suppression_penalty), 4)
+    contradiction_penalty = round(evidence_pack.contradiction_penalty * 0.5, 4)
+    total = round(max(0.0, min(1.0, sum(components.values())) - suppression_penalty - contradiction_penalty), 4)
     return {
-        "version": "evidence_score_v1",
+        "version": "evidence_score_v2",
         "score": total,
         "components": components,
         "suppression_penalty": suppression_penalty,
+        "contradiction_penalty": contradiction_penalty,
+        "evidence_pack": evidence_pack.to_dict(),
         "matched_suppression_hint": matched_suppression_hint,
         "consensus_agents": consensus_agents,
         "matching_tool_count": len(matching_tools),
@@ -340,7 +355,17 @@ def apply_evidence_score_policy(finding: dict[str, Any], evidence_score: dict[st
     score_value = float(evidence_score.get("score") or 0)
     drop_below = float((thresholds or {}).get("drop_below", 0.35))
     downgrade_below = float((thresholds or {}).get("downgrade_below", 0.5))
-    if score_value < drop_below:
+    pack = evidence_score.get("evidence_pack") if isinstance(evidence_score.get("evidence_pack"), dict) else {}
+    pack_status = str(pack.get("status") or "")
+    if pack_status == "rejected_with_reason":
+        result["selected"] = 0
+        reason_codes = [str(code) for code in pack.get("reason_codes") or [] if str(code)]
+        result["judge_adjustment"] = reason_codes[0] if reason_codes else "contradicting_evidence"
+        result["rejected_reasons"] = list(dict.fromkeys([*(result.get("rejected_reasons") or []), *reason_codes]))
+    elif pack_status == "unresolved_context":
+        result["selected"] = 0
+        result["judge_adjustment"] = "unresolved_context"
+    elif score_value < drop_below:
         result["selected"] = 0
         result["judge_adjustment"] = "evidence_score_below_drop_threshold"
     elif score_value < downgrade_below:
@@ -348,4 +373,5 @@ def apply_evidence_score_policy(finding: dict[str, Any], evidence_score: dict[st
         result["confidence"] = round(max(0.0, float(result.get("confidence") or 0) * 0.85), 4)
         result["judge_adjustment"] = "evidence_score_downgraded"
     result["evidence_score"] = evidence_score
+    result["evidence_pack"] = pack
     return result

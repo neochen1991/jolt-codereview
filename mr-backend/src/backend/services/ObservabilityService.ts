@@ -9,6 +9,42 @@ function parseJson(value: string | null | undefined) {
   }
 }
 
+export function contextHealthPayload(row: { coverage_json?: string | null }) {
+  const coverage = parseJson(row.coverage_json) as Record<string, unknown>;
+  const health = coverage.context_health;
+  if (typeof health === "object" && health) return health as Record<string, unknown>;
+  return {
+    version: "context_health_v1",
+    context_engine: "unknown",
+    status: "unavailable",
+    diff_assignment_rate: null,
+    context_units_unresolved: null
+  };
+}
+
+export function summarizeContextHealth(rows: Array<{ coverage_json?: string | null }>) {
+  const items = rows.map(contextHealthPayload);
+  const rates = (key: string) => items
+    .map((item) => Number(item[key]))
+    .filter((value) => Number.isFinite(value));
+  const average = (values: number[]) => values.length
+    ? Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(4))
+    : null;
+  const status_counts = items.reduce<Record<string, number>>((acc, item) => {
+    const status = String(item.status || "unavailable");
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+  return {
+    run_count: items.length,
+    status_counts,
+    average_diff_assignment_rate: average(rates("diff_assignment_rate")),
+    average_source_fetch_rate: average(rates("source_fetch_rate")),
+    average_symbol_resolution_rate: average(rates("changed_symbol_resolution_rate")),
+    unresolved_run_count: items.filter((item) => Number(item.context_units_unresolved || 0) > 0).length
+  };
+}
+
 function numberValue(value: unknown) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;

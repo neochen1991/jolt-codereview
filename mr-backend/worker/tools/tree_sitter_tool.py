@@ -78,6 +78,15 @@ CONTROL_WORDS = {
     "def",
     "import",
 }
+CONFIG_CALL_NAMES = {
+    "getProperty",
+    "getenv",
+    "getString",
+    "getInteger",
+    "getLong",
+    "getBoolean",
+    "getConfig",
+}
 
 DEFAULT_IGNORE_DIRS = {
     ".git",
@@ -260,9 +269,19 @@ def _candidate_paths(worktree: Path, include_paths: list[str], ignore_dirs: set[
                 for sibling in parent.iterdir():
                     if sibling.is_file() and language_for_path(sibling):
                         key = sibling.resolve().as_posix()
-                        if key not in seen:
-                            seen.add(key)
-                            candidates.append(sibling)
+                    if key not in seen:
+                        seen.add(key)
+                        candidates.append(sibling)
+        # Priority paths must be indexed first, but cross-file analysis still
+        # needs callers/config/tests outside the changed file's directory.
+        # Continue with the rest of the repository and let max_files bound cost.
+        for candidate in worktree.rglob("*"):
+            if not candidate.is_file() or _ignored_path(candidate, worktree, ignore_dirs):
+                continue
+            key = candidate.resolve().as_posix()
+            if key not in seen:
+                seen.add(key)
+                candidates.append(candidate)
         return candidates
     return [path for path in worktree.rglob("*") if path.is_file()]
 
@@ -280,6 +299,7 @@ def _build_index(files: list[tuple[str, str]], base: dict[str, Any]) -> dict[str
     classes: list[dict[str, Any]] = []
     imports: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
+    config_refs: list[dict[str, Any]] = []
     parse_errors: list[dict[str, Any]] = []
     parsed_files = 0
     for file_path, content in files:
@@ -295,6 +315,7 @@ def _build_index(files: list[tuple[str, str]], base: dict[str, Any]) -> dict[str
         classes.extend(parsed["classes"])
         imports.extend(parsed["imports"])
         calls.extend(parsed["calls"])
+        config_refs.extend(parsed["config_refs"])
         if parsed.get("has_error"):
             parse_errors.append({"file_path": file_path, "language": language, "error": "tree_contains_error_nodes"})
     return {
@@ -308,10 +329,11 @@ def _build_index(files: list[tuple[str, str]], base: dict[str, Any]) -> dict[str
         "classes": classes[:2000],
         "imports": imports[:2000],
         "callers": calls[:4000],
+        "config_refs": config_refs[:2000],
         "callees": sorted({item["callee"] for item in calls})[:2000],
         "impact_symbols": _impact_symbols(functions, classes, calls),
         "parse_errors": parse_errors[:100],
-        "limits": {"max_functions": 2000, "max_classes": 2000, "max_calls": 4000},
+        "limits": {"max_functions": 2000, "max_classes": 2000, "max_calls": 4000, "max_config_refs": 2000},
     }
 
 
@@ -324,7 +346,7 @@ def _parse_file(file_path: str, language: str, content: str) -> dict[str, Any]:
         tree = parser.parse(source)
     except Exception as exc:
         return {"status": "parse_failed", "error": f"{type(exc).__name__}: {exc}"}
-    state = {"functions": [], "classes": [], "imports": [], "calls": []}
+    state = {"functions": [], "classes": [], "imports": [], "calls": [], "config_refs": []}
     _walk(tree.root_node, source, file_path, language, state, ["<module>"], 0)
     return {**state, "status": "parsed", "has_error": bool(getattr(tree.root_node, "has_error", False))}
 
@@ -351,6 +373,8 @@ def _walk(
                     "file_path": file_path,
                     "language": language,
                     "line": _line(node),
+                    "line_end": _line_end(node),
+                    "node_type": node_type,
                     "name": name,
                     "snippet": _snippet(node, source, 1800),
                 }
@@ -365,6 +389,8 @@ def _walk(
                     "file_path": file_path,
                     "language": language,
                     "line": _line(node),
+                    "line_end": _line_end(node),
+                    "node_type": node_type,
                     "name": name,
                     "snippet": _snippet(node, source, 1200),
                 }
@@ -374,18 +400,21 @@ def _walk(
     if node_type in CALL_NODE_TYPES:
         callee = _call_name(node, source)
         if callee and callee not in CONTROL_WORDS:
-            state["calls"].append(
-                {
-                    "file_path": file_path,
-                    "language": language,
-                    "line": _line(node),
-                    "caller": scope[-1] if scope else "<module>",
-                    "callee": callee,
-                    "receiver": _call_receiver(node, source),
-                    "snippet": _snippet(node, source, 500),
-                    "loop_depth": loop_depth,
-                }
-            )
+            snippet = _snippet(node, source, 500)
+            call_record = {
+                "file_path": file_path,
+                "language": language,
+                "line": _line(node),
+                "caller": scope[-1] if scope else "<module>",
+                "callee": callee,
+                "receiver": _call_receiver(node, source),
+                "snippet": snippet,
+                "loop_depth": loop_depth,
+            }
+            state["calls"].append(call_record)
+            config_key = _config_key_from_call(callee, snippet)
+            if config_key:
+                state["config_refs"].append({**call_record, "config_key": config_key})
     for child in node.named_children:
         _walk(child, source, file_path, language, state, scope, next_loop_depth)
     if pushed:
@@ -431,6 +460,13 @@ def _call_receiver(node: Any, source: bytes) -> str:
     return match.group(1) if match else ""
 
 
+def _config_key_from_call(callee: str, snippet: str) -> str:
+    if callee not in CONFIG_CALL_NAMES:
+        return ""
+    match = re.search(r"[\(,]\s*[\"']([^\"']{1,200})[\"']", snippet)
+    return match.group(1).strip() if match else ""
+
+
 def _last_identifier(text: str) -> str:
     names = re.findall(r"[A-Za-z_]\w*", text)
     return names[-1] if names else ""
@@ -438,6 +474,10 @@ def _last_identifier(text: str) -> str:
 
 def _line(node: Any) -> int:
     return int(node.start_point[0]) + 1
+
+
+def _line_end(node: Any) -> int:
+    return int(node.end_point[0]) + 1
 
 
 def _text(node: Any, source: bytes) -> str:

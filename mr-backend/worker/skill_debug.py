@@ -114,7 +114,7 @@ def apply_debug_snapshot(agent_configs: list[dict[str, Any]], snapshot: dict[str
 def apply_snapshot_config(current: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
     result = copy.deepcopy(current)
     frozen = dict(snapshot.get("config") or {})
-    for section in ("llm", "data_policy", "queue_policy"):
+    for section in ("llm", "data_policy", "queue_policy", "review_quality"):
         if not isinstance(frozen.get(section), dict):
             continue
         existing = dict(result.get(section) or {})
@@ -123,6 +123,28 @@ def apply_snapshot_config(current: dict[str, Any], snapshot: dict[str, Any]) -> 
                 continue
             existing[key] = copy.deepcopy(value)
         result[section] = existing
+    return result
+
+
+def apply_debug_execution_controls(current: dict[str, Any], debug_context: dict[str, Any]) -> dict[str, Any]:
+    """Apply trace/replay controls without forking the production review graph."""
+    result = copy.deepcopy(current)
+    if str(debug_context.get("kind") or "") != "skill_debug":
+        return result
+    replay = str(debug_context.get("llm_replay") or "record").strip().lower()
+    if replay not in {"off", "record", "replay", "live_repeat"}:
+        raise ValueError(f"unsupported skill debug llm replay mode: {replay}")
+    llm = dict(result.get("llm") or {})
+    llm["exchange_mode"] = replay
+    # Exact replay payload persistence is opt-in and bounded by the debug-session TTL.
+    llm["allow_exact_replay_storage"] = replay in {"record", "replay"}
+    result["llm"] = llm
+    result["_execution_controls"] = {
+        "execution_kind": "skill_debug",
+        "snapshot_mode": str(debug_context.get("snapshot_mode") or "frozen"),
+        "trace_level": str(debug_context.get("trace_level") or "full"),
+        "llm_replay": replay,
+    }
     return result
 
 

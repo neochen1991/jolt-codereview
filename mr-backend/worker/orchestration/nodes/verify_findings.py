@@ -7,6 +7,7 @@ from skill_debug import production_side_effects_allowed
 
 from tools.candidate_store import upsert_candidate_finding
 from tools.tool_normalizer import normalized_rule_category
+from orchestration.judging.evidence_pack import build_evidence_pack
 
 SOURCE_CONTEXT_WINDOW = 20
 
@@ -598,6 +599,19 @@ def verify_candidate_findings(
         ):
             source_snippet = source_snippet_loader(file_path, line_no, window=SOURCE_CONTEXT_WINDOW)
             contradiction_reasons = _source_contradiction_reasons(finding, source_snippet)
+            if contradiction_reasons:
+                finding = {
+                    **finding,
+                    "contradictions": [
+                        {"kind": reason.removeprefix("source_"), "reason_code": reason, "evidence": str(source_snippet or "")[:2000]}
+                        for reason in contradiction_reasons
+                    ],
+                }
+                finding["evidence_pack"] = build_evidence_pack(
+                    finding,
+                    contradictions=finding["contradictions"],
+                    context_health={"status": "full" if source_snippet else "patch_only"},
+                ).to_dict()
             reasons.extend(contradiction_reasons)
         if (
             file_path in valid_files

@@ -100,7 +100,14 @@ export class SkillDebugSnapshotService {
       config: {
         llm: input.effectiveConfig.llm || {},
         data_policy: input.effectiveConfig.data_policy || {},
-        queue_policy: input.effectiveConfig.queue_policy || {}
+        queue_policy: input.effectiveConfig.queue_policy || {},
+        review_quality: (input.effectiveConfig as Record<string, any>).review_quality || {}
+      },
+      execution: {
+        execution_kind: "skill_debug",
+        snapshot_mode: "frozen",
+        trace_level: "full",
+        llm_replay: "record"
       }
     }) as Record<string, unknown>;
     const snapshot_sha256 = createHash("sha256").update(stableStringify(snapshot)).digest("hex");

@@ -32,6 +32,7 @@ class Recorder:
         request_id: str | None = None,
         messages: list[dict[str, str]] | None = None,
         response_text: str = "",
+        **metadata: Any,
     ) -> None:
         self.calls.append({
             "span_id": span_id,
@@ -42,6 +43,7 @@ class Recorder:
             "output_tokens": output_tokens,
             "request_id": request_id,
             "response_text": response_text,
+            "metadata": metadata,
         })
 
     def event(self, span_id: str, event_type: str, message: str, payload: dict[str, Any] | None = None) -> None:
@@ -85,7 +87,7 @@ def main() -> None:
     ) -> dict[str, Any]:
         assert method == "POST"
         assert body is not None
-        assert body.get("seed") == client.LLM_REVIEW_SEED
+        assert body.get("seed") == client.derive_seed("", "expert", "backend_agent", "", "")
         http_bodies.append(body)
         if "response_format" in body:
             raise urllib.error.HTTPError(_url, 400, "unsupported response_format", hdrs=None, fp=None)
@@ -133,7 +135,7 @@ def main() -> None:
         assert provider == "fake-openai-compatible"
         assert model == "fake-review-model"
         assert schema_name == client.LLM_REVIEW_FALLBACK_SCHEMA_NAME
-        assert seed == client.LLM_REVIEW_SEED
+        assert seed == client.derive_seed("", "expert", "backend_agent", "", "")
         assert prompt
         cache[cache_key] = response
 
@@ -151,13 +153,20 @@ def main() -> None:
 
         first = client.call_llm(config, recorder, "span-1", agent, files)
         second = client.call_llm(config, recorder, "span-1", agent, files)
+        live_repeat_config = {
+            **config,
+            "llm": {**config["llm"], "exchange_mode": "live_repeat"},
+        }
+        repeated_live = client.call_llm(live_repeat_config, recorder, "span-1", agent, files)
 
         assert len(first) == 1, first
         assert first == second, (first, second)
+        assert first == repeated_live, (first, repeated_live)
         assert first[0]["covered_rules"] == ["BE-API-001"], first
-        assert len(http_bodies) == 2, http_bodies
+        assert len(http_bodies) == 3, http_bodies
         assert "response_format" in http_bodies[0], http_bodies
         assert "response_format" not in http_bodies[1], http_bodies
+        assert "response_format" not in http_bodies[2], http_bodies
         assert len(cache) == 1, cache
         assert client.schema_strict_disabled("fake-openai-compatible", "fake-review-model")
         event_types = [event["event_type"] for event in recorder.events]

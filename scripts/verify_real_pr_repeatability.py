@@ -132,7 +132,7 @@ def main() -> None:
         json.dumps(
             {
                 "ok": True,
-                "verified": "real_pr_repeatability",
+                "verified": "real_pr_scorer_determinism",
                 "tp": baseline["tp"],
                 "fp": baseline["fp"],
                 "fn": baseline["fn"],

@@ -7,6 +7,11 @@ from skill_debug import production_side_effects_allowed
 from orchestration.skill_runtime_facts import seal_skill_runtime_facts
 
 
+def attach_context_coverage(coverage: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    context_health = state.get("context_health") if isinstance(state.get("context_health"), dict) else {}
+    return {**coverage, "context_health": context_health}
+
+
 def _tool_aliases(tool_name: str) -> set[str]:
     raw = str(tool_name or "")
     aliases = {raw}
@@ -255,7 +260,7 @@ def make_finalize_node(
             loaded_skills,
             unclassified_deletions=unclassified_deletions,
         )
-        coverage = {
+        coverage = attach_context_coverage({
             "tools": [
                 {
                     "id": str(row["tool_name"]),
@@ -277,7 +282,7 @@ def make_finalize_node(
             "skill_runtime_schema": "skill_runtime_facts_v1",
             "skill_runtime_facts": skill_runtime_facts,
             "execution_kind": str(job.get("execution_kind") or "production_review"),
-        }
+        }, state)
         budget_used = {
             "llm_calls": int(usage["llm_calls"] or 0),
             "input_tokens": int(usage["input_tokens"] or 0),

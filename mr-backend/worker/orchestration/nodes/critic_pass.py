@@ -5,7 +5,8 @@ import time
 import urllib.error
 from typing import Any, Callable
 
-from llm.client import chat_completions_url, estimate_tokens, http_json, llm_request_timeout_seconds, llm_stream_enabled
+from llm.client import estimate_tokens, http_json, llm_request_timeout_seconds, llm_stream_enabled
+from llm.exchange import execute_chat_exchange, invoke_openai_chat, replay_mode_from_config
 from llm.retry import call_with_retry
 from llm_router import candidate_providers
 from rules.registry import rule as registry_rule
@@ -139,6 +140,10 @@ def _apply_verdict(finding: dict[str, Any], verdict: dict[str, Any]) -> dict[str
     if verdict.get("verdict") == "rejected":
         result["severity"] = DOWNGRADE.get(severity, severity)
         result["confidence"] = max(0.0, min(0.99, confidence * 0.7))
+        result["contradictions"] = [
+            *(result.get("contradictions") or []),
+            {"kind": "critic_counter_evidence", "evidence": str(verdict.get("reason") or "critic rejected the evidence")[:700]},
+        ]
     trace = result.get("quality_trace") if isinstance(result.get("quality_trace"), dict) else {}
     result["quality_trace"] = {**trace, "critic_verdict": verdict}
     return result
@@ -192,10 +197,25 @@ def run_critic_pass(
                     started = time.time()
                     messages = [{"role": "system", "content": "你是严格的代码检视 Critic，只输出 JSON。"}, {"role": "user", "content": prompt}]
                     try:
-                        response = call_with_retry(lambda: http_json(chat_completions_url(base_url), {"Authorization": f"Bearer {api_key}"}, method="POST", body={"model": model, "messages": messages, "temperature": 0.0}, timeout_seconds=llm_request_timeout_seconds(llm, "critic"), stream=llm_stream_enabled(llm)))
+                        exchange = execute_chat_exchange(
+                            recorder=recorder,
+                            span_id=span_id,
+                            operation="critic",
+                            agent_id="critic_agent",
+                            context_unit_id=str(finding.get("context_unit_id") or ""),
+                            checkpoint_id=str(finding.get("checkpoint_id") or ""),
+                            head_sha=str(finding.get("head_sha") or ""),
+                            provider=provider,
+                            model=model,
+                            prompt=prompt,
+                            messages=messages,
+                            temperature=0.0,
+                            replay_mode=replay_mode_from_config(config),
+                            invoke=lambda seed: invoke_openai_chat(base_url=base_url, api_key=str(api_key), payload={"model": model, "messages": messages, "temperature": 0.0, "seed": seed}, timeout_seconds=llm_request_timeout_seconds(llm, "critic"), stream=llm_stream_enabled(llm), transport=http_json, retry=call_with_retry),
+                        )
+                        response = exchange.response
                         usage = response.get("usage") or {}
                         content = response.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-                        recorder.llm_call(span_id, provider, model, prompt, "completed", int((time.time() - started) * 1000), int(usage.get("prompt_tokens", prompt_tokens)), int(usage.get("completion_tokens", 0)), str(response.get("id") or ""), messages, str(content))
                         if budget_tracker:
                             budget_tracker.charge_llm(model, int(usage.get("prompt_tokens", prompt_tokens)), int(usage.get("completion_tokens", 0)))
                         verdict = {**_parse(str(content)), "source": "llm"}

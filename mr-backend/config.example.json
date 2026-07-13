@@ -37,6 +37,12 @@
   "review_policy": {
     "max_added_lines_per_mr": 2000
   },
+  "review_quality": {
+    "context_engine": "v1",
+    "semantic_index": "tree_sitter",
+    "llm_replay": "record",
+    "quality_shadow_mode": false
+  },
   "agent_policy": {
     "deepagents": {
       "enabled": false,

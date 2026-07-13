@@ -53,6 +53,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "review_policy": {
         "max_added_lines_per_mr": 2000,
     },
+    "review_quality": {
+        "context_engine": "v1",
+        "semantic_index": "tree_sitter",
+        "llm_replay": "record",
+        "quality_shadow_mode": False,
+    },
     "agent_policy": {
         "deepagents": {
             "enabled": False,
@@ -91,6 +97,7 @@ SETTINGS_TO_CONFIG = {
     "publish_policy": "publish_policy",
     "data_policy": "data_policy",
     "token_usage": "token_usage",
+    "review_quality": "review_quality",
 }
 
 VCS_POLICY_KEY = "vcs_policy"
@@ -114,6 +121,25 @@ def load_config() -> dict[str, Any]:
         user_config = json.loads(config_path.read_text("utf-8"))
         config = deep_merge(config, user_config)
     return config
+
+
+def normalize_review_quality_config(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("review_quality") if isinstance(config.get("review_quality"), dict) else {}
+    result = {
+        "context_engine": str(raw.get("context_engine") or "v1"),
+        "semantic_index": str(raw.get("semantic_index") or "tree_sitter"),
+        "llm_replay": str(raw.get("llm_replay") or "record"),
+        "quality_shadow_mode": bool(raw.get("quality_shadow_mode", False)),
+    }
+    allowed = {
+        "context_engine": {"v1", "v2"},
+        "semantic_index": {"regex", "tree_sitter", "typed"},
+        "llm_replay": {"off", "record", "replay", "live_repeat"},
+    }
+    for key, values in allowed.items():
+        if result[key] not in values:
+            raise ValueError(f"unsupported review_quality.{key}: {result[key]}")
+    return result
 
 
 def common_base_url(config: dict[str, Any]) -> str:

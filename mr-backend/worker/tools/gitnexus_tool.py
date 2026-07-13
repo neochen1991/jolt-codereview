@@ -9,11 +9,12 @@ def probe() -> dict:
 
 
 def impact_paths(worktree: Path, changed_files: list[str]) -> dict:
-    status = probe()["status"]
     return {
-        "status": status,
+        "status": "unsupported",
+        "analysis_complete": False,
+        "cli_status": probe()["status"],
         "worktree": str(worktree),
         "changed_files": changed_files,
         "impact_paths": [],
-        "note": "GitNexus impact extraction is enabled when gitnexus CLI is installed.",
+        "note": "GitNexus CLI probing exists, but impact extraction is not implemented; no-impact must not be inferred.",
     }

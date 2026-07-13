@@ -253,9 +253,41 @@ export function migrate(db: Db) {
       output_tokens INTEGER NOT NULL DEFAULT 0,
       duration_ms INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL,
+      operation TEXT NOT NULL DEFAULT '',
+      agent_id TEXT NOT NULL DEFAULT '',
+      context_unit_id TEXT NOT NULL DEFAULT '',
+      context_hash TEXT NOT NULL DEFAULT '',
+      checkpoint_id TEXT NOT NULL DEFAULT '',
+      seed INTEGER,
+      temperature DOUBLE PRECISION,
+      request_hash TEXT NOT NULL DEFAULT '',
+      response_hash TEXT NOT NULL DEFAULT '',
+      cache_key TEXT NOT NULL DEFAULT '',
+      replay_source TEXT NOT NULL DEFAULT '',
+      response_artifact_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS llm_exchange_records (
+      cache_key TEXT PRIMARY KEY,
+      operation TEXT NOT NULL,
+      agent_id TEXT NOT NULL DEFAULT '',
+      context_unit_id TEXT NOT NULL DEFAULT '',
+      context_hash TEXT NOT NULL DEFAULT '',
+      checkpoint_id TEXT NOT NULL DEFAULT '',
+      head_sha TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      seed INTEGER NOT NULL,
+      temperature DOUBLE PRECISION NOT NULL DEFAULT 0,
+      request_hash TEXT NOT NULL,
+      response_hash TEXT NOT NULL,
+      response_json TEXT NOT NULL,
+      review_run_id TEXT NOT NULL DEFAULT '',
+      expires_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS token_usage_reports (
       id TEXT PRIMARY KEY,
       review_run_id TEXT NOT NULL,
@@ -778,6 +810,26 @@ export function migrate(db: Db) {
   addColumnIfMissing(db, "full_review_jobs", "heartbeat_at", "TEXT");
   addColumnIfMissing(db, "full_review_jobs", "failure_reason", "TEXT");
   addColumnIfMissing(db, "llm_response_cache", "project_id", "TEXT NOT NULL DEFAULT 'project_default'");
+  addColumnIfMissing(db, "llm_call_records", "operation", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "llm_call_records", "agent_id", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "llm_call_records", "context_unit_id", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "llm_call_records", "context_hash", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "llm_call_records", "checkpoint_id", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "llm_call_records", "seed", "INTEGER");
+  addColumnIfMissing(db, "llm_call_records", "temperature", "DOUBLE PRECISION");
+  addColumnIfMissing(db, "llm_call_records", "request_hash", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "llm_call_records", "response_hash", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "llm_call_records", "cache_key", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "llm_call_records", "replay_source", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "llm_call_records", "response_artifact_id", "TEXT");
+  addColumnIfMissing(db, "llm_exchange_records", "review_run_id", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "llm_exchange_records", "expires_at", "TEXT");
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_llm_exchange_records_run
+      ON llm_exchange_records(review_run_id);
+    CREATE INDEX IF NOT EXISTS idx_llm_exchange_records_expires
+      ON llm_exchange_records(expires_at);
+  `);
   addColumnIfMissing(db, "custom_skills", "active_version_id", "TEXT");
   addColumnIfMissing(db, "custom_skill_versions", "bundle_sha256", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "custom_skill_versions", "validation_json", "TEXT NOT NULL DEFAULT '{}'");

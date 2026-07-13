@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import time
 import urllib.request
+from pathlib import Path
 from typing import Any, Callable
 
 from deepagents import create_deep_agent
@@ -14,6 +16,9 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from llm.client import collect_openai_sse_response, estimate_tokens, llm_request_timeout_seconds, llm_stream_enabled, parse_openai_response_text
 from llm.retry import call_with_retry
+from llm.exchange import execute_chat_exchange, invoke_openai_chat, replay_mode_from_config
+from context.semantic_graph import SemanticGraph
+from context.source_tools import FrozenSourceTools
 
 
 class OpenAICompatibleToolChatModel(BaseChatModel):
@@ -25,6 +30,11 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
     enable_stream: bool = True
     bound_tools: list[dict[str, Any]] = []
     trace_callback: Callable[[dict[str, Any]], None] | None = None
+    exchange_recorder: Any = None
+    head_sha: str = ""
+    agent_id: str = "deepagent"
+    replay_mode: str = "record"
+    exchange_span_id: str = "deepagent"
 
     @property
     def _llm_type(self) -> str:
@@ -47,34 +57,64 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
         if self.bound_tools:
             payload["tools"] = self.bound_tools
             payload["tool_choice"] = "auto"
-        request_payload = dict(payload)
-        if self.enable_stream:
-            request_payload["stream"] = True
-            request_payload.setdefault("stream_options", {"include_usage": True})
-        request = urllib.request.Request(
-            f"{self.base_url.rstrip('/')}/chat/completions",
-            data=json.dumps(request_payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "User-Agent": "Jolt-CodeReview-Worker/0.1",
-            },
-            method="POST",
-        )
         started = time.time()
         prompt_text = json.dumps(payload["messages"], ensure_ascii=False)
         prompt_tokens = estimate_tokens(prompt_text)
         try:
-            def execute_request() -> dict[str, Any]:
-                with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
-                    headers = getattr(response, "headers", {})
-                    content_type = str(headers.get("Content-Type") if hasattr(headers, "get") else "").lower()
-                    if self.enable_stream and "text/event-stream" in content_type:
-                        return collect_openai_sse_response(response, started)
-                    return parse_openai_response_text(response.read().decode("utf-8", errors="replace"), started)
+            def execute_request(seed: int) -> dict[str, Any]:
+                request_payload = {**payload, "seed": seed}
+                if self.enable_stream:
+                    request_payload["stream"] = True
+                    request_payload.setdefault("stream_options", {"include_usage": True})
+                def transport(endpoint: str, headers: dict[str, str], **request_options: Any) -> dict[str, Any]:
+                    request = urllib.request.Request(
+                        endpoint,
+                        data=json.dumps(request_options.get("body") or request_payload).encode("utf-8"),
+                        headers={
+                            **headers,
+                            "Content-Type": "application/json",
+                            "Accept": "application/json",
+                            "User-Agent": "Jolt-CodeReview-Worker/0.1",
+                        },
+                        method=str(request_options.get("method") or "POST"),
+                    )
+                    timeout = int(request_options.get("timeout_seconds") or self.request_timeout_seconds)
+                    with urllib.request.urlopen(request, timeout=timeout) as response:
+                        response_headers = getattr(response, "headers", {})
+                        content_type = str(response_headers.get("Content-Type") if hasattr(response_headers, "get") else "").lower()
+                        if self.enable_stream and "text/event-stream" in content_type:
+                            return collect_openai_sse_response(response, started)
+                        return parse_openai_response_text(response.read().decode("utf-8", errors="replace"), started)
 
-            data = call_with_retry(execute_request)
+                return invoke_openai_chat(
+                    base_url=self.base_url,
+                    api_key=self.api_key,
+                    payload=request_payload,
+                    timeout_seconds=self.request_timeout_seconds,
+                    stream=self.enable_stream,
+                    transport=transport,
+                    retry=call_with_retry,
+                )
+
+            if self.exchange_recorder is None:
+                raise RuntimeError("DeepAgent model calls require an LLM Exchange recorder")
+            exchange = execute_chat_exchange(
+                recorder=self.exchange_recorder,
+                span_id=self.exchange_span_id,
+                operation="deepagent_turn",
+                agent_id=self.agent_id,
+                context_unit_id="",
+                checkpoint_id="",
+                head_sha=self.head_sha,
+                provider=self.provider,
+                model=self.model_name,
+                prompt=prompt_text,
+                messages=payload["messages"],
+                temperature=0.1,
+                replay_mode=self.replay_mode,
+                invoke=execute_request,
+            )
+            data = exchange.response
         except Exception as exc:
             self._trace_llm_call(
                 {
@@ -99,18 +139,6 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
                 "stream": data.get("_jolt_stream") or {"enabled": False},
             },
             ensure_ascii=False,
-        )
-        self._trace_llm_call(
-            {
-                "prompt": prompt_text,
-                "request_messages": payload["messages"],
-                "status": "completed",
-                "duration_ms": int((time.time() - started) * 1000),
-                "input_tokens": int(usage.get("prompt_tokens", prompt_tokens)),
-                "output_tokens": int(usage.get("completion_tokens", 0)),
-                "request_id": str(data.get("id") or ""),
-                "response_text": response_text,
-            }
         )
         tool_calls = []
         for call in raw_message.get("tool_calls") or []:
@@ -148,6 +176,11 @@ def run_bounded_deepagent(
     llm_config: dict[str, Any],
     max_tool_calls: int = 12,
     llm_trace: Callable[[dict[str, Any]], None] | None = None,
+    source_worktree_path: str | None = None,
+    head_sha: str = "",
+    semantic_graph: SemanticGraph | None = None,
+    exchange_recorder: Any = None,
+    exchange_span_id: str = "deepagent",
 ) -> dict[str, Any]:
     agent_id = str(agent.get("agent_id") or "unknown_agent")
     applies_to = agent.get("applies_to") or {}
@@ -203,8 +236,24 @@ def run_bounded_deepagent(
         basename_matches = [changed for name, changed in candidates.items() if name.endswith(f"/{normalized}") or name.rsplit("/", 1)[-1] == normalized]
         return basename_matches[0] if len(basename_matches) == 1 else None
 
+    frozen_source_tools: FrozenSourceTools | None = None
+    if source_worktree_path and head_sha:
+        try:
+            frozen_source_tools = FrozenSourceTools(
+                Path(source_worktree_path),
+                head_sha=head_sha,
+                semantic_graph=semantic_graph or SemanticGraph.empty(),
+            )
+        except (OSError, ValueError, subprocess.SubprocessError):
+            frozen_source_tools = None
+
     def read_file(path: str) -> str:
-        """Read the real MR changed-file patch by repository-relative file path."""
+        """Read frozen head-SHA source when available, otherwise return the changed-file patch."""
+        if frozen_source_tools is not None:
+            try:
+                return frozen_source_tools.read_source_range(_normalize_review_path(path), 1, 400)
+            except ValueError:
+                pass
         changed = _changed_file_by_path(path)
         if changed is None:
             return f"changed file not found: {_normalize_review_path(path)}"
@@ -225,6 +274,35 @@ def run_bounded_deepagent(
         if changed is None:
             return f"changed file not found: {_normalize_review_path(path)}"
         return str(getattr(changed, "patch", "") or "")[:12000]
+
+    def read_source_range(path: str, line_start: int, line_end: int) -> str:
+        """Read an audited line range from the immutable head-SHA worktree."""
+        if frozen_source_tools is None:
+            return "full source unavailable: review is running in patch-only mode"
+        try:
+            return frozen_source_tools.read_source_range(_normalize_review_path(path), line_start, line_end)
+        except ValueError as exc:
+            return str(exc)
+
+    def find_symbol(name: str) -> str:
+        """Find semantic symbol definitions in the frozen repository graph."""
+        return json.dumps(frozen_source_tools.find_symbol(name) if frozen_source_tools else [], ensure_ascii=False)
+
+    def find_callers(name: str) -> str:
+        """Find audited callers and their typed/syntax/heuristic confidence."""
+        return json.dumps(frozen_source_tools.find_callers(name) if frozen_source_tools else [], ensure_ascii=False)
+
+    def find_implementations(name: str) -> str:
+        """Find explicit implementations of an interface or class."""
+        return json.dumps(frozen_source_tools.find_implementations(name) if frozen_source_tools else [], ensure_ascii=False)
+
+    def find_tests(name: str) -> str:
+        """Find repository test nodes associated with a symbol name."""
+        return json.dumps(frozen_source_tools.find_tests(name) if frozen_source_tools else [], ensure_ascii=False)
+
+    def find_config_refs(name: str) -> str:
+        """Find semantic configuration references associated with a symbol or key."""
+        return json.dumps(frozen_source_tools.find_config_refs(name) if frozen_source_tools else [], ensure_ascii=False)
 
     skill_assets = [
         {
@@ -287,6 +365,12 @@ def run_bounded_deepagent(
         inspect_diff_summary,
         read_file,
         read_diff_patch,
+        read_source_range,
+        find_symbol,
+        find_callers,
+        find_implementations,
+        find_tests,
+        find_config_refs,
         list_skill_assets,
         read_skill_asset,
         run_skill_script,
@@ -301,12 +385,19 @@ def run_bounded_deepagent(
             request_timeout_seconds=request_timeout_seconds,
             enable_stream=enable_stream,
             trace_callback=llm_trace,
+            exchange_recorder=exchange_recorder,
+            head_sha=head_sha,
+            agent_id=agent_id,
+            replay_mode=replay_mode_from_config(llm_config),
+            exchange_span_id=exchange_span_id,
         ),
         tools=tools,
         system_prompt=(
             "你是 Jolt CodeReview 的受控 DeepAgents 子图。"
             "必须先调用平台只读工具读取真实规则、真实静态扫描观察和真实 diff 摘要；"
-            "需要查看具体代码时必须调用 read_file 或 read_diff_patch 读取真实 MR 变更 patch；"
+            "需要查看具体代码时优先调用 read_source_range 读取冻结 head SHA 的完整源码；"
+            "跨文件结论必须使用 find_callers/find_implementations/find_tests/find_config_refs 获取带可信度的语义证据；"
+            "read_diff_patch 只用于确认实际变更行；"
             "如果存在项目自定义标准 Skill bundle，必须优先调用 list_skill_assets/read_skill_asset 读取 references 或 scripts；"
             "规则来源优先级固定为 Skill > 绑定规范 > 专家画像；"
             "读取 Skill 后必须在摘要中保留 Skill 中定义的原始 rule_id/checkpoint_id；"

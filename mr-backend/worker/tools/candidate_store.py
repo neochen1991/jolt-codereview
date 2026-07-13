@@ -21,6 +21,12 @@ JUDGE_REASON_MESSAGES = {
     "not_selected_after_quality_calibration": "质量校准后候选未达到保留门槛。",
     "max_findings_exceeded": "候选超过本次 Review 的最大问题数量限制。",
     "unsupported_low_precision_llm_finding": "候选属于低精度且缺少可靠支撑的模型结论。",
+    "unresolved_context": "候选上下文不完整，无法可靠确认或排除，已保留人工复核。",
+    "heuristic_semantic_path": "跨文件结论仅由启发式同名关系支撑，不能自动确认。",
+    "contradicting_evidence": "源码或工具证据与候选结论相矛盾。",
+    "contradicting_authorization_guard": "源码中存在与候选结论相矛盾的权限拦截。",
+    "contradicting_null_guard": "源码中存在与候选结论相矛盾的空值保护。",
+    "contradicting_transaction_compensation": "源码中存在与候选结论相矛盾的事务补偿。",
     "rule_auto_suppressed_low_confidence": "规则历史精度过低且当前置信度不足，候选被抑制。",
 }
 

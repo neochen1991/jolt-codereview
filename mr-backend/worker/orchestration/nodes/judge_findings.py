@@ -3995,6 +3995,7 @@ def make_judge_findings_node(
                 source_observations=source_observations,
                 peer_findings=final_findings,
                 suppression_hints=suppression_hints,
+                context_health=state.get("context_health") or {},
             )
             finding = apply_evidence_score_policy(finding, evidence_score, evidence_thresholds if isinstance(evidence_thresholds, dict) else None)
             quality_trace = {
@@ -4002,7 +4003,44 @@ def make_judge_findings_node(
                 "evidence_score": evidence_score,
                 "consensus_agents": evidence_score.get("consensus_agents") or [],
                 "matched_suppression_hint": evidence_score.get("matched_suppression_hint"),
+                "evidence_pack": evidence_score.get("evidence_pack") or {},
             }
+            pack = evidence_score.get("evidence_pack") if isinstance(evidence_score.get("evidence_pack"), dict) else {}
+            pack_status = str(pack.get("status") or "")
+            pack_reasons = [str(reason) for reason in pack.get("reason_codes") or [] if str(reason)]
+            if pack_status == "rejected_with_reason":
+                rejected = {
+                    **finding,
+                    "quality_trace": quality_trace,
+                    "source_observations": source_observations,
+                    "tool_provenance": tool_provenance,
+                    "rejected_reasons": pack_reasons or ["contradicting_evidence"],
+                }
+                judge_rejections.append(rejected)
+                recorder.event(judge_span, "finding_dropped", f"{finding.get('title', 'candidate')} 被反证过滤", {"dedupe_hash": finding.get("dedupe_hash"), "reason_codes": pack_reasons})
+                continue
+            if pack_status == "unresolved_context":
+                retained = retain_as_needs_review(
+                    finding,
+                    reason="unresolved_context",
+                    quality_trace=quality_trace,
+                    source_observations=source_observations,
+                    tool_provenance=tool_provenance,
+                )
+                prepared_findings.append(retained)
+                recorder.event(judge_span, "finding_retained_for_review", f"{finding.get('title', 'candidate')} 上下文不足，保留人工复核", {"dedupe_hash": finding.get("dedupe_hash"), "reason_codes": pack_reasons})
+                continue
+            if pack_status == "needs_review" and "heuristic_semantic_path" in pack_reasons:
+                retained = retain_as_needs_review(
+                    finding,
+                    reason="heuristic_semantic_path",
+                    quality_trace=quality_trace,
+                    source_observations=source_observations,
+                    tool_provenance=tool_provenance,
+                )
+                prepared_findings.append(retained)
+                recorder.event(judge_span, "finding_retained_for_review", f"{finding.get('title', 'candidate')} 仅有启发式跨文件关系，保留人工复核", {"dedupe_hash": finding.get("dedupe_hash")})
+                continue
             if finding.get("judge_adjustment") == "evidence_score_below_drop_threshold" and should_retain_final_candidate_for_review(
                 finding,
                 reason="evidence_score_below_drop_threshold",

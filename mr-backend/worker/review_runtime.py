@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from config import effective_project_config, load_config
+from config import effective_project_config, load_config, normalize_review_quality_config
 from db_postgres import open_app_database
 from db_helpers import table_exists
 from file_logger import clear_worker_logs, write_review_run_log, write_worker_log
@@ -30,8 +30,9 @@ from context.repo_index import build_repo_index
 from context.snapshot import build_code_context_snapshot
 from context.symbol_resolver import resolve_diff_symbols
 from diff.slicer import build_diff_slices, diff_hunks_by_file, extract_added_lines, source_snippet_loader_for_files
-from llm.client import call_llm, chat_completions_url, estimate_tokens, http_json as llm_http_json, llm_request_timeout_seconds, llm_stream_enabled, normalize_confidence, normalize_line_number, parse_llm_findings, summarize_pr_with_llm
+from llm.client import call_llm, estimate_tokens, http_json as llm_http_json, llm_request_timeout_seconds, llm_stream_enabled, normalize_confidence, normalize_line_number, parse_llm_findings, summarize_pr_with_llm
 from llm.retry import call_with_retry
+from llm.exchange import execute_chat_exchange, invoke_openai_chat, replay_mode_from_config
 from llm_router import candidate_providers
 from orchestration.graph import invoke_review_graph
 from orchestration.nodes.build_context import make_build_context_node
@@ -52,6 +53,7 @@ from token_usage_reporter import report_token_usage
 from skill_debug import (
     SkillDebugStopped,
     apply_debug_snapshot,
+    apply_debug_execution_controls,
     apply_snapshot_config,
     check_debug_cancelled_or_timed_out,
     debug_skill_summary,
@@ -130,6 +132,23 @@ def ensure_worker_schema(conn: Any) -> None:
     add_column_if_missing("skill_debug_sessions", "input_artifact_sha256", "TEXT NOT NULL DEFAULT ''")
     add_column_if_missing("rule_precision_history", "recent_accepted_count", "INTEGER NOT NULL DEFAULT 0")
     add_column_if_missing("rule_precision_history", "recent_rejected_count", "INTEGER NOT NULL DEFAULT 0")
+    for column, definition in (
+        ("operation", "TEXT NOT NULL DEFAULT ''"),
+        ("agent_id", "TEXT NOT NULL DEFAULT ''"),
+        ("context_unit_id", "TEXT NOT NULL DEFAULT ''"),
+        ("context_hash", "TEXT NOT NULL DEFAULT ''"),
+        ("checkpoint_id", "TEXT NOT NULL DEFAULT ''"),
+        ("seed", "INTEGER"),
+        ("temperature", "DOUBLE PRECISION"),
+        ("request_hash", "TEXT NOT NULL DEFAULT ''"),
+        ("response_hash", "TEXT NOT NULL DEFAULT ''"),
+        ("cache_key", "TEXT NOT NULL DEFAULT ''"),
+        ("replay_source", "TEXT NOT NULL DEFAULT ''"),
+        ("response_artifact_id", "TEXT"),
+    ):
+        add_column_if_missing("llm_call_records", column, definition)
+    add_column_if_missing("llm_exchange_records", "review_run_id", "TEXT NOT NULL DEFAULT ''")
+    add_column_if_missing("llm_exchange_records", "expires_at", "TEXT")
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS mr_finding_history (
@@ -166,9 +185,36 @@ def ensure_worker_schema(conn: Any) -> None:
           seed INTEGER NOT NULL,
           prompt_hash TEXT NOT NULL,
           response_json TEXT NOT NULL,
+          review_run_id TEXT NOT NULL DEFAULT '',
+          expires_at TEXT,
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS llm_exchange_records (
+          cache_key TEXT PRIMARY KEY,
+          operation TEXT NOT NULL,
+          agent_id TEXT NOT NULL DEFAULT '',
+          context_unit_id TEXT NOT NULL DEFAULT '',
+          context_hash TEXT NOT NULL DEFAULT '',
+          checkpoint_id TEXT NOT NULL DEFAULT '',
+          head_sha TEXT NOT NULL DEFAULT '',
+          provider TEXT NOT NULL,
+          model TEXT NOT NULL,
+          seed INTEGER NOT NULL,
+          temperature DOUBLE PRECISION NOT NULL DEFAULT 0,
+          request_hash TEXT NOT NULL,
+          response_hash TEXT NOT NULL,
+          response_json TEXT NOT NULL,
+          review_run_id TEXT NOT NULL DEFAULT '',
+          expires_at TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_llm_exchange_records_run
+          ON llm_exchange_records(review_run_id);
+        CREATE INDEX IF NOT EXISTS idx_llm_exchange_records_expires
+          ON llm_exchange_records(expires_at);
         CREATE TABLE IF NOT EXISTS candidate_findings (
           id TEXT PRIMARY KEY,
           review_run_id TEXT NOT NULL,
@@ -280,6 +326,14 @@ def ensure_worker_schema(conn: Any) -> None:
         """
     )
     add_column_if_missing("llm_response_cache", "project_id", "TEXT NOT NULL DEFAULT 'project_default'")
+    conn.execute(
+        """
+        DELETE FROM llm_exchange_records
+        WHERE expires_at IS NOT NULL
+          AND expires_at <> ''
+          AND NULLIF(expires_at, '')::timestamptz <= CURRENT_TIMESTAMP
+        """
+    )
     conn.commit()
 
 
@@ -430,14 +484,31 @@ class Recorder:
         request_id: str | None = None,
         request_messages: list[dict[str, Any]] | None = None,
         response_text: str | None = None,
+        *,
+        operation: str = "",
+        agent_id: str = "",
+        context_unit_id: str = "",
+        context_hash: str = "",
+        checkpoint_id: str = "",
+        seed: int | None = None,
+        temperature: float | None = None,
+        request_hash: str = "",
+        response_hash: str = "",
+        cache_key: str = "",
+        replay_source: str = "",
+        response_artifact_id: str | None = None,
     ) -> None:
         self.conn.execute(
             """
             INSERT INTO llm_call_records (
               id, span_id, provider, model, request_id, prompt_hash,
-              input_tokens, output_tokens, duration_ms, status
+              input_tokens, output_tokens, duration_ms, status,
+              operation, agent_id, context_unit_id, context_hash, checkpoint_id, seed,
+              temperature, request_hash, response_hash, cache_key, replay_source,
+              response_artifact_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 new_id("llm"),
@@ -450,6 +521,18 @@ class Recorder:
                 output_tokens,
                 duration_ms,
                 status,
+                operation,
+                agent_id,
+                context_unit_id,
+                context_hash,
+                checkpoint_id,
+                seed,
+                temperature,
+                request_hash,
+                response_hash,
+                cache_key,
+                replay_source,
+                response_artifact_id,
             ),
         )
         self._mark_write(force=True)
@@ -473,6 +556,18 @@ class Recorder:
                 "output_tokens": output_tokens,
                 "duration_ms": duration_ms,
                 "status": status,
+                "operation": operation,
+                "agent_id": agent_id,
+                "context_unit_id": context_unit_id,
+                "context_hash": context_hash,
+                "checkpoint_id": checkpoint_id,
+                "seed": seed,
+                "temperature": temperature,
+                "request_hash": request_hash,
+                "response_hash": response_hash,
+                "cache_key": cache_key,
+                "replay_source": replay_source,
+                "response_artifact_id": response_artifact_id,
             },
             "error" if status.startswith("failed") else "info",
         )
@@ -4134,27 +4229,28 @@ def route_agents_with_llm(
         timeout_seconds = llm_request_timeout_seconds(llm, "router")
         stream_enabled = llm_stream_enabled(llm)
         try:
-            response = call_with_retry(
-                lambda: llm_http_json(
-                    chat_completions_url(base_url),
-                    {"Authorization": f"Bearer {api_key}"},
-                    method="POST",
-                    body={
-                        "model": model,
-                        "messages": messages,
-                        "temperature": 0.0,
-                    },
-                    timeout_seconds=timeout_seconds,
-                    stream=stream_enabled,
-                )
+            exchange = execute_chat_exchange(
+                recorder=recorder,
+                span_id=span_id,
+                operation="router",
+                agent_id="review_router",
+                context_unit_id="",
+                checkpoint_id="",
+                head_sha=str(project_config.get("_head_sha") or ""),
+                provider=provider,
+                model=model,
+                prompt=prompt,
+                messages=messages,
+                temperature=0.0,
+                replay_mode=replay_mode_from_config(project_config),
+                invoke=lambda seed: invoke_openai_chat(base_url=base_url, api_key=str(api_key), payload={"model": model, "messages": messages, "temperature": 0.0, "seed": seed}, timeout_seconds=timeout_seconds, stream=stream_enabled, transport=llm_http_json, retry=call_with_retry),
             )
+            response = exchange.response
             duration_ms = int((time.time() - started) * 1000)
             usage = response.get("usage") or {}
             input_tokens = int(usage.get("prompt_tokens", prompt_tokens))
             output_tokens = int(usage.get("completion_tokens", 0))
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "[]")
-            response_debug_text = json.dumps({"content": content, "stream": response.get("_jolt_stream") or {"enabled": False}}, ensure_ascii=False)
-            recorder.llm_call(span_id, provider, model, prompt, "completed", duration_ms, input_tokens, output_tokens, str(response.get("id") or ""), messages, response_debug_text)
             if budget_tracker:
                 budget_tracker.charge_llm(model, input_tokens, output_tokens)
             start = content.find("[")
@@ -4718,6 +4814,13 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     project_config = effective_project_config(config, conn, project_id, job["requested_by"])
     if is_debug_job(job):
         project_config = apply_snapshot_config(project_config, dict(debug_context.get("snapshot") or {}))
+        project_config = apply_debug_execution_controls(project_config, debug_context)
+    review_quality = normalize_review_quality_config(project_config)
+    project_config["review_quality"] = review_quality
+    project_config["llm"] = {**(project_config.get("llm") or {}), "exchange_mode": review_quality["llm_replay"]}
+    if is_debug_job(job):
+        project_config["llm"]["exchange_mode"] = str(debug_context.get("llm_replay") or "record")
+    recorder.config = project_config
 
     size_guard_files: list[ChangedFile] | None = None
     size_decision = evaluate_mr_size_policy(mr, None, project_config)
@@ -4824,6 +4927,8 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     if is_debug_job(job):
         agent_configs = apply_debug_snapshot(agent_configs, dict(debug_context.get("snapshot") or {}), debug_variant(job))
     agent_config_by_id = {agent["agent_id"]: agent for agent in agent_configs}
+    project_config["_head_sha"] = str(job["head_sha"])
+    project_config["_review_run_id"] = str(run_id)
 
     try:
         fetch_node = make_fetch_mr_node(
@@ -4889,7 +4994,7 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             agent_configs=agent_configs,
             route_agents=route_agents,
         )
-        build_context_node = make_build_context_node(recorder=recorder)
+        build_context_node = make_build_context_node(recorder=recorder, project_config=project_config)
         run_experts_node = make_run_experts_node(
             conn=conn,
             recorder=recorder,

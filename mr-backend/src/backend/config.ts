@@ -56,6 +56,12 @@ const DEFAULT_CONFIG: AppConfig = {
   review_policy: {
     max_added_lines_per_mr: 2000
   },
+  review_quality: {
+    context_engine: "v1",
+    semantic_index: "tree_sitter",
+    llm_replay: "record",
+    quality_shadow_mode: false
+  },
   agent_policy: {
     deepagents: {
       enabled: false,
@@ -111,6 +117,7 @@ function mergeConfig(base: AppConfig, override: AppConfig): AppConfig {
     cleanup_policy: { ...base.cleanup_policy, ...override.cleanup_policy },
     budget_policy: { ...base.budget_policy, ...override.budget_policy },
     review_policy: { ...base.review_policy, ...override.review_policy },
+    review_quality: { ...base.review_quality, ...override.review_quality },
     agent_policy: { ...base.agent_policy, ...override.agent_policy },
     tool_policy: { ...base.tool_policy, ...override.tool_policy },
     queue_policy: { ...base.queue_policy, ...override.queue_policy },

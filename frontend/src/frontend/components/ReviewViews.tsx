@@ -594,6 +594,7 @@ export function DetailPanel({
               />
             ))}
             {hasRun && <CoverageCard run={detail.runs[0]} />}
+            {hasRun && <ReviewQualityCard quality={detail.quality} />}
             {!detail.findings.length && !hasRun && (
               <div className="empty-finding pending">
                 <Loader2 className="spin" size={22} />
@@ -693,6 +694,7 @@ export function ReviewProgressPanel({ detail, status }: { detail: Detail; status
 }
 
 function coverageNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -770,6 +772,33 @@ export function CoverageCard({ run }: { run?: Record<string, unknown> }) {
           <strong>{agents.length} 个</strong>
         </p>
       )}
+    </div>
+  );
+}
+
+export function ReviewQualityCard({ quality }: { quality?: Record<string, unknown> }) {
+  const context = quality?.context_health && typeof quality.context_health === "object" ? quality.context_health as Record<string, unknown> : {};
+  const funnel = quality?.candidate_recall && typeof quality.candidate_recall === "object" ? quality.candidate_recall as Record<string, unknown> : {};
+  const precision = quality?.published_precision && typeof quality.published_precision === "object" ? quality.published_precision as Record<string, unknown> : {};
+  const reproducibility = quality?.reproducibility && typeof quality.reproducibility === "object" ? quality.reproducibility as Record<string, unknown> : {};
+  const checkpoints = quality?.skill_checkpoint_metrics && typeof quality.skill_checkpoint_metrics === "object" ? quality.skill_checkpoint_metrics as Record<string, unknown> : {};
+  const unresolved = Array.isArray(quality?.unresolved_candidates) ? quality.unresolved_candidates as Record<string, unknown>[] : [];
+  const rawStatus = String(context.status || "blocked");
+  const contextStatus = ["full", "partial", "patch_only", "blocked"].includes(rawStatus) ? rawStatus : "blocked";
+  const contextLabels: Record<string, string> = { full: "完整", partial: "部分", patch_only: "仅 Patch", blocked: "阻塞" };
+  return (
+    <div className="coverage-card review-quality-card" data-context-status={contextStatus}>
+      <div>
+        <ShieldCheck size={22} />
+        <strong>真实任务质量仪表盘</strong>
+        <span>显示上下文完整性、候选漏斗、Checkpoint 闭环和可复现性；空数据不会视为成功。</span>
+      </div>
+      <p><Code2 size={15} /><span>Context Health</span><em>{String(context.context_engine || "unknown")} · 源码 {formatCoveragePercent(context.source_fetch_rate)} · Diff {formatCoveragePercent(context.diff_assignment_rate)}</em><strong>{contextStatus} / {contextLabels[contextStatus]}</strong></p>
+      <p><CheckCircle2 size={15} /><span>Quality Funnel</span><em>Verifier {String(funnel.verifier_accepted || 0)} / Candidate {String(funnel.generated || 0)}</em><strong>{formatCoveragePercent(funnel.value)}</strong></p>
+      <p><ShieldCheck size={15} /><span>Skill Checkpoint</span><em>完成 {String(checkpoints.resolved_count || 0)} / {String(checkpoints.required_count || 0)}</em><strong>{formatCoveragePercent(checkpoints.resolution_rate)}</strong></p>
+      <p><RefreshCw size={15} /><span>Reproducibility</span><em>{String(reproducibility.llm_call_count || 0)} 次 LLM · 指纹 {formatCoveragePercent(reproducibility.fingerprint_complete_rate)}</em><strong>{String(reproducibility.status || "unavailable")}</strong></p>
+      <p><Check size={15} /><span>反馈精确率</span><em>{String(precision.accepted || 0)} 接受 / {String(precision.false_positive || 0)} 误报 · {String(precision.confidence || "unlabeled")}</em><strong>{formatCoveragePercent(precision.value)}</strong></p>
+      <p className={unresolved.length ? "quality-warning" : ""}><AlertTriangle size={15} /><span>未闭环 Candidate</span><em>{unresolved.length ? unresolved.slice(0, 3).map((item) => String(item.title || item.dedupe_hash || "candidate")).join("；") : "无"}</em><strong>{unresolved.length}</strong></p>
     </div>
   );
 }

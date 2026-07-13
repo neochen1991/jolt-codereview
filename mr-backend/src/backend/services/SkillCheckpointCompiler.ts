@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const SKILL_CHECKPOINT_MANIFEST_SCHEMA = "skill_checkpoint_manifest_v1";
-export const SKILL_CHECKPOINT_COMPILER_VERSION = "1.0.0";
+export const SKILL_CHECKPOINT_COMPILER_VERSION = "1.1.0";
 
 export type SkillCheckpointAsset = {
   asset_path: string;
@@ -31,6 +31,9 @@ export type CompiledSkillCheckpoint = {
   positive_examples: string;
   negative_examples: string;
   fix_guidance: string;
+  evidence_scope: "symbol" | "cross_file";
+  context_queries: string[];
+  max_dependency_hops: number;
   source_path: string;
   source_heading: string;
   source_line_start: number;
@@ -89,7 +92,13 @@ const FIELD_ALIASES: Record<string, string> = {
   修复建议: "fix_guidance",
   整改建议: "fix_guidance",
   title: "title",
-  标题: "title"
+  标题: "title",
+  evidencescope: "evidence_scope",
+  证据范围: "evidence_scope",
+  contextqueries: "context_queries",
+  上下文查询: "context_queries",
+  maxdependencyhops: "max_dependency_hops",
+  最大依赖跳数: "max_dependency_hops"
 };
 
 function normalizeField(value: string) {
@@ -135,6 +144,11 @@ function checkpointFromDraft(skillKey: string, draft: Draft): CompiledSkillCheck
   const title = compact(draft.title || draft.source_heading);
   const checkpointId = compact(draft.checkpoint_id) || stableGeneratedId(skillKey, draft.source_path, title);
   const generated = !compact(draft.checkpoint_id);
+  const contextQueries = compact(draft.context_queries)
+    .replace(/^\[|\]$/g, "")
+    .split(/[,，\s]+/)
+    .map((item) => item.replace(/^[-*]\s*/, "").trim())
+    .filter(Boolean);
   return {
     skill_key: skillKey,
     checkpoint_id: checkpointId,
@@ -149,6 +163,9 @@ function checkpointFromDraft(skillKey: string, draft: Draft): CompiledSkillCheck
     positive_examples: compact(draft.positive_examples),
     negative_examples: compact(draft.negative_examples),
     fix_guidance: compact(draft.fix_guidance),
+    evidence_scope: (compact(draft.evidence_scope) || "symbol") as CompiledSkillCheckpoint["evidence_scope"],
+    context_queries: contextQueries,
+    max_dependency_hops: Number(compact(draft.max_dependency_hops) || 1),
     source_path: draft.source_path,
     source_heading: draft.source_heading,
     source_line_start: Number(draft.source_line_start || 1),
@@ -288,6 +305,7 @@ export function compileSkillCheckpointManifest(skillKey: string, rawAssets: Skil
   const diagnostics: SkillCheckpointDiagnostic[] = [];
   const ids = new Map<string, CompiledSkillCheckpoint>();
   const requiredFields: Array<keyof CompiledSkillCheckpoint> = ["check", "required_evidence", "false_positive_patterns", "fix_guidance"];
+  const allowedQueries = new Set(["callers", "callees", "implementations", "tests", "config_refs"]);
   for (const checkpoint of checkpoints) {
     const duplicate = ids.get(checkpoint.checkpoint_id);
     if (duplicate) {
@@ -313,6 +331,15 @@ export function compileSkillCheckpointManifest(skillKey: string, rawAssets: Skil
           checkpoint_id: checkpoint.checkpoint_id
         });
       }
+    }
+    if (!['symbol', 'cross_file'].includes(checkpoint.evidence_scope)) {
+      diagnostics.push({ level: "error", code: "invalid_evidence_scope", message: `unsupported evidence_scope: ${checkpoint.evidence_scope}`, source_path: checkpoint.source_path, line: checkpoint.source_line_start, checkpoint_id: checkpoint.checkpoint_id });
+    }
+    for (const query of checkpoint.context_queries) {
+      if (!allowedQueries.has(query)) diagnostics.push({ level: "error", code: "invalid_context_query", message: `unsupported context query: ${query}`, source_path: checkpoint.source_path, line: checkpoint.source_line_start, checkpoint_id: checkpoint.checkpoint_id });
+    }
+    if (!Number.isInteger(checkpoint.max_dependency_hops) || checkpoint.max_dependency_hops < 1 || checkpoint.max_dependency_hops > 3) {
+      diagnostics.push({ level: "error", code: "invalid_max_dependency_hops", message: `max_dependency_hops must be an integer between 1 and 3`, source_path: checkpoint.source_path, line: checkpoint.source_line_start, checkpoint_id: checkpoint.checkpoint_id });
     }
   }
   if (!checkpoints.length) {

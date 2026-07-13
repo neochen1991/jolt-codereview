@@ -252,11 +252,14 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
         "static_tool_scan_findings": static_tool_scan_findings,
         "task": (
             "请只找高置信代码问题，输出 JSON 数组。字段：severity, confidence, file_path, "
-            "line_start, line_end, title, problem_description, recommendation, suggested_code, evidence, covered_rules, skipped_rules。"
+            "line_start, line_end, title, problem_description, trigger_condition, impact, semantic_evidence, recommendation, suggested_code, evidence, covered_rules, skipped_rules。"
             "除 file_path、rule_id、类名、方法名、代码片段和必要技术专有名词外，"
             "title、problem_description、recommendation、evidence 必须使用中文回答。"
             f"每个专家最多输出 {max_agent_findings} 个最高置信 finding，必须保证 JSON 数组完整闭合；"
             "line_start 和 line_end 必须是当前 MR diff 中触发问题的精确文件行号；"
+            "trigger_condition 必须说明问题在什么输入、状态或调用路径下会发生；impact 必须说明可观察的业务、安全、数据或性能后果；"
+            "跨文件结论必须在 semantic_evidence 中逐项引用 structured_diff.items.dependencies 里真实存在的 symbol_id、relation、file_path；"
+            "本文件内问题或没有可信依赖边时 semantic_evidence 必须为空数组，禁止臆造关系或提升 confidence；"
             "单行问题二者相同，多行问题使用最小连续行范围；无法定位到精确代码行时不要输出该 finding，禁止只给文件级位置。"
             "每个问题必须输出 suggested_code，且必须是可落地的建议修改代码片段："
             "Java/Spring 问题输出 Java 或配置代码；前端问题输出 TS/TSX/JS/CSS；Redis/SQL 问题输出替代调用或配置示例。"
@@ -304,3 +307,50 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
         ensure_ascii=False,
     )
     return prompt, {"redactions": sorted(redactions), "injection_patterns": sorted(injection_patterns)}
+
+
+def build_context_unit_prompt(agent: dict[str, Any], context_unit: Any, skill_summary: str = "") -> tuple[str, dict[str, Any]]:
+    prompt, base_safety = build_prompt(agent, [], skill_summary)
+    payload = json.loads(prompt)
+    item = context_unit.to_prompt_item() if hasattr(context_unit, "to_prompt_item") else dict(context_unit)
+    source_text, source_safety = redact_untrusted(str(item.get("source_text") or ""))
+    patch_text, patch_safety = redact_untrusted(str(item.get("patch_text") or ""))
+    dependency_redactions: set[str] = set()
+    dependency_injections: set[str] = set()
+    for dependency in item.get("dependencies") or []:
+        if not isinstance(dependency, dict):
+            continue
+        dependency_text, dependency_safety = redact_untrusted(str(dependency.get("source_text") or ""))
+        dependency_redactions.update(dependency_safety["redactions"])
+        dependency_injections.update(dependency_safety["injection_patterns"])
+        dependency["source_text"] = (
+            f'<untrusted source="dependency" file="{dependency.get("file_path")}">\n{dependency_text}\n</untrusted>'
+        )
+    item["source_text"] = (
+        f'<untrusted source="full_source" file="{item.get("file_path")}">\n{source_text}\n</untrusted>'
+    )
+    item["patch_text"] = f'<untrusted source="diff" file="{item.get("file_path")}">\n{patch_text}\n</untrusted>'
+    payload["structured_diff"] = {
+        "format": "context_units_v2",
+        "planner_version": "context_planner_v2",
+        "items": [item],
+    }
+    payload["task"] = (
+        str(payload.get("task") or "")
+        + " 当前输入是一个实际执行的 ContextUnit；必须完整检查其中所有 hunk_ids，"
+        + "并使用 source_text 理解符号上下文，不能只检查 patch_text 的开头。"
+    )
+    return json.dumps(payload, ensure_ascii=False), {
+        "redactions": sorted(
+            set(base_safety.get("redactions") or [])
+            | set(source_safety["redactions"])
+            | set(patch_safety["redactions"])
+            | dependency_redactions
+        ),
+        "injection_patterns": sorted(
+            set(base_safety.get("injection_patterns") or [])
+            | set(source_safety["injection_patterns"])
+            | set(patch_safety["injection_patterns"])
+            | dependency_injections
+        ),
+    }

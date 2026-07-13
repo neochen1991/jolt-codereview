@@ -189,6 +189,52 @@ Skill 新版本统一保存为 draft，不能直接进入正式检视。服务�
 
 上传到 `scripts/` 的文件当前只作为只读参考资源。平台会记录调用意图并返回 `blocked_by_policy`，不会直接执行上传脚本；需要可执行脚本时必须另行部署具备网络、凭据、CPU、内存和超时隔离的沙箱。
 
+### Review 质量引擎、回放与回滚
+
+MR Backend 支持项目级 Review 质量灰度配置。在真实 Shadow A/B 达到质量门前，推荐先使用以下安全默认值：
+
+```json
+{
+  "review_quality": {
+    "context_engine": "v1",
+    "semantic_index": "tree_sitter",
+    "llm_replay": "record",
+    "quality_shadow_mode": false
+  }
+}
+```
+
+- `context_engine`: `v2` 按符号和 Diff Hunk 生成 ContextUnit；`v1` 回滚到旧 Prompt 拼装路径。
+- `semantic_index`: `tree_sitter` 使用本地语法树；`regex` 是明确标记为 heuristic 的降级路径；`typed` 目前在缺少语言服务时会显示 `partial / typed_index_unavailable` 并回退 Tree-sitter，不会伪装为 typed 成功。
+- `llm_replay`: `off` 只实时调用；`record` 记录稳定 Seed、请求/响应 Hash 和调用指纹；`replay` 只读取已有 Exchange，缺记录会明确失败且不会偷偷联网；`live_repeat` 实时重跑并更新记录。
+- `quality_shadow_mode`: 标记项目允许进入 Shadow A/B。实际双跑由 `node scripts/run-review-quality-shadow.mjs` 对冻结 Snapshot 执行；Shadow Runner 强制 `publish_allowed=false`，只写独立质量报告，不替代正式发布结果。单独修改这个开关不会在普通 Review Job 内隐式双跑。
+
+回滚顺序：先把 `context_engine` 改为 `v1`；如果语义索引异常，再把 `semantic_index` 改为 `regex`；模型网关或存储异常时把 `llm_replay` 改为 `off`。修改后只影响新建 Review Run，已有 Run 的 `coverage_json`、Context Health 和调用指纹仍保留用于审计。
+
+生产环境默认只保留 Prompt/Response Hash，不因为 `record` 自动持久化完整模型响应。Skill Debug 使用冻结 MR Snapshot 时，可在会话 TTL 内启用 Exact Replay 存储；调试结束后由 `skill_debug_policy.retention_days` 和清理任务删除。不要在共享数据库中无限期保存源码、Prompt、工具结果或完整模型响应。Review 页面“真实任务质量仪表盘”会显示 `full / partial / patch_only / blocked`、Candidate 漏斗、Checkpoint 闭环、反馈精确率和可复现状态；没有数据时显示 unavailable，不按成功处理。
+
+生产任务确实需要 Exact Replay 时，除把 `review_quality.llm_replay` 设为 `record/replay` 外，还必须显式授权完整响应的短期留存，否则 `replay` 会明确报“没有可用 Exchange Store”，不会偷偷改成联网调用。建议按项目数据合规要求配置：
+
+```json
+{
+  "data_policy": {
+    "llm_response_retention": "replay",
+    "llm_response_retention_days": 14
+  }
+}
+```
+
+`llm_response_retention` 只有 `replay` 或 `full_debug` 会打开完整响应存储；到期记录由 Worker 建库/启动清理。包含敏感源码的项目应缩短天数、限制数据库访问并完成审计，未获授权时保持 Hash-only。
+
+Windows 内网部署需要用项目虚拟环境安装 `mr-backend/requirements.txt`，其中包含 Tree-sitter 及语言解析器。确认 Worker 使用同一解释器：
+
+```powershell
+$env:PYTHON_BIN="$PWD\mr-backend\.venv\Scripts\python.exe"
+& $env:PYTHON_BIN -c "import tree_sitter, tree_sitter_java, tree_sitter_python; print('tree-sitter ok')"
+```
+
+内网机器无法访问 PyPI 时，应在联网机器下载与目标 Windows/Python 版本匹配的 wheel，再从内部制品库或离线目录安装；不要让系统 Python 与 Worker 虚拟环境混用。源码 Worktree、PostgreSQL、CodeHub 和内部模型域名应加入 `NO_PROXY`，避免本地源码读取或内网请求被代理拦截。
+
 如果配置文件不在默认位置，可以分别指定服务配置路径：
 
 ```bash

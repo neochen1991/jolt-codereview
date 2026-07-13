@@ -9,6 +9,40 @@ const explicit = compileSkillCheckpointManifest("secure-review", [{
 assert.equal(explicit.ok, true, JSON.stringify(explicit.diagnostics));
 assert.equal(explicit.checkpoints[0].checkpoint_id, "SEC-CMD-001");
 assert.equal(explicit.checkpoints[0].source_line_start, 6);
+assert.equal(explicit.checkpoints[0].evidence_scope, "symbol");
+assert.equal(explicit.checkpoints[0].max_dependency_hops, 1);
+
+const crossFile = compileSkillCheckpointManifest("cross-file-review", [{
+  asset_path: "SKILL.md",
+  content: `## AUTH-CROSS-001 跨文件鉴权检查
+- check: 检查入口到服务的权限链路。
+- required_evidence: 展示调用方与实现。
+- false_positive_patterns: 统一网关已校验。
+- fix_guidance: 增加服务端权限拦截。
+- evidence_scope: cross_file
+- context_queries: callers, implementations, tests
+- max_dependency_hops: 2
+`
+}]);
+assert.equal(crossFile.ok, true, JSON.stringify(crossFile.diagnostics));
+assert.equal(crossFile.checkpoints[0].evidence_scope, "cross_file");
+assert.deepEqual(crossFile.checkpoints[0].context_queries, ["callers", "implementations", "tests"]);
+assert.equal(crossFile.checkpoints[0].max_dependency_hops, 2);
+
+const invalidContext = compileSkillCheckpointManifest("invalid-context", [{
+  asset_path: "SKILL.md",
+  content: `## BAD-CTX-001 非法查询
+- check: test
+- required_evidence: test
+- false_positive_patterns: test
+- fix_guidance: test
+- context_queries: internet_search
+- max_dependency_hops: 8
+`
+}]);
+assert.equal(invalidContext.ok, false);
+assert.ok(invalidContext.diagnostics.some((item) => item.code === "invalid_context_query"));
+assert.ok(invalidContext.diagnostics.some((item) => item.code === "invalid_max_dependency_hops"));
 
 const sectionStyle = compileSkillCheckpointManifest("section-review", [{
   asset_path: "SKILL.md",

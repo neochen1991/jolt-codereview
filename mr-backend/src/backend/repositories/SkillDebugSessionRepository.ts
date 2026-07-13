@@ -15,6 +15,8 @@ export interface CreateSkillDebugSessionInput {
   snapshot: Record<string, unknown>;
   snapshotSha256: string;
   bundleSha256?: string | null;
+  inputArtifact?: Record<string, unknown> | null;
+  inputArtifactSha256?: string | null;
   expiresAt?: string | null;
 }
 
@@ -26,12 +28,14 @@ export class SkillDebugSessionRepository {
       INSERT INTO skill_debug_sessions (
         id, project_id, repository_id, merge_request_id, head_sha,
         skill_key, skill_version, agent_key, mode, status,
-        requested_effort_level, requested_by, snapshot_json, snapshot_sha256, bundle_sha256, expires_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'queued', $10, $11, $12, $13, $14, $15)
+        requested_effort_level, requested_by, snapshot_json, snapshot_sha256, bundle_sha256,
+        input_artifact_json, input_artifact_sha256, expires_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'queued', $10, $11, $12, $13, $14, $15, $16, $17)
     `).run(
       input.id, input.projectId, input.repositoryId, input.mergeRequestId, input.headSha,
       input.skillKey, input.skillVersion, input.agentKey, input.mode, input.effortLevel,
-      input.requestedBy, JSON.stringify(input.snapshot), input.snapshotSha256, input.bundleSha256 ?? "", input.expiresAt ?? null
+      input.requestedBy, JSON.stringify(input.snapshot), input.snapshotSha256, input.bundleSha256 ?? "",
+      JSON.stringify(input.inputArtifact || {}), input.inputArtifactSha256 ?? "", input.expiresAt ?? null
     );
     return this.findById(input.id);
   }
@@ -88,6 +92,16 @@ export class SkillDebugSessionRepository {
       SET comparison_json = $1, updated_at = CURRENT_TIMESTAMP
       WHERE id = $2
     `).run(JSON.stringify(comparison), sessionId);
+    return this.findById(sessionId);
+  }
+
+  updateValidity(sessionId: string, status: string, validity: Record<string, unknown>) {
+    const reasons = Array.isArray(validity.reasons) ? validity.reasons.map(String) : [];
+    this.db.prepare(`
+      UPDATE skill_debug_sessions
+      SET status = $1, validity_json = $2, failure_reason = $3, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $4
+    `).run(status, JSON.stringify(validity), validity.conclusive ? null : reasons.join(","), sessionId);
     return this.findById(sessionId);
   }
 

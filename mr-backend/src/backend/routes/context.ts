@@ -18,6 +18,7 @@ import type { StaticToolAvailabilityService } from "../services/StaticToolAvaila
 import type { SkillDebugSnapshotService } from "../services/SkillDebugSnapshotService.js";
 import type { SkillDebugPolicyService } from "../services/SkillDebugPolicyService.js";
 import type { SkillDebugDiagnosticService } from "../services/SkillDebugDiagnosticService.js";
+import type { SkillDebugValidityService } from "../services/SkillDebugValidityService.js";
 import type { SensitiveDataRedactionService } from "../services/SensitiveDataRedactionService.js";
 
 export interface MrSyncRepositoryResult {
@@ -60,6 +61,7 @@ export interface BackendRouteContext {
   skillDebugSnapshotService: SkillDebugSnapshotService;
   skillDebugPolicyService: SkillDebugPolicyService;
   skillDebugDiagnosticService: SkillDebugDiagnosticService;
+  skillDebugValidityService: SkillDebugValidityService;
   sensitiveDataRedactionService: SensitiveDataRedactionService;
   reviewQueueService: ReviewQueueService;
   effectiveConfig(projectId: string): Promise<AppConfig>;

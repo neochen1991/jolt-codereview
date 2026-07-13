@@ -20,12 +20,34 @@ def make_fetch_mr_node(
     apply_data_policy_to_files: Callable[..., tuple[list[Any], list[dict[str, Any]]]],
     prepare_source_worktree: Callable[[dict[str, Any], Any, Any], tuple[str | None, list[dict[str, Any]]]] | None = None,
     load_incremental_context: Callable[[], dict[str, Any]] | None = None,
+    load_debug_input_artifact: Callable[[], dict[str, Any] | None] | None = None,
+    save_debug_input_artifact: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    hydrate_changed_files: Callable[[list[dict[str, Any]]], list[Any]] | None = None,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     def fetch_mr_node(state: dict[str, Any]) -> dict[str, Any]:
         fetch_span = recorder.span("fetch_mr")
         fetch_started = time.time()
         repo_ref = f"{repo['provider']}:{repo['external_repo_id']}#{mr['number']}"
         tool_version = "github-rest-2022-11-28" if repo["provider"] == "github" else "codehub-configured-rest"
+        frozen_input = load_debug_input_artifact() if load_debug_input_artifact else None
+        if frozen_input and hydrate_changed_files:
+            files = hydrate_changed_files(list(frozen_input.get("files") or []))
+            source_file_contents = {str(key): str(value) for key, value in dict(frozen_input.get("source_file_contents") or {}).items()}
+            llm_files, policy_decisions = apply_data_policy_to_files(recorder, fetch_span, sandbox_dir, files, data_policy)
+            source_worktree_path: str | None = None
+            worktree_errors: list[dict[str, Any]] = []
+            if prepare_source_worktree:
+                source_worktree_path, worktree_errors = prepare_source_worktree(project_config, repo, mr)
+            incremental_context = load_incremental_context() if load_incremental_context else {"incremental_diff_only": False}
+            recorder.tool_call(fetch_span, "skill_debug.input_artifact", "completed", int((time.time() - fetch_started) * 1000), args_summary=repo_ref, output_summary=f"reused {len(files)} frozen changed files", tool_version="skill-debug-input-v1")
+            recorder.event(fetch_span, "skill_debug_input_reused", "复用同一 Skill 调试输入工件", {"file_count": len(files), "input_artifact_sha256": frozen_input.get("input_artifact_sha256")})
+            recorder.finish(fetch_span)
+            return {
+                **state, "files": files, "llm_files": llm_files, "policy_decisions": policy_decisions,
+                "source_file_contents": source_file_contents, "source_worktree_path": source_worktree_path,
+                "source_worktree_errors": worktree_errors, "fetch_degraded": False,
+                "incremental_context": incremental_context, "input_artifact_reused": True,
+            }
         try:
             files = fetch_changed_files(project_config, repo, mr)
             fetch_duration_ms = int((time.time() - fetch_started) * 1000)
@@ -50,6 +72,14 @@ def make_fetch_mr_node(
             recorder.event(fetch_span, "github_files", f"拉取 {len(files)} 个变更文件", {"files": [f.filename for f in files]})
             content_started = time.time()
             source_file_contents, source_errors = fetch_changed_file_contents(project_config, repo, mr, files)
+            if save_debug_input_artifact:
+                saved_input = save_debug_input_artifact({
+                    "version": "skill_debug_input_v1",
+                    "head_sha": str(job["head_sha"]),
+                    "files": [item.to_record() for item in files],
+                    "source_file_contents": source_file_contents,
+                })
+                recorder.event(fetch_span, "skill_debug_input_frozen", "冻结 Skill 调试输入工件供 A/B 复用", {"file_count": len(files), "input_artifact_sha256": saved_input.get("input_artifact_sha256")})
             source_artifact = write_json_artifact(
                 recorder,
                 sandbox_dir,

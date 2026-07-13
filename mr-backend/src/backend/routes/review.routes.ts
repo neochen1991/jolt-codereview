@@ -42,6 +42,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     skillDebugSnapshotService,
     skillDebugPolicyService,
     skillDebugDiagnosticService,
+    skillDebugValidityService,
     sensitiveDataRedactionService,
     effectiveConfig,
     feedbackLearningService
@@ -741,9 +742,17 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     const failed = statuses.some((status) => ["failed", "dead_letter"].includes(status));
     const cancelled = statuses.length > 0 && statuses.every((status) => status === "cancelled");
     const preservedTerminalStatus = ["stale_head", "timed_out", "expired"].includes(String(session.status)) ? String(session.status) : null;
-    const derivedStatus = session.status === "cancelled" ? "cancelled" : preservedTerminalStatus || (active ? "running" : failed ? "failed" : cancelled ? "cancelled" : statuses.length ? "completed" : session.status);
-    if (derivedStatus !== session.status) skillDebugSessionRepository.updateStatus(session.id, derivedStatus);
+    let derivedStatus = session.status === "cancelled" ? "cancelled" : preservedTerminalStatus || (active ? "running" : failed ? "failed" : cancelled ? "cancelled" : statuses.length ? "completed" : session.status);
     const diagnostics = skillDebugDiagnosticService.build({ ...session, status: derivedStatus }, baseline, candidate);
+    const validity = !active && derivedStatus === "completed"
+      ? skillDebugValidityService.evaluate({ session, baseline, candidate, diagnostics })
+      : parseJsonValue(session.validity_json);
+    if (!active && derivedStatus === "completed" && validity.status) derivedStatus = String(validity.status);
+    if (!active && ["completed", "degraded", "inconclusive"].includes(derivedStatus)) {
+      skillDebugSessionRepository.updateValidity(session.id, derivedStatus, validity);
+    } else if (derivedStatus !== session.status) {
+      skillDebugSessionRepository.updateStatus(session.id, derivedStatus);
+    }
     if (!active) skillDebugSessionRepository.updateComparison(session.id, diagnostics.comparison);
     return sensitiveDataRedactionService.redact({
       session: {
@@ -756,11 +765,12 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       baseline,
       candidate,
       diagnostics,
+      validity,
       publish_guard: "skill_debug.publish_forbidden"
     }) as Record<string, unknown>;
   }
 
-  async function createSkillDebugSession(input: Record<string, unknown>, actorId: string, forcedProjectId?: string, frozenSnapshot?: Record<string, any>) {
+  async function createSkillDebugSession(input: Record<string, unknown>, actorId: string, forcedProjectId?: string, frozenSnapshot?: Record<string, any>, frozenInputArtifact?: Record<string, any>) {
     skillDebugSessionRepository.expireDue();
     const mrId = String(input.mr_id || "").trim();
     const mr = mergeRequestRepository.findById(mrId) as Record<string, any> | undefined;
@@ -783,6 +793,11 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       return policyDenied;
     }
     const debugPolicy = skillDebugPolicyService.resolve(projectEffectiveConfig);
+    const sameInput = input.same_input === true;
+    const requestedHeadSha = sameInput ? String(input.expected_head_sha || "") : String(mr.latest_head_sha || "");
+    if (sameInput && (!requestedHeadSha || !frozenInputArtifact || !String(input.input_artifact_sha256 || ""))) {
+      return badRequest("same_input rerun requires the frozen head and input artifact");
+    }
     let snapshotResult: { snapshot: Record<string, unknown>; snapshot_sha256: string };
     try {
       snapshotResult = frozenSnapshot
@@ -806,7 +821,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       projectId: repo.project_id,
       repositoryId: repo.id,
       mergeRequestId: mr.id,
-      headSha: mr.latest_head_sha,
+      headSha: requestedHeadSha,
       skillKey,
       skillVersion: String((snapshotResult.snapshot.skill as Record<string, any>)?.version || skillVersion),
       agentKey,
@@ -816,23 +831,26 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       snapshot: snapshotResult.snapshot,
       snapshotSha256: snapshotResult.snapshot_sha256,
       bundleSha256: String((snapshotResult.snapshot.skill as Record<string, any>)?.bundle_sha256 || ""),
+      inputArtifact: frozenInputArtifact || null,
+      inputArtifactSha256: String(input.input_artifact_sha256 || ""),
       expiresAt
     }) as Record<string, any>;
     const baseContext = {
       kind: "skill_debug", mode, session_id: sessionId, project_id: repo.project_id,
       skill_key: skillKey, skill_version: session.skill_version, agent_key: agentKey,
-      mr_id: mr.id, head_sha: mr.latest_head_sha, requested_by: actorId,
+      mr_id: mr.id, head_sha: requestedHeadSha, requested_by: actorId,
       publish_allowed: false, consistency_contract: "production_review_pipeline_v1",
       snapshot_sha256: snapshotResult.snapshot_sha256, snapshot: snapshotResult.snapshot,
-      max_duration_seconds: debugPolicy.max_duration_seconds,
+      max_duration_seconds: debugPolicy.max_duration_seconds, replay_mode: sameInput ? "same_input" : "latest_head",
+      input_artifact_sha256: String(input.input_artifact_sha256 || ""),
       expires_at: expiresAt
     };
     const baseline = mode === "targeted" ? reviewQueueService.enqueueDebug({
-      mergeRequestId: mr.id, headSha: mr.latest_head_sha, priority: Number(mr.risk_score || 0), effortLevel,
+      mergeRequestId: mr.id, headSha: requestedHeadSha, priority: Number(mr.risk_score || 0), effortLevel,
       requestedBy: actorId, debugSessionId: sessionId, debugVariant: "baseline", debugContext: { ...baseContext, variant: "baseline" }
     }) as Record<string, any> : null;
     const candidate = reviewQueueService.enqueueDebug({
-      mergeRequestId: mr.id, headSha: mr.latest_head_sha, priority: Number(mr.risk_score || 0), effortLevel,
+      mergeRequestId: mr.id, headSha: requestedHeadSha, priority: Number(mr.risk_score || 0), effortLevel,
       requestedBy: actorId, debugSessionId: sessionId, debugVariant: "candidate", debugContext: { ...baseContext, variant: "candidate" }
     }) as Record<string, any>;
     skillDebugSessionRepository.attachJobs(sessionId, baseline?.id || null, candidate.id);
@@ -893,8 +911,23 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         agent_key: session.agent_key,
         mode: session.mode,
         effort_level: session.requested_effort_level,
-        snapshot_sha256: session.snapshot_sha256
-      }, actorId, session.project_id, snapshot);
+        snapshot_sha256: session.snapshot_sha256,
+        same_input: true,
+        expected_head_sha: session.head_sha,
+        input_artifact_sha256: session.input_artifact_sha256
+      }, actorId, session.project_id, snapshot, parseJsonValue(session.input_artifact_json) as Record<string, any>);
+    }),
+    route("POST", "/api/mr-review/skill-debug-sessions/:sessionId/rerun-latest", async ({ params, req }) => {
+      const session = skillDebugSessionRepository.findById(params.sessionId) as Record<string, any> | undefined;
+      if (!session) return notFound();
+      const actorId = currentUserId(req);
+      const denied = ensureProjectRole(session.project_id, actorId, "project_admin");
+      if (denied) return denied;
+      return createSkillDebugSession({
+        mr_id: session.merge_request_id, skill_key: session.skill_key, skill_version: session.skill_version,
+        agent_key: session.agent_key, mode: session.mode, effort_level: session.requested_effort_level,
+        snapshot_sha256: session.snapshot_sha256, same_input: false
+      }, actorId, session.project_id, parseJsonValue(session.snapshot_json) as Record<string, any>);
     }),
     route("GET", "/api/mr-review/skill-debug-sessions/:sessionId/export", ({ params, req }) => {
       const session = skillDebugSessionRepository.findById(params.sessionId) as Record<string, any> | undefined;

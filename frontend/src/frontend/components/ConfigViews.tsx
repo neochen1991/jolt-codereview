@@ -2567,6 +2567,19 @@ function SkillDebugWorkbench({ projectId, agentKey, skill, onClose }: { projectI
     await pollSession(String(value.session?.id));
   }
 
+  async function rerunLatestDebug() {
+    if (!detail?.session?.id) return;
+    setRunning(true);
+    setError("");
+    try {
+      const value = await api<Record<string, any>>(`/api/mr-review/skill-debug-sessions/${detail.session.id}/rerun-latest`, { method: "POST" });
+      setDetail(value);
+      await refreshHistory();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    } finally { setRunning(false); }
+  }
+
   async function exportDiagnostics() {
     if (!detail?.session?.id) return;
     const value = await api<{ filename: string; content: string }>(`/api/mr-review/skill-debug-sessions/${detail.session.id}/export`);
@@ -2593,6 +2606,7 @@ function SkillDebugWorkbench({ projectId, agentKey, skill, onClose }: { projectI
 
   const session = detail?.session || {};
   const diagnostics = detail?.diagnostics || {};
+  const validity = detail?.validity || {};
   const comparison = diagnostics.comparison || {};
   const baseline = detail?.baseline || null;
   const candidate = detail?.candidate || null;
@@ -2615,6 +2629,7 @@ function SkillDebugWorkbench({ projectId, agentKey, skill, onClose }: { projectI
           <div className="skill-debug-session-actions">
             <button type="button" onClick={cancelDebug} disabled={!isActive}>取消调试</button>
             <button type="button" onClick={rerunDebug} disabled={isActive}>再次运行</button>
+            <button type="button" onClick={rerunLatestDebug} disabled={isActive}>在最新 MR 上验证</button>
             <button type="button" onClick={copySessionLink}>复制链接</button>
             <button type="button" onClick={exportDiagnostics}>导出诊断包</button>
           </div>
@@ -2622,7 +2637,8 @@ function SkillDebugWorkbench({ projectId, agentKey, skill, onClose }: { projectI
             <section className="skill-debug-wide"><h3>诊断概览</h3><div className="skill-debug-metrics"><span>状态 {String(session.status || "等待")}</span><span>模式 {session.mode === "production_route" ? "严格生产路由" : "定向 A/B"}</span><span>目标 Agent {diagnostics.target_executed ? "已执行" : "未执行"}</span><span>版本 {String(session.skill_version || "待验证")}</span><span>SHA {String(session.snapshot_sha256 || "待验证").slice(0, 12)}</span><span>发布 已禁止</span></div>{diagnostics.target_not_executed_reason && <p className="skill-debug-warning">{String(diagnostics.target_not_executed_reason)}</p>}</section>
             <section><h3>baseline（不含目标 Skill）</h3><VariantSummary summary={diagnostics.baseline} detail={baseline} /></section>
             <section><h3>candidate（加载目标 Skill）</h3><VariantSummary summary={diagnostics.candidate} detail={candidate} /></section>
-            <section><h3>A/B Findings 差异</h3><div className="skill-debug-diff-counts"><span>新增 {comparison.added?.length || 0}</span><span>消失 {comparison.removed?.length || 0}</span><span>相同 {comparison.unchanged?.length || 0}</span></div><pre>{JSON.stringify({ added: comparison.added || [], removed: comparison.removed || [] }, null, 2)}</pre></section>
+            <section><h3>A/B Findings 差异</h3><div className="skill-debug-diff-counts"><span>新增 {comparison.added?.length || 0}</span><span>消失 {comparison.removed?.length || 0}</span><span>相同 {comparison.unchanged?.length || 0}</span><span>变化 {comparison.changed?.length || 0}</span></div><pre>{JSON.stringify({ added: comparison.added || [], removed: comparison.removed || [], changed: comparison.changed || [] }, null, 2)}</pre></section>
+            <section><h3>有效性</h3><div className="skill-debug-metrics"><span>{validity.conclusive ? "证据完整" : "证据不足"}</span><span>可检视文件 {String(validity.fetched_file_count || 0)}</span></div>{Array.isArray(validity.reasons) && validity.reasons.length > 0 && <pre>{JSON.stringify(validity.reasons, null, 2)}</pre>}</section>
             <section><h3>资源差异</h3><p>Token 差值 {String(comparison.token_delta ?? 0)}</p><p>耗时差值 {String(comparison.duration_delta_ms ?? 0)} ms</p></section>
             <section className="skill-debug-wide"><h3>一致性证据</h3><p>执行链：{String(diagnostics.contract || "待验证")} · MR SHA：{String(diagnostics.head_sha || "待验证")} · 快照：{String(diagnostics.snapshot_sha256 || "待验证")} · 调试数据不修改正式 MR 状态、历史和发布结果。</p></section>
             <section className="skill-debug-wide"><button type="button" className="skill-debug-advanced-toggle" onClick={() => setAdvancedOpen(!advancedOpen)}>{advancedOpen ? "收起高级日志" : "展开高级日志"}</button>{advancedOpen && <><p className="skill-debug-warning">高级日志可能包含源码上下文，仅项目管理员可见；服务端已执行递归脱敏。</p><pre>{JSON.stringify({ baseline, candidate }, null, 2)}</pre></>}</section>

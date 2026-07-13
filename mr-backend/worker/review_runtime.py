@@ -4578,6 +4578,43 @@ def load_incremental_context(conn: Any, merge_request_id: str, head_sha: str) ->
     }
 
 
+def load_skill_debug_input_artifact(conn: Any, session_id: str) -> dict[str, Any] | None:
+    if not session_id:
+        return None
+    row = conn.execute(
+        "SELECT input_artifact_json, input_artifact_sha256 FROM skill_debug_sessions WHERE id = %s",
+        (session_id,),
+    ).fetchone()
+    if not row or not str(row["input_artifact_sha256"] or ""):
+        return None
+    try:
+        artifact = json.loads(str(row["input_artifact_json"] or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(artifact, dict):
+        return None
+    return {**artifact, "input_artifact_sha256": str(row["input_artifact_sha256"])}
+
+
+def save_skill_debug_input_artifact(conn: Any, session_id: str, artifact: dict[str, Any]) -> dict[str, Any]:
+    canonical = json.dumps(artifact, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    changed = conn.execute(
+        """
+        UPDATE skill_debug_sessions
+        SET input_artifact_json = %s, input_artifact_sha256 = %s, updated_at = CURRENT_TIMESTAMP
+        WHERE id = %s AND COALESCE(input_artifact_sha256, '') = ''
+        """,
+        (canonical, digest, session_id),
+    ).rowcount
+    conn.commit()
+    if changed == 0:
+        existing = load_skill_debug_input_artifact(conn, session_id)
+        if existing:
+            return existing
+    return {**artifact, "input_artifact_sha256": digest}
+
+
 def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     job = choose_job(conn, config)
     if not job:
@@ -4598,7 +4635,8 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     repo = conn.execute("SELECT * FROM repositories WHERE id = %s", (mr["repository_id"],)).fetchone()
     project_id = repo["project_id"]
     debug_context = load_debug_context(job)
-    if is_debug_job(job) and str(job["head_sha"]) != str(mr["latest_head_sha"]):
+    same_input_replay = str(debug_context.get("replay_mode") or "") == "same_input" and bool(debug_context.get("input_artifact_sha256"))
+    if is_debug_job(job) and not same_input_replay and str(job["head_sha"]) != str(mr["latest_head_sha"]):
         session_id = str(job.get("debug_session_id") or debug_context.get("session_id") or "")
         conn.execute("UPDATE review_jobs SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE debug_session_id = %s", (session_id,))
         conn.execute("UPDATE skill_debug_sessions SET status = 'stale_head', failure_reason = 'mr_head_changed', updated_at = CURRENT_TIMESTAMP WHERE id = %s", (session_id,))
@@ -4737,6 +4775,9 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             apply_data_policy_to_files=apply_data_policy_to_files,
             prepare_source_worktree=prepare_source_worktree,
             load_incremental_context=lambda: load_incremental_context(conn, str(job["merge_request_id"]), str(job["head_sha"])),
+            load_debug_input_artifact=(lambda: load_skill_debug_input_artifact(conn, str(job.get("debug_session_id") or ""))) if is_debug_job(job) else None,
+            save_debug_input_artifact=(lambda artifact: save_skill_debug_input_artifact(conn, str(job.get("debug_session_id") or ""), artifact)) if is_debug_job(job) else None,
+            hydrate_changed_files=lambda rows: [changed_file_from_vcs_row(row) for row in rows if isinstance(row, dict)],
         )
         choose_effort_node = make_choose_effort_node(
             conn=conn,

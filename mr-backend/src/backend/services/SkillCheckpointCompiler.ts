@@ -30,6 +30,7 @@ export type CompiledSkillCheckpoint = {
   false_positive_patterns: string;
   positive_examples: string;
   negative_examples: string;
+  skip_conditions: string;
   fix_guidance: string;
   evidence_scope: "symbol" | "cross_file";
   context_queries: string[];
@@ -88,6 +89,11 @@ const FIELD_ALIASES: Record<string, string> = {
   negativeexamples: "negative_examples",
   反例: "negative_examples",
   错误示例: "negative_examples",
+  skipconditions: "skip_conditions",
+  skipwhen: "skip_conditions",
+  跳过条件: "skip_conditions",
+  不适用条件: "skip_conditions",
+  忽略条件: "skip_conditions",
   fixguidance: "fix_guidance",
   修复建议: "fix_guidance",
   整改建议: "fix_guidance",
@@ -162,6 +168,7 @@ function checkpointFromDraft(skillKey: string, draft: Draft): CompiledSkillCheck
     false_positive_patterns: compact(draft.false_positive_patterns),
     positive_examples: compact(draft.positive_examples),
     negative_examples: compact(draft.negative_examples),
+    skip_conditions: compact(draft.skip_conditions),
     fix_guidance: compact(draft.fix_guidance),
     evidence_scope: (compact(draft.evidence_scope) || "symbol") as CompiledSkillCheckpoint["evidence_scope"],
     context_queries: contextQueries,
@@ -304,7 +311,7 @@ export function compileSkillCheckpointManifest(skillKey: string, rawAssets: Skil
   const checkpoints = assets.flatMap((asset) => parseAsset(skillKey, asset));
   const diagnostics: SkillCheckpointDiagnostic[] = [];
   const ids = new Map<string, CompiledSkillCheckpoint>();
-  const requiredFields: Array<keyof CompiledSkillCheckpoint> = ["check", "required_evidence", "false_positive_patterns", "fix_guidance"];
+  const requiredFields: Array<keyof CompiledSkillCheckpoint> = ["check", "required_evidence", "false_positive_patterns", "negative_examples", "skip_conditions", "fix_guidance"];
   const allowedQueries = new Set(["callers", "callees", "implementations", "tests", "config_refs"]);
   for (const checkpoint of checkpoints) {
     const duplicate = ids.get(checkpoint.checkpoint_id);

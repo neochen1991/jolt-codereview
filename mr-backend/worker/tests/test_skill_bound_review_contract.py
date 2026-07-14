@@ -157,6 +157,9 @@ def test_skill_scoped_prompt_disables_expert_free_review() -> None:
     assert "只允许输出当前 bound_skill_batch.skill_key 对应 Skill 明确要求检查的问题" in prompt, prompt
     assert "当前 checkpoint" in prompt, prompt
     assert "禁止执行专家自由检视" in prompt, prompt
+    assert "negative_examples" in prompt, prompt
+    assert "skip_conditions" in prompt, prompt
+    assert "除非当前 diff 中存在新的源码证据明确推翻这些反例" in prompt, prompt
 
 
 def test_skill_scoped_prompt_requires_skill_rule_id_and_source_priority() -> None:
@@ -222,6 +225,7 @@ def test_skill_scoped_prompt_requires_skill_rule_id_and_source_priority() -> Non
     assert "covered_rules、skipped_rules、rule_id 必须使用 Skill 中定义的原始规则 ID" in skill_contract["traceability"], skill_contract
     assert "当 Skill、绑定规范、专家画像描述相同问题时，以 Skill 的 rule_id/checkpoint_id 为准" in parsed["task"], parsed["task"]
     assert "Skill 规则命中时 covered_rules、skipped_rules、rule_id 必须保留 Skill 定义的原始规则 ID" in parsed["task"], parsed["task"]
+    assert "evidence_path" in parsed["task"], parsed["task"]
 
 
 def test_skill_checkpoint_rejects_lower_priority_rule_id_rewrite() -> None:

@@ -30,6 +30,12 @@ GOOD_RULES = """# Rules
 - 永久配置 key，例如 system:refund:config
 - 代码紧随其后调用 expire
 
+### 反例
+- 永久配置、feature flag 或灰度开关 key
+
+### 跳过条件
+- 测试代码、demo 或只读查询
+
 ### 修复建议
 为业务缓存设置 TTL。
 """
@@ -54,6 +60,8 @@ def test_validate_skill_bundle_accepts_parseable_reference_rules() -> None:
     assert report["warnings"] == [], report
     assert report["checkpoints"][0]["checkpoint_id"] == "REDIS-TTL-002", report
     assert "system:refund:config" in report["checkpoints"][0]["false_positive_patterns"], report
+    assert "feature flag" in report["checkpoints"][0]["negative_examples"], report
+    assert "只读查询" in report["checkpoints"][0]["skip_conditions"], report
 
 
 def test_validate_skill_bundle_rejects_parser_field_like_bullet() -> None:

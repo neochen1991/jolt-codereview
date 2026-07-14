@@ -16,6 +16,7 @@ class EvidencePack:
     impact: str = ""
     direct_evidence: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     supporting_evidence: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    evidence_path: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     semantic_paths: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     trigger_conditions: tuple[str, ...] = field(default_factory=tuple)
     contradictions: tuple[dict[str, Any], ...] = field(default_factory=tuple)
@@ -73,6 +74,40 @@ def _context_completeness(finding: dict[str, Any], context_health: dict[str, Any
     return round(score, 4)
 
 
+def _evidence_scope(finding: dict[str, Any]) -> str:
+    explicit = str(finding.get("evidence_scope") or finding.get("scope") or "").strip().lower()
+    if explicit:
+        return explicit
+    return "local"
+
+
+def _valid_evidence_path(finding: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    raw = finding.get("evidence_path") or []
+    items = raw if isinstance(raw, list) else []
+    valid: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        step_type = str(item.get("type") or item.get("kind") or "").strip()
+        file_path = str(item.get("file_path") or item.get("file") or "").strip()
+        summary = str(item.get("summary") or item.get("evidence") or "").strip()
+        try:
+            line_start = int(item.get("line_start") or item.get("line") or 0)
+        except (TypeError, ValueError):
+            line_start = 0
+        if not step_type or not file_path or line_start <= 0 or len(summary) < 8:
+            continue
+        valid.append(
+            {
+                "type": step_type,
+                "file_path": file_path,
+                "line_start": line_start,
+                "summary": summary[:700],
+            }
+        )
+    return tuple(valid)
+
+
 def _contradiction_reason(item: dict[str, Any]) -> str:
     kind = str(item.get("kind") or "counter_evidence").strip().lower()
     aliases = {
@@ -99,6 +134,8 @@ def build_evidence_pack(
     semantic_strength = _semantic_strength(paths)
     trigger_score, triggers = _trigger_specificity(finding)
     context_score = _context_completeness(finding, health if isinstance(health, dict) else {})
+    scope = _evidence_scope(finding)
+    evidence_path = _valid_evidence_path(finding)
     contradiction_penalty = round(min(1.0, 0.65 + 0.1 * max(0, len(counter_evidence) - 1)), 4) if counter_evidence else 0.0
     changed_location = {
         "file_path": finding.get("file_path"),
@@ -152,6 +189,8 @@ def build_evidence_pack(
         if paths and semantic_strength < 0.5:
             high_severity_gaps.append("trusted_semantic_path_missing")
             high_severity_gaps.append("heuristic_semantic_path")
+        if scope == "cross_file" and len(evidence_path) < 2:
+            high_severity_gaps.append("cross_file_evidence_path_missing")
 
     if counter_evidence:
         status: EvidenceStatus = "rejected_with_reason"
@@ -166,6 +205,9 @@ def build_evidence_pack(
     elif high_severity_gaps:
         status = "needs_review"
         reason_codes.extend(high_severity_gaps)
+    elif scope == "cross_file" and len(evidence_path) < 2:
+        status = "needs_review"
+        reason_codes.append("cross_file_evidence_path_missing")
     elif paths and semantic_strength < 0.5:
         status = "needs_review"
         reason_codes.append("heuristic_semantic_path")
@@ -183,7 +225,8 @@ def build_evidence_pack(
         root_cause=root_cause,
         impact=impact,
         direct_evidence=tuple(direct),
-        supporting_evidence=tuple(direct),
+        supporting_evidence=tuple([*direct, *evidence_path]),
+        evidence_path=evidence_path,
         semantic_paths=tuple(paths),
         trigger_conditions=triggers,
         contradictions=tuple(counter_evidence),

@@ -17,6 +17,14 @@
 - 所有副作用都被同一个事务性 outbox 或状态机保护
 - 测试代码或本地 demo
 
+### 反例
+- 仅查询退款状态、导出报表或计算预估金额，不修改任何业务副作用
+- 所有副作用通过同一事务性 outbox 事件或补偿状态机统一编排
+
+### 跳过条件
+- 测试代码、本地 demo、mock 数据构造器
+- 没有同时出现两个以上业务副作用
+
 ### 修复建议
 引入退款补偿状态机或 outbox 事件；每个副作用以 refundId/requestId 做幂等；失败后进入可重试补偿状态，并暴露运营可见的异常单。
 
@@ -37,6 +45,14 @@
 - 审计由统一切面记录且代码中明确标注审计字段
 - 测试代码
 
+### 反例
+- 普通用户查询退款详情或取消本人退款申请
+- 审计由明确的 AOP/拦截器统一记录，且代码中可见 operator、reason 和 requestId 字段
+
+### 跳过条件
+- 测试代码、本地 demo、纯查询接口
+- 没有管理、运营、强制退款或批量审核语义
+
 ### 修复建议
 在审核成功和失败路径都写入 RefundAuditEvent/RefundAuditRecord，字段包含 operator、refundId、orderId、beforeStatus、afterStatus、reason、requestId 和 occurredAt。
 
@@ -56,6 +72,14 @@
 - 永久配置 key，例如 system:refund:config
 - feature flag、灰度开关、系统配置等明确永久 key
 - 代码紧随其后调用 expire 设置过期时间
+
+### 反例
+- 永久配置 key，例如 system:refund:config、feature flag、灰度开关等配置 key，明确需要长期存在
+- Redis 写入后在同一分支立即调用 expire、setEx 或带 Duration 的 set
+
+### 跳过条件
+- 测试代码、本地 demo、配置初始化脚本
+- key 不属于退款详情、退款进度或审核状态等业务缓存
 
 ### 修复建议
 为业务缓存设置 TTL；永久 key 必须在代码中用常量命名和注释说明 permanent/config 语义。

@@ -15,7 +15,7 @@ sys.path.insert(0, str(WORKER))
 from rules.skill_checkpoint_parser import parse_skill_checkpoints
 
 
-REQUIRED_FIELDS = ["check", "required_evidence", "false_positive_patterns", "fix_guidance"]
+REQUIRED_FIELDS = ["check", "required_evidence", "false_positive_patterns", "negative_examples", "skip_conditions", "fix_guidance"]
 
 
 def _read(path: Path) -> str:
@@ -45,7 +45,7 @@ def _suspicious_field_bullets(path: Path, text: str) -> list[dict[str, Any]]:
         if section:
             current_section = section.group(1).strip()
             continue
-        if current_section not in {"误报模式", "误报排除", "例外", "证据要求", "输出要求"}:
+        if current_section not in {"误报模式", "误报排除", "例外", "证据要求", "输出要求", "反例", "错误示例", "跳过条件", "不适用条件", "忽略条件"}:
             continue
         stripped = raw.strip()
         # The parser treats "- system:refund:config ..." as a field named "system".
@@ -114,6 +114,8 @@ def validate_skill_bundle(skill_dir: Path) -> dict[str, Any]:
                     "source_path": checkpoint.get("source_path"),
                     "required_evidence": checkpoint.get("required_evidence"),
                     "false_positive_patterns": checkpoint.get("false_positive_patterns"),
+                    "negative_examples": checkpoint.get("negative_examples"),
+                    "skip_conditions": checkpoint.get("skip_conditions"),
                     "fix_guidance": checkpoint.get("fix_guidance"),
                 }
             )

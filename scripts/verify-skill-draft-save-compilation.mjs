@@ -20,7 +20,7 @@ const selected = {
     {
       asset_path: "references/rules.md",
       asset_type: "reference",
-      content: "## OLD-001 Old checkpoint\n- check: old\n- required_evidence: old\n- false_positive_patterns: old\n- fix_guidance: old\n"
+      content: "## OLD-001 Old checkpoint\n- check: old\n- required_evidence: old\n- false_positive_patterns: old\n- negative_examples: old\n- skip_conditions: old\n- fix_guidance: old\n"
     }
   ])
 };
@@ -28,7 +28,7 @@ const selected = {
 const validation = compileStoredSkillVersion(selected, {
   asset_path: "references/rules.md",
   asset_type: "reference",
-  content: "## NEW-001 New checkpoint\n- check: new\n- required_evidence: new\n- false_positive_patterns: new\n- fix_guidance: new\n"
+  content: "## NEW-001 New checkpoint\n- check: new\n- required_evidence: new\n- false_positive_patterns: new\n- negative_examples: new\n- skip_conditions: new\n- fix_guidance: new\n"
 });
 
 assert.equal(validation.ok, true, JSON.stringify(validation.failures));

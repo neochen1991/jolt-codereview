@@ -114,6 +114,50 @@ def test_bound_rule_with_no_required_evidence_and_no_tool_support_is_rejected() 
     assert "bound_required_evidence_missing" in pack.reason_codes
 
 
+def test_cross_file_finding_without_evidence_path_needs_review() -> None:
+    pack = build_evidence_pack(
+        _finding(
+            evidence_scope="cross_file",
+            semantic_paths=[{"edges": [{"confidence": "typed"}], "complete": True}],
+        ),
+        context_health={"status": "full"},
+    )
+    assert pack.status == "needs_review"
+    assert "cross_file_evidence_path_missing" in pack.reason_codes
+
+
+def test_cross_file_finding_with_evidence_path_is_confirmed() -> None:
+    pack = build_evidence_pack(
+        _finding(
+            evidence_scope="cross_file",
+            evidence_path=[
+                {
+                    "type": "changed_symbol",
+                    "file_path": "src/AuthService.java",
+                    "line_start": 42,
+                    "summary": "update() now trusts tenant id from request",
+                },
+                {
+                    "type": "caller",
+                    "file_path": "src/AuthController.java",
+                    "line_start": 18,
+                    "summary": "controller forwards external request into AuthService.update",
+                },
+                {
+                    "type": "impact",
+                    "file_path": "src/AuthService.java",
+                    "line_start": 42,
+                    "summary": "tenant isolation can be bypassed without authorization guard",
+                },
+            ],
+            semantic_paths=[{"edges": [{"confidence": "typed"}], "complete": True}],
+        ),
+        context_health={"status": "full"},
+    )
+    assert pack.status == "confirmed"
+    assert pack.evidence_path
+
+
 if __name__ == "__main__":
     test_strong_typed_path_and_trigger_is_confirmed()
     test_local_high_severity_with_location_trigger_and_impact_is_confirmed()
@@ -122,4 +166,6 @@ if __name__ == "__main__":
     test_missing_context_is_unresolved_not_silently_dropped()
     test_high_severity_without_impact_path_cannot_be_confirmed()
     test_bound_rule_with_no_required_evidence_and_no_tool_support_is_rejected()
+    test_cross_file_finding_without_evidence_path_needs_review()
+    test_cross_file_finding_with_evidence_path_is_confirmed()
     print("evidence pack tests passed")

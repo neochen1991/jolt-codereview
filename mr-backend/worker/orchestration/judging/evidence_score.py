@@ -320,6 +320,7 @@ def score(
         "symbol_alignment": round(_symbol_alignment_score(finding, related_context or {}), 4),
         "consensus": round(consensus_score, 4),
         "semantic_path_strength": round(evidence_pack.semantic_path_strength * 0.15, 4),
+        "cross_file_evidence_path": round(0.1 if getattr(evidence_pack, "evidence_path", ()) else 0.0, 4),
         "trigger_specificity": round(evidence_pack.trigger_specificity * 0.1, 4),
         "context_completeness": round(evidence_pack.context_completeness * 0.1, 4),
     }

@@ -58,7 +58,7 @@ from quality_shadow import (
     should_capture_review_input,
 )
 from review_quality_rollback import evaluate_and_request_runtime_rollback
-from review_control import ReviewJobInterrupted, ensure_review_job_active
+from review_control import ReviewJobInterrupted, ensure_review_job_active, reclaim_stale_review_jobs
 from skill_debug import (
     SkillDebugStopped,
     apply_debug_snapshot,
@@ -4692,15 +4692,7 @@ def choose_job(conn: Any, config: dict[str, Any]) -> Any | None:
         return None
     try:
         conn.execute("BEGIN")
-        conn.execute(
-            """
-            UPDATE review_jobs
-            SET status = 'queued', locked_at = NULL, locked_by = NULL
-            WHERE status IN ('fetching', 'pre_scanning', 'reviewing', 'judging')
-              AND (heartbeat_at IS NULL OR NULLIF(heartbeat_at, '')::timestamptz < CURRENT_TIMESTAMP - (%s * INTERVAL '1 second'))
-            """,
-            (RECLAIM_AFTER_SECONDS,),
-        )
+        reclaim_stale_review_jobs(conn, RECLAIM_AFTER_SECONDS)
         active_placeholders = ",".join("%s" for _ in ACTIVE_STATUSES)
         candidates = conn.execute(
             f"""

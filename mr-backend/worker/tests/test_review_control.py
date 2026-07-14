@@ -7,7 +7,7 @@ from pathlib import Path
 WORKER_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKER_ROOT))
 
-from review_control import ReviewJobInterrupted, ensure_review_job_active  # noqa: E402
+from review_control import ReviewJobInterrupted, ensure_review_job_active, reclaim_stale_review_jobs  # noqa: E402
 
 
 class _Cursor:
@@ -26,6 +26,15 @@ class _Connection:
         assert "SELECT status FROM review_jobs" in sql
         assert params == ("job_1",)
         return _Cursor(None if self.status is None else {"status": self.status})
+
+
+class _RecordingConnection:
+    def __init__(self):
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def execute(self, sql: str, params: tuple[object, ...]):
+        self.calls.append((sql, params))
+        return _Cursor(None)
 
 
 def test_active_review_job_is_allowed_to_continue() -> None:
@@ -59,9 +68,28 @@ def test_review_runtime_wires_cancellation_into_graph_and_context_units() -> Non
     assert "ensure_active=ensure_active" in experts_source
 
 
+def test_stale_recovery_never_requeues_jobs_for_terminal_merge_requests() -> None:
+    conn = _RecordingConnection()
+
+    reclaim_stale_review_jobs(conn, 60)
+
+    assert len(conn.calls) == 2
+    cancel_sql, cancel_params = conn.calls[0]
+    requeue_sql, requeue_params = conn.calls[1]
+    assert "UPDATE review_jobs AS job" in cancel_sql
+    assert "FROM merge_requests AS mr" in cancel_sql
+    assert "SET status = 'cancelled'" in cancel_sql
+    assert "mr.review_status NOT IN ('queued', 'fetching', 'pre_scanning', 'reviewing', 'judging')" in cancel_sql
+    assert "SET status = 'queued'" in requeue_sql
+    assert "mr.review_status IN ('queued', 'fetching', 'pre_scanning', 'reviewing', 'judging')" in requeue_sql
+    assert cancel_params == (60,)
+    assert requeue_params == (60,)
+
+
 if __name__ == "__main__":
     test_active_review_job_is_allowed_to_continue()
     test_cancelled_review_job_aborts_worker_without_retry()
     test_paused_or_deleted_review_job_also_aborts_current_work()
     test_review_runtime_wires_cancellation_into_graph_and_context_units()
+    test_stale_recovery_never_requeues_jobs_for_terminal_merge_requests()
     print("review control tests passed")

@@ -79,19 +79,6 @@ export class ProjectConfigService {
     `).get(projectId, key) as { key: string; settings_json: string; updated_at: string } | undefined;
   }
 
-  rollbackReviewQuality(projectId: string) {
-    const existing = this.db.prepare(`
-      SELECT settings_json
-      FROM project_settings
-      WHERE project_id = $1 AND settings_key = 'review_quality'
-    `).get(projectId) as { settings_json: string } | undefined;
-    const before = existing ? JSON.parse(existing.settings_json || "{}") as Record<string, unknown> : {};
-    const after = { ...before, context_engine: "v1" };
-    const changed = before.context_engine !== "v1";
-    const row = this.upsertSetting(projectId, "review_quality", after);
-    return { changed, before, after, row };
-  }
-
   effectiveConfig(projectId: string, deploymentDefaults: AppConfig) {
     const settings = this.listSettings(projectId).settings as Record<string, Record<string, unknown>>;
     const effective = JSON.parse(JSON.stringify(deploymentDefaults ?? {})) as AppConfig;

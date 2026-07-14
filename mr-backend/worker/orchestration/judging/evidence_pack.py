@@ -123,6 +123,24 @@ def build_evidence_pack(
 
     reason_codes: list[str] = []
     severity = str(finding.get("severity") or "").strip().lower()
+    bound_contract = finding.get("bound_evidence_contract") if isinstance(finding.get("bound_evidence_contract"), dict) else {}
+    bound_status = str(bound_contract.get("status") or "").strip().lower()
+    matched_bound_evidence = [
+        str(item).strip()
+        for item in bound_contract.get("matched_required_evidence") or []
+        if str(item).strip()
+    ]
+    has_bound_attribution = bool(
+        finding.get("covered_rules")
+        or finding.get("rule_id")
+        or finding.get("checkpoint_id")
+    )
+    unsupported_bound_claim = bool(
+        has_bound_attribution
+        and bound_status == "weak"
+        and not matched_bound_evidence
+        and not (tool_observations or [])
+    )
     high_severity_gaps: list[str] = []
     if severity in {"critical", "high"}:
         if not changed_location:
@@ -138,6 +156,9 @@ def build_evidence_pack(
     if counter_evidence:
         status: EvidenceStatus = "rejected_with_reason"
         reason_codes.extend(_contradiction_reason(item) for item in counter_evidence)
+    elif unsupported_bound_claim:
+        status = "rejected_with_reason"
+        reason_codes.append("bound_required_evidence_missing")
     elif context_score <= 0.3 or not direct or unresolved_context:
         status = "unresolved_context"
         reason_codes.append("context_incomplete")

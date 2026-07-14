@@ -29,9 +29,10 @@
     }
   ],
   "review": {
-    "reviewer_1": "",
-    "reviewer_2": "",
-    "status": "pending"
+    "reviewer_1": {"id": "reviewer-a", "verdict": "valid"},
+    "reviewer_2": {"id": "reviewer-b", "verdict": "valid"},
+    "status": "approved",
+    "adjudication_reason": ""
   }
 }
 ```
@@ -53,6 +54,8 @@
 4. 正例和负例都需要两名评审者独立确认；分歧必须记录解决说明。
 5. `review.status=approved` 后才能进入正式质量门；`pending` 只能进入开发回归。
 6. 自动生成或模型提出的 Gold 不能自动标记为 approved。
+7. 两名评审者必须使用不同身份；若 verdict 不一致，`adjudication_reason` 必须明确记录最终裁定依据。
+8. 正式门禁只读取 `review_quality.gold_dataset_path` 指向的 JSONL。少于 30 个不同 MR、缺少双评审或缺少任一侧成本数据时，状态只能是 `provisional`。
 
 ## 最小数据配比
 

@@ -16,4 +16,9 @@ const duplicateMrResult = evaluateReviewQualityUplift(
 );
 if (duplicateMrResult.passed) throw new Error("30 runs from fewer than 30 distinct MRs must fail");
 if (!duplicateMrResult.checks.some((item) => item.metric === "distinct_mr_count" && !item.passed)) throw new Error("distinct MR failure reason missing");
+const missingEvidenceResult = evaluateReviewQualityUplift(
+  passed.baseline,
+  { ...passed.candidate, labeled_gold_complete: false, paired_cost_complete: false }
+);
+if (missingEvidenceResult.passed) throw new Error("unreviewed Gold or incomplete cost evidence must not pass");
 console.log(JSON.stringify({ ok: true, verified: "review_quality_uplift_gate", checks: passResult.checks.length }));

@@ -1,4 +1,4 @@
-export const QUALITY_GATE_VERSION = "review_quality_uplift_v1";
+export const QUALITY_GATE_VERSION = "review_quality_uplift_v2";
 
 function number(report, key) {
   const value = Number(report?.[key]);
@@ -25,6 +25,8 @@ export function evaluateReviewQualityUplift(baseline, candidate) {
   const baselineDurationP95 = number(baseline, "p95_duration_ms");
   add("sample_count", sampleCount >= 30, sampleCount, ">=30");
   add("distinct_mr_count", distinctMrCount >= 30, distinctMrCount, ">=30");
+  add("labeled_gold_complete", candidate?.labeled_gold_complete === true, candidate?.labeled_gold_complete ?? null, "true");
+  add("paired_cost_complete", candidate?.paired_cost_complete === true, candidate?.paired_cost_complete ?? null, "true");
   add("recall_uplift", recall !== null && baselineRecall !== null && recall - baselineRecall >= 0.10, recall !== null && baselineRecall !== null ? recall - baselineRecall : null, ">=0.10");
   add("cross_file_recall_uplift", crossRecall !== null && baselineCrossRecall !== null && crossRecall - baselineCrossRecall >= 0.15, crossRecall !== null && baselineCrossRecall !== null ? crossRecall - baselineCrossRecall : null, ">=0.15");
   add("critical_high_recall", criticalHighRecall !== null && criticalHighRecall >= 0.95, criticalHighRecall, ">=0.95");

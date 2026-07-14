@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -126,6 +127,58 @@ def _post_rollback(config: dict[str, Any], project_id: str, payload: dict[str, A
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"automatic review quality rollback failed: {exc.code} {detail}") from exc
+
+
+def request_review_quality_rollback(
+    conn: Any,
+    config: dict[str, Any],
+    project_id: str,
+    *,
+    trigger: str,
+    source_run_id: str,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    payload = {
+        "project_id": project_id,
+        "target_context_engine": "v1",
+        "trigger": trigger,
+        "source_run_id": source_run_id,
+        "evidence": evidence,
+        "requested_at": datetime.now(timezone.utc).isoformat(),
+    }
+    digest = hashlib.sha256(json.dumps(payload["evidence"], sort_keys=True, default=str).encode("utf-8")).hexdigest()[:20]
+    event_id = f"rollback_{project_id}_{trigger}_{digest}"
+    conn.execute(
+        """
+        INSERT INTO review_quality_rollback_events (
+          id, project_id, trigger, source_run_id, status, evidence_json
+        ) VALUES (%s, %s, %s, %s, 'rollback_pending', %s)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (event_id, project_id, trigger, source_run_id, json.dumps(payload, ensure_ascii=False)),
+    )
+    conn.commit()
+    existing = conn.execute(
+        "SELECT status, response_json FROM review_quality_rollback_events WHERE id = %s",
+        (event_id,),
+    ).fetchone()
+    if existing and str(existing["status"]) == "rolled_back":
+        try:
+            response = json.loads(str(existing["response_json"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            response = {}
+        return {"status": "rolled_back", "response": response, "idempotent": True}
+    response = _post_rollback(config, project_id, payload)
+    conn.execute(
+        """
+        UPDATE review_quality_rollback_events
+        SET status = 'rolled_back', response_json = %s, error_message = '', updated_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+        """,
+        (json.dumps(response, ensure_ascii=False), event_id),
+    )
+    conn.commit()
+    return {"status": "rolled_back", "response": response}
 
 
 def _evaluate_and_request_runtime_rollback(

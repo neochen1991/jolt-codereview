@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any, Callable
-from skill_debug import is_debug_job, production_side_effects_allowed
+from skill_debug import is_debug_job, is_shadow_job, production_side_effects_allowed
 from quality_shadow import complete_shadow_pair, enqueue_v1_shadow_pair
+from review_quality_evaluator import evaluate_project_labeled_quality
 from orchestration.skill_runtime_facts import seal_skill_runtime_facts
 
 
@@ -355,6 +356,8 @@ def make_finalize_node(
             recorder.event(span, "mr_finding_history_updated", "MR finding history 已更新", history_summary)
             recorder.finish(span)
         conn.commit()
+        if is_shadow_job(job):
+            evaluate_project_labeled_quality(conn, project_config or {}, project_id, run_id)
         return {**state, "status": status}
 
     return finalize_node

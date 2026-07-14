@@ -73,7 +73,7 @@ export class ReviewJobRepository {
   }
 
   supersedeQueued(mergeRequestId: string) {
-    return this.db.prepare("UPDATE review_jobs SET status = 'superseded', updated_at = CURRENT_TIMESTAMP WHERE merge_request_id = $1 AND status = 'queued'").run(mergeRequestId);
+    return this.db.prepare("UPDATE review_jobs SET status = 'superseded', updated_at = CURRENT_TIMESTAMP WHERE merge_request_id = $1 AND status = 'queued' AND execution_kind = 'production_review'").run(mergeRequestId);
   }
 
   cancelQueued(mergeRequestId: string) {

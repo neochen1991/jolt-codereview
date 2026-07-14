@@ -60,6 +60,171 @@ def should_capture_review_input(project_config: dict[str, Any], job: dict[str, A
     return kind == "production_review" and bool(review_quality.get("quality_shadow_mode", False))
 
 
+def shadow_pair_id(project_id: str, merge_request_id: str, head_sha: str, artifact_digest: str) -> str:
+    identity = "|".join([str(project_id), str(merge_request_id), str(head_sha), str(artifact_digest)])
+    return f"qpair_{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:32]}"
+
+
+def shadow_baseline_job_id(pair_id: str) -> str:
+    return f"qshadow_v1_{hashlib.sha256(str(pair_id).encode('utf-8')).hexdigest()[:28]}"
+
+
+def should_auto_enqueue_baseline(
+    project_config: dict[str, Any],
+    job: dict[str, Any] | Any,
+    status: str,
+) -> bool:
+    kind = str((job.get("execution_kind") if hasattr(job, "get") else "") or "production_review")
+    quality = project_config.get("review_quality") if isinstance(project_config.get("review_quality"), dict) else {}
+    return (
+        kind == "production_review"
+        and str(quality.get("context_engine") or "v2") == "v2"
+        and bool(quality.get("quality_shadow_mode", True))
+        and bool(quality.get("auto_shadow_baseline", True))
+        and str(status) in {"waiting_confirmation", "no_issue"}
+    )
+
+
+def _job_context(job: dict[str, Any] | Any) -> dict[str, Any]:
+    try:
+        value = job.get("debug_context_json") if hasattr(job, "get") else "{}"
+        parsed = json.loads(str(value or "{}"))
+        return parsed if isinstance(parsed, dict) else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def enqueue_v1_shadow_pair(
+    conn: Any,
+    *,
+    project_config: dict[str, Any],
+    project_id: str,
+    job: dict[str, Any] | Any,
+    run_id: str,
+    status: str,
+    commit: bool = True,
+) -> dict[str, Any]:
+    if not should_auto_enqueue_baseline(project_config, job, status):
+        return {"status": "not_eligible"}
+    snapshot = conn.execute(
+        """
+        SELECT id, artifact_sha256
+        FROM review_input_snapshots
+        WHERE source_review_run_id = %s
+        """,
+        (run_id,),
+    ).fetchone()
+    merge_request_id = str(job.get("merge_request_id") or "")
+    head_sha = str(job.get("head_sha") or "")
+    if not snapshot:
+        pair_id = shadow_pair_id(project_id, merge_request_id, head_sha, run_id)
+        conn.execute(
+            """
+            INSERT INTO review_quality_shadow_pairs (
+              id, project_id, merge_request_id, head_sha,
+              production_job_id, production_run_id, status, failure_reason
+            ) VALUES (%s, %s, %s, %s, %s, %s, 'validation_input_missing', 'snapshot_not_found')
+            ON CONFLICT (production_run_id) DO NOTHING
+            """,
+            (pair_id, project_id, merge_request_id, head_sha, str(job.get("id") or ""), run_id),
+        )
+        if commit:
+            conn.commit()
+        return {"status": "validation_input_missing", "pair_id": pair_id}
+
+    snapshot_id = str(snapshot["id"])
+    artifact_digest = str(snapshot["artifact_sha256"])
+    pair_id = shadow_pair_id(project_id, merge_request_id, head_sha, artifact_digest)
+    baseline_job_id = shadow_baseline_job_id(pair_id)
+    context = json.dumps(
+        {
+            "kind": "review_quality_auto_shadow",
+            "quality_shadow_pair_id": pair_id,
+            "input_snapshot_id": snapshot_id,
+            "input_artifact_sha256": artifact_digest,
+            "publish_allowed": False,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    conn.execute(
+        """
+        INSERT INTO review_quality_shadow_pairs (
+          id, project_id, merge_request_id, head_sha, input_snapshot_id,
+          input_artifact_sha256, production_job_id, production_run_id,
+          baseline_job_id, status
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'baseline_queued')
+        ON CONFLICT (production_run_id) DO NOTHING
+        """,
+        (
+            pair_id,
+            project_id,
+            merge_request_id,
+            head_sha,
+            snapshot_id,
+            artifact_digest,
+            str(job.get("id") or ""),
+            run_id,
+            baseline_job_id,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO review_jobs (
+          id, merge_request_id, head_sha, status, priority,
+          requested_effort_level, requested_by, debug_context_json, execution_kind
+        ) VALUES (%s, %s, %s, 'queued', -100, %s, %s, %s, %s)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (
+            baseline_job_id,
+            merge_request_id,
+            head_sha,
+            str(job.get("requested_effort_level") or "standard"),
+            str(job.get("requested_by") or "review-quality-auto-shadow"),
+            context,
+            "quality_shadow_v1",
+        ),
+    )
+    if commit:
+        conn.commit()
+    return {
+        "status": "baseline_queued",
+        "pair_id": pair_id,
+        "baseline_job_id": baseline_job_id,
+        "input_snapshot_id": snapshot_id,
+        "input_artifact_sha256": artifact_digest,
+    }
+
+
+def complete_shadow_pair(
+    conn: Any,
+    *,
+    job: dict[str, Any] | Any,
+    run_id: str,
+    status: str,
+    commit: bool = True,
+) -> bool:
+    if not is_shadow_job(job):
+        return False
+    pair_id = str(_job_context(job).get("quality_shadow_pair_id") or "")
+    if not pair_id:
+        return False
+    pair_status = "completed" if str(status) in {"waiting_confirmation", "no_issue"} else "failed"
+    conn.execute(
+        """
+        UPDATE review_quality_shadow_pairs
+        SET baseline_run_id = %s, status = %s, updated_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+        """,
+        (run_id, pair_status, pair_id),
+    )
+    if commit:
+        conn.commit()
+    return True
+
+
 def _as_utc(value: Any) -> datetime | None:
     if value is None or value == "":
         return None

@@ -4,6 +4,7 @@ import hashlib
 import json
 from typing import Any, Callable
 from skill_debug import is_debug_job, production_side_effects_allowed
+from quality_shadow import complete_shadow_pair, enqueue_v1_shadow_pair
 from orchestration.skill_runtime_facts import seal_skill_runtime_facts
 
 
@@ -149,6 +150,8 @@ def make_finalize_node(
     mr: Any,
     run_id: str,
     recorder: Any | None = None,
+    project_config: dict[str, Any] | None = None,
+    project_id: str = "",
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     def finalize_node(state: dict[str, Any]) -> dict[str, Any]:
         if recorder and hasattr(recorder, "flush"):
@@ -312,6 +315,18 @@ def make_finalize_node(
             (status, summary, json.dumps(budget_used, ensure_ascii=False), json.dumps(coverage, ensure_ascii=False), run_id),
         )
         conn.execute("UPDATE review_jobs SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (status, job["id"]))
+        if production_side_effects_allowed(job):
+            enqueue_v1_shadow_pair(
+                conn,
+                project_config=project_config or {},
+                project_id=project_id,
+                job=job,
+                run_id=run_id,
+                status=status,
+                commit=False,
+            )
+        else:
+            complete_shadow_pair(conn, job=job, run_id=run_id, status=status, commit=False)
         if is_debug_job(job):
             conn.execute(
                 """

@@ -52,6 +52,7 @@ from review_queue.job_consumer import ACTIVE_STATUSES, MAX_ATTEMPTS, RECLAIM_AFT
 from token_usage_reporter import report_token_usage
 from quality_shadow import (
     apply_shadow_execution_controls,
+    complete_shadow_pair,
     load_shadow_input_artifact,
     save_review_input_snapshot,
     should_capture_review_input,
@@ -190,6 +191,26 @@ def ensure_worker_schema(conn: Any) -> None:
           ON review_input_snapshots(merge_request_id, head_sha);
         CREATE INDEX IF NOT EXISTS idx_review_input_snapshots_expires
           ON review_input_snapshots(expires_at);
+        CREATE TABLE IF NOT EXISTS review_quality_shadow_pairs (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          merge_request_id TEXT NOT NULL,
+          head_sha TEXT NOT NULL,
+          input_snapshot_id TEXT NOT NULL DEFAULT '',
+          input_artifact_sha256 TEXT NOT NULL DEFAULT '',
+          production_job_id TEXT NOT NULL,
+          production_run_id TEXT NOT NULL UNIQUE,
+          baseline_job_id TEXT,
+          baseline_run_id TEXT,
+          status TEXT NOT NULL,
+          failure_reason TEXT NOT NULL DEFAULT '',
+          metrics_json TEXT NOT NULL DEFAULT '{}',
+          rollback_status TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_review_quality_shadow_pairs_project_status
+          ON review_quality_shadow_pairs(project_id, status, created_at);
         CREATE TABLE IF NOT EXISTS rule_suppression_hints (
           project_id TEXT NOT NULL,
           rule_id TEXT NOT NULL,
@@ -4859,6 +4880,7 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             """,
             (job["id"],),
         )
+        complete_shadow_pair(conn, job=job, run_id="", status="failed", commit=False)
         conn.commit()
         write_worker_log(
             config,
@@ -4911,6 +4933,8 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
                 "UPDATE merge_requests SET review_status = 'too_large' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
                 (job["merge_request_id"],),
             )
+        else:
+            complete_shadow_pair(conn, job=job, run_id="", status="failed", commit=False)
         conn.commit()
         write_worker_log(
             config,
@@ -5119,7 +5143,15 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             project_config=project_config,
             summarize_pr=summarize_pr_with_llm,
         )
-        finalize_node = make_finalize_node(conn=conn, job=job, mr=mr, run_id=run_id, recorder=recorder)
+        finalize_node = make_finalize_node(
+            conn=conn,
+            job=job,
+            mr=mr,
+            run_id=run_id,
+            recorder=recorder,
+            project_config=project_config,
+            project_id=str(project_id),
+        )
 
         if debug_context.get("kind") == "skill_debug":
             debug_span = recorder.span("skill_debug", str(debug_context.get("agent_key") or "router_agent"))
@@ -5240,6 +5272,8 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
                 "UPDATE merge_requests SET review_status = %s WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
                 (mr_status, mr["id"]),
             )
+        elif job_status == "dead_letter":
+            complete_shadow_pair(conn, job=job, run_id=run_id, status=job_status, commit=False)
         conn.commit()
         try:
             token_report = report_token_usage(conn, project_config, run_id)

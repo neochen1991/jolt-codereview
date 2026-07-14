@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from budget import BudgetTracker
 from skill_debug import production_side_effects_allowed
 
 
@@ -78,6 +77,6 @@ def make_choose_effort_node(
                 (job["merge_request_id"],),
             )
         conn.commit()
-        return {**state, "effort": effort, "budget": budget, "budget_tracker": BudgetTracker.from_budget(budget)}
+        return {**state, "effort": effort, "budget": budget}
 
     return choose_effort_node

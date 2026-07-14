@@ -4508,8 +4508,21 @@ def route_agents(
             {"agents": appended_required, "reason": "rule_router_with_java_domain_coverage_guard"},
         )
     if effort == "fast":
-        priority = {"security_agent", "coding_agent", "test_agent", "frontend_agent", "redis_agent"}
-        return [agent for agent in matched if agent["agent_id"] in priority][:3]
+        preferred_order = [
+            "dependency_agent",
+            "database_agent",
+            "security_agent",
+            "performance_agent",
+            "coding_agent",
+            "backend_agent",
+            "frontend_agent",
+            "redis_agent",
+            "test_agent",
+        ]
+        by_id = {agent["agent_id"]: agent for agent in matched}
+        ordered = [by_id[agent_id] for agent_id in preferred_order if agent_id in by_id]
+        ordered.extend(agent for agent in matched if agent.get("agent_id") not in set(preferred_order))
+        return ordered[:3]
     if effort == "standard":
         preferred_order = [
             "security_agent",

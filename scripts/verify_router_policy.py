@@ -94,6 +94,27 @@ def main() -> None:
         selected_ids = {item["agent_id"] for item in selected}
         assert not called["value"], "default routing unexpectedly called LLM router"
         assert {"security_agent", "coding_agent", "backend_agent", "performance_agent", "database_agent", "test_agent"}.issubset(selected_ids), selected_ids
+
+        dependency_files = [
+            ChangedFile(
+                "dubbo-dependencies-bom/pom.xml",
+                "modified",
+                1,
+                1,
+                2,
+                "-<log4j2.version>2.26.0</log4j2.version>\n+<log4j2.version>2.26.1</log4j2.version>\n",
+            )
+        ]
+        dependency_agents = [
+            agent("security_agent", paths=["**/*"], languages=["xml"]),
+            agent("coding_agent", paths=["**/*"], languages=["xml"]),
+            agent("dependency_agent", paths=["**/pom.xml"], languages=["xml"]),
+            agent("test_agent", paths=["**/*"], languages=["xml"]),
+        ]
+        fast_selected = route_agents(dependency_agents, dependency_files, "fast", project_config={"routing": {}}, recorder=None, span_id="span")
+        fast_ids = [item["agent_id"] for item in fast_selected]
+        assert fast_ids[0] == "dependency_agent", fast_ids
+        assert "dependency_agent" in fast_ids, fast_ids
     finally:
         review_runtime.route_agents_with_llm = original
     print({"selected": sorted(selected_ids), "llm_router_called": called["value"]})

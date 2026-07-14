@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from budget import BudgetTracker
 from tools.tool_normalizer import CATEGORY_PRIMARY_RULE, normalized_rule_category
 from orchestration.skill_runtime_facts import build_skill_routing_facts
 
@@ -172,7 +173,8 @@ def make_route_agents_node(
         files = state["files"]
         effort = state["effort"]
         router_span = recorder.span("route_agents", "router_agent")
-        budget_tracker = state.get("budget_tracker")
+        budget_tracker = BudgetTracker.from_budget(state.get("budget") or {})
+        state = {**state, "budget_tracker": budget_tracker}
         if budget_tracker and budget_tracker.should_stop():
             recorder.event(
                 router_span,

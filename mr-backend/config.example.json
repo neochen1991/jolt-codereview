@@ -37,14 +37,14 @@
   "review_policy": {
     "max_added_lines_per_mr": 2000
   },
+  "routing": {
+    "max_standard_agents": 6
+  },
   "review_quality": {
-    "context_engine": "v2",
     "semantic_index": "tree_sitter",
     "llm_replay": "record",
-    "quality_shadow_mode": true,
-    "auto_shadow_baseline": true,
-    "auto_rollback_enabled": true,
-    "minimum_distinct_mrs": 30,
+    "context_units_per_llm_call": 6,
+    "coverage_retry_context_units_limit": 2,
     "gold_dataset_path": "evaluation/production_review_quality_gold.jsonl"
   },
   "agent_policy": {

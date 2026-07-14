@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3、现有 Worker orchestration、Tree-sitter、PostgreSQL、TypeScript/Node.js、React、现有 Skill Checkpoint Compiler、现有 Candidate Store 与 Review Artifacts。
 
-> 2026-07-14 实施状态：生产默认已切换 v2；每个成功 v2 Run 自动创建冻结同输入的 v1 Shadow；运行失败门禁和双评审 Gold 质量门均可审计回滚。仪表盘会区分 `v2_provisional` 与 `v2_verified`。在取得至少 30 个不同真实 MR 的双人标注之前，只能确认链路切换，不能宣称质量提升已经被证明。
+> 2026-07-14 状态更新：本文是质量优化的历史设计背景，其中关于 v1 Shadow、双引擎 A/B 和自动回滚到 v1 的部分已经被 v2-only 方案取代。当前可执行实现以 `docs/plans/2026-07-14-v2-only-review-engine-design.md` 和 `docs/plans/2026-07-14-v2-only-review-engine-implementation.md` 为准：生产只保留 v2 Review Context Engine，真实任务质量由 v2 生产运行、人工反馈、Gold 评估、Checkpoint 闭环和可复现性共同验证。
 
 ---
 

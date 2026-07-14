@@ -309,9 +309,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
     return prompt, {"redactions": sorted(redactions), "injection_patterns": sorted(injection_patterns)}
 
 
-def build_context_unit_prompt(agent: dict[str, Any], context_unit: Any, skill_summary: str = "") -> tuple[str, dict[str, Any]]:
-    prompt, base_safety = build_prompt(agent, [], skill_summary)
-    payload = json.loads(prompt)
+def _context_unit_prompt_item(context_unit: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     item = context_unit.to_prompt_item() if hasattr(context_unit, "to_prompt_item") else dict(context_unit)
     source_text, source_safety = redact_untrusted(str(item.get("source_text") or ""))
     patch_text, patch_safety = redact_untrusted(str(item.get("patch_text") or ""))
@@ -330,27 +328,53 @@ def build_context_unit_prompt(agent: dict[str, Any], context_unit: Any, skill_su
         f'<untrusted source="full_source" file="{item.get("file_path")}">\n{source_text}\n</untrusted>'
     )
     item["patch_text"] = f'<untrusted source="diff" file="{item.get("file_path")}">\n{patch_text}\n</untrusted>'
-    payload["structured_diff"] = {
-        "format": "context_units_v2",
-        "planner_version": "context_planner_v2",
-        "items": [item],
-    }
-    payload["task"] = (
-        str(payload.get("task") or "")
-        + " 当前输入是一个实际执行的 ContextUnit；必须完整检查其中所有 hunk_ids，"
-        + "并使用 source_text 理解符号上下文，不能只检查 patch_text 的开头。"
-    )
-    return json.dumps(payload, ensure_ascii=False), {
+    return item, {
         "redactions": sorted(
-            set(base_safety.get("redactions") or [])
-            | set(source_safety["redactions"])
+            set(source_safety["redactions"])
             | set(patch_safety["redactions"])
             | dependency_redactions
         ),
         "injection_patterns": sorted(
-            set(base_safety.get("injection_patterns") or [])
-            | set(source_safety["injection_patterns"])
+            set(source_safety["injection_patterns"])
             | set(patch_safety["injection_patterns"])
             | dependency_injections
         ),
     }
+
+
+def build_context_units_prompt(agent: dict[str, Any], context_units: list[Any], skill_summary: str = "") -> tuple[str, dict[str, Any]]:
+    prompt, base_safety = build_prompt(agent, [], skill_summary)
+    payload = json.loads(prompt)
+    items: list[dict[str, Any]] = []
+    unit_redactions: set[str] = set()
+    unit_injections: set[str] = set()
+    for context_unit in context_units:
+        item, safety = _context_unit_prompt_item(context_unit)
+        items.append(item)
+        unit_redactions.update(safety["redactions"])
+        unit_injections.update(safety["injection_patterns"])
+    payload["structured_diff"] = {
+        "format": "context_units_v2",
+        "planner_version": "context_planner_v2",
+        "items": items,
+    }
+    payload["task"] = (
+        str(payload.get("task") or "")
+        + " 当前输入是实际执行的 ContextUnit 批次；必须完整检查 structured_diff.items 中每个 item 的所有 hunk_ids，"
+        + "并使用 source_text 理解符号上下文，不能只检查 patch_text 的开头。"
+        + "如果输出 finding，尽量填写对应的 context_unit_id；不能确定时必须确保 file_path/line_start 能唯一落到某个 ContextUnit。"
+    )
+    return json.dumps(payload, ensure_ascii=False), {
+        "redactions": sorted(
+            set(base_safety.get("redactions") or [])
+            | unit_redactions
+        ),
+        "injection_patterns": sorted(
+            set(base_safety.get("injection_patterns") or [])
+            | unit_injections
+        ),
+    }
+
+
+def build_context_unit_prompt(agent: dict[str, Any], context_unit: Any, skill_summary: str = "") -> tuple[str, dict[str, Any]]:
+    return build_context_units_prompt(agent, [context_unit], skill_summary)

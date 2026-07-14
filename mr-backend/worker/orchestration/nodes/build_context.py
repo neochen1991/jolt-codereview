@@ -27,7 +27,6 @@ def make_build_context_node(*, recorder: Any, project_config: dict[str, Any] | N
         tool_observations = state.get("tool_observations") or []
         worktree_path = str(state.get("source_worktree_path") or "").strip()
         quality = (project_config or {}).get("review_quality") if isinstance((project_config or {}).get("review_quality"), dict) else {}
-        context_engine = str(quality.get("context_engine") or "v2")
         semantic_index = str(quality.get("semantic_index") or "tree_sitter")
         priority_paths = [
             str(getattr(item, "filename", "") or (item.get("filename") if isinstance(item, dict) else ""))
@@ -70,8 +69,6 @@ def make_build_context_node(*, recorder: Any, project_config: dict[str, Any] | N
             context_queries=list(skill_requirements.context_queries),
             max_dependency_hops=skill_requirements.max_dependency_hops,
         )
-        if context_engine == "v1":
-            context_plan = type(context_plan)(units=(), assigned_hunk_ids=context_plan.assigned_hunk_ids, unresolved=context_plan.unresolved, diff_assignment_rate=context_plan.diff_assignment_rate, plan_hash=context_plan.plan_hash)
         enriched_state = {
             **state,
             "context_units": list(context_plan.units),

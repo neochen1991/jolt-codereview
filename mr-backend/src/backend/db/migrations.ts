@@ -112,61 +112,6 @@ export function migrate(db: Db) {
       completed_at TEXT
     );
 
-    CREATE TABLE IF NOT EXISTS review_input_snapshots (
-      id TEXT PRIMARY KEY,
-      source_review_job_id TEXT NOT NULL,
-      source_review_run_id TEXT NOT NULL UNIQUE,
-      merge_request_id TEXT NOT NULL,
-      head_sha TEXT NOT NULL,
-      artifact_json TEXT NOT NULL,
-      artifact_sha256 TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_review_input_snapshots_mr_head
-      ON review_input_snapshots(merge_request_id, head_sha);
-    CREATE INDEX IF NOT EXISTS idx_review_input_snapshots_expires
-      ON review_input_snapshots(expires_at);
-
-    CREATE TABLE IF NOT EXISTS review_quality_shadow_pairs (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      merge_request_id TEXT NOT NULL,
-      head_sha TEXT NOT NULL,
-      input_snapshot_id TEXT NOT NULL DEFAULT '',
-      input_artifact_sha256 TEXT NOT NULL DEFAULT '',
-      production_job_id TEXT NOT NULL,
-      production_run_id TEXT NOT NULL UNIQUE,
-      baseline_job_id TEXT,
-      baseline_run_id TEXT,
-      status TEXT NOT NULL,
-      failure_reason TEXT NOT NULL DEFAULT '',
-      metrics_json TEXT NOT NULL DEFAULT '{}',
-      rollback_status TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_review_quality_shadow_pairs_project_status
-      ON review_quality_shadow_pairs(project_id, status, created_at);
-
-    CREATE TABLE IF NOT EXISTS review_quality_rollback_events (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      trigger TEXT NOT NULL,
-      source_run_id TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL,
-      evidence_json TEXT NOT NULL DEFAULT '{}',
-      response_json TEXT NOT NULL DEFAULT '{}',
-      error_message TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_review_quality_rollback_events_project_status
-      ON review_quality_rollback_events(project_id, status, created_at);
-
     CREATE TABLE IF NOT EXISTS review_findings (
       id TEXT PRIMARY KEY,
       review_run_id TEXT NOT NULL,

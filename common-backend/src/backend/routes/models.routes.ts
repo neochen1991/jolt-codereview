@@ -109,30 +109,6 @@ export function createModelRoutes(ctx: BackendRouteContext): Route[] {
         effective_config: effective,
         source: result.source
       };
-    }),
-    route("POST", "/internal/models/projects/:projectId/review-quality/rollback", ({ req, params, body }) => {
-      const denied = ensureInternal(req);
-      if (denied) return denied;
-      const input = (typeof body === "object" && body ? body : {}) as Record<string, unknown>;
-      if (input.target_context_engine !== "v1") return badRequest("target_context_engine must be v1");
-      const result = projectConfigService.rollbackReviewQuality(params.projectId);
-      auditLog({
-        projectId: params.projectId,
-        action: "review_quality.auto_rollback",
-        resourceType: "project_settings",
-        resourceId: "review_quality",
-        summary: `automatically rolled review context engine back to v1: ${String(input.trigger || "unknown")}`,
-        metadata: {
-          trigger: input.trigger,
-          source_run_id: input.source_run_id,
-          requested_at: input.requested_at,
-          evidence: input.evidence,
-          changed: result.changed,
-          before: result.before,
-          after: result.after
-        }
-      });
-      return { ok: true, project_id: params.projectId, ...result };
     })
   ];
 }

@@ -185,6 +185,27 @@ def _coverage_retry_batch(batch: dict[str, Any], *, reason: str) -> dict[str, An
     return {**batch, "label": f"{batch.get('label')}:coverage_retry", "agent": agent, "coverage_retry": True}
 
 
+def _coverage_retry_context_units(config: dict[str, Any], context_units: list[Any]) -> list[Any]:
+    quality = config.get("review_quality") if isinstance(config.get("review_quality"), dict) else {}
+    raw = quality.get("coverage_retry_context_units_limit", 2)
+    try:
+        limit = int(raw)
+    except (TypeError, ValueError):
+        limit = 2
+    limit = max(0, min(limit, len(context_units)))
+    if limit == 0:
+        return []
+    ranked = sorted(
+        enumerate(context_units),
+        key=lambda item: (
+            1 if str(getattr(item[1], "fallback_reason", "") or (item[1].get("fallback_reason") if isinstance(item[1], dict) else "") or "") else 0,
+            -len(getattr(item[1], "dependencies", ()) or (item[1].get("dependencies") if isinstance(item[1], dict) else []) or []),
+            item[0],
+        ),
+    )
+    return [unit for _index, unit in ranked[:limit]]
+
+
 def _skill_checkpoints(
     skill_key: str,
     skill_assets: list[dict[str, Any]],
@@ -1108,7 +1129,7 @@ def make_run_experts_node(
                                 agent=retry_agent,
                                 files=llm_files,
                                 skill_summary=retry_skill_summary,
-                                context_units=context_units,
+                                context_units=_coverage_retry_context_units(project_config, context_units),
                                 budget_tracker=budget_tracker,
                                 ensure_active=ensure_active,
                             )

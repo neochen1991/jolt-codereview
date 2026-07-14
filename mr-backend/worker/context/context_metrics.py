@@ -108,10 +108,8 @@ def context_health_from_state(state: dict[str, Any]) -> dict[str, Any]:
             unresolved_source=sum(1 for item in plan_unresolved if str(item.get("reason") or "") == "unresolved_source"),
             unresolved_budget=0,
         )
-        context_engine = "v2"
     else:
         assignment = summarize_context_coverage(total=len(diff_slices), assigned=len(diff_slices))
-        context_engine = "v1"
 
     patch_only_unresolved = max(0, total_files - len(fetched_filenames)) if worktree_mode == "patch_only" else 0
     unresolved_count = max(len(unresolved_units), assignment["unresolved_hunk_count"], patch_only_unresolved)
@@ -124,7 +122,7 @@ def context_health_from_state(state: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "version": "context_health_v1",
-        "context_engine": context_engine,
+        "context_engine": "v2",
         "worktree_mode": worktree_mode,
         "worktree_error_count": len(worktree_errors),
         "changed_file_count": total_files,

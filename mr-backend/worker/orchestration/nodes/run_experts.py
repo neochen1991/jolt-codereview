@@ -81,7 +81,31 @@ def _project_id_for_job(conn: Any, job: Any) -> str:
         return ""
 
 
-def _bound_rule_batches(agent_context: dict[str, Any], files: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+def _batch_size(value: Any, default: int = 1) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(1, min(parsed, 8))
+
+
+def _chunks(values: list[Any], size: int) -> list[list[Any]]:
+    return [values[index : index + size] for index in range(0, len(values), size)]
+
+
+def _bound_batch_limits(config: dict[str, Any] | None = None) -> dict[str, int]:
+    quality = config.get("review_quality") if isinstance(config, dict) and isinstance(config.get("review_quality"), dict) else {}
+    return {
+        "bound_rules_per_llm_call": _batch_size(quality.get("bound_rules_per_llm_call"), 4),
+        "skill_checkpoints_per_llm_call": _batch_size(quality.get("skill_checkpoints_per_llm_call"), 4),
+    }
+
+
+def _bound_rule_batches(
+    agent_context: dict[str, Any],
+    files: list[dict[str, Any]] | None = None,
+    batch_limits: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
     rules = [rule for rule in (agent_context.get("bound_rules") or []) if isinstance(rule, dict)]
     custom_skills = [str(skill).strip() for skill in (agent_context.get("custom_skills") or []) if str(skill).strip()]
     skill_assets = [asset for asset in (agent_context.get("skill_assets") or []) if isinstance(asset, dict)]
@@ -89,19 +113,31 @@ def _bound_rule_batches(agent_context: dict[str, Any], files: list[dict[str, Any
     if not rules and not custom_skills:
         return [{"label": "default", "agent": agent_context, "rule_id": ""}]
     batches: list[dict[str, Any]] = []
-    for index, rule in enumerate(rules, start=1):
-        rule_id = str(rule.get("rule_id") or f"rule_{index}")
+    rule_batch_size = _batch_size((batch_limits or {}).get("bound_rules_per_llm_call"), 1)
+    checkpoint_batch_size = _batch_size((batch_limits or {}).get("skill_checkpoints_per_llm_call"), 1)
+    indexed_rules = [
+        (index, rule, str(rule.get("rule_id") or f"rule_{index}"))
+        for index, rule in enumerate(rules, start=1)
+    ]
+    for rule_chunk in _chunks(indexed_rules, rule_batch_size):
+        rule_ids = [item[2] for item in rule_chunk]
+        chunk_rules = [item[1] for item in rule_chunk]
+        first_index = rule_chunk[0][0]
+        label = f"bound_rule:{rule_ids[0]}" if len(rule_ids) == 1 else f"bound_rule_batch:{','.join(rule_ids)}"
         batches.append(
             {
-                "label": f"bound_rule:{rule_id}",
-                "rule_id": rule_id,
+                "label": label,
+                "rule_id": rule_ids[0] if len(rule_ids) == 1 else "",
+                "rule_ids": rule_ids,
                 "agent": {
                     **agent_context,
-                    "bound_rules": [rule],
+                    "bound_rules": chunk_rules,
                     "bound_rule_batch": {
-                        "index": index,
+                        "index": first_index,
                         "total": len(rules),
-                        "rule_id": rule_id,
+                        "rule_id": rule_ids[0] if len(rule_ids) == 1 else "",
+                        "rule_ids": rule_ids,
+                        "batch_size": len(rule_ids),
                     },
                 },
             }
@@ -112,27 +148,41 @@ def _bound_rule_batches(agent_context: dict[str, Any], files: list[dict[str, Any
         checkpoints = _skill_checkpoints(skill_key, filtered_assets, manifest=manifest)
         if files is not None:
             checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint_applies_to_files(checkpoint, files)]
-        for checkpoint_index, checkpoint in enumerate(checkpoints, start=1):
-            checkpoint_id = str(checkpoint.get("checkpoint_id") or f"SKILL:{skill_key}")
+        indexed_checkpoints = [
+            (checkpoint_index, checkpoint, str(checkpoint.get("checkpoint_id") or f"SKILL:{skill_key}"))
+            for checkpoint_index, checkpoint in enumerate(checkpoints, start=1)
+        ]
+        for checkpoint_chunk in _chunks(indexed_checkpoints, checkpoint_batch_size):
+            checkpoint_ids = [item[2] for item in checkpoint_chunk]
+            chunk_checkpoints = [item[1] for item in checkpoint_chunk]
+            first_checkpoint_index = checkpoint_chunk[0][0]
+            label = (
+                f"bound_skill:{skill_key}:{checkpoint_ids[0]}"
+                if len(checkpoint_ids) == 1
+                else f"bound_skill_batch:{skill_key}:{','.join(checkpoint_ids)}"
+            )
             batches.append(
                 {
-                    "label": f"bound_skill:{skill_key}:{checkpoint_id}",
+                    "label": label,
                     "rule_id": "",
                     "skill_key": skill_key,
-                    "checkpoint_id": checkpoint_id,
+                    "checkpoint_id": checkpoint_ids[0] if len(checkpoint_ids) == 1 else "",
+                    "checkpoint_ids": checkpoint_ids,
                     "agent": {
                         **agent_context,
                         "custom_skills": [skill_key],
                         "skill_assets": filtered_assets,
-                        "skill_checkpoints": [checkpoint],
+                        "skill_checkpoints": chunk_checkpoints,
                         "bound_rules": [],
                         "bound_skill_batch": {
                             "index": skill_index,
                             "total": len(custom_skills),
-                            "checkpoint_index": checkpoint_index,
+                            "checkpoint_index": first_checkpoint_index,
                             "checkpoint_total": len(checkpoints),
                             "skill_key": skill_key,
-                            "checkpoint_id": checkpoint_id,
+                            "checkpoint_id": checkpoint_ids[0] if len(checkpoint_ids) == 1 else "",
+                            "checkpoint_ids": checkpoint_ids,
+                            "batch_size": len(checkpoint_ids),
                             "enforce_skill_scope": True,
                         },
                     },
@@ -159,13 +209,16 @@ def _bound_rule_batches(agent_context: dict[str, Any], files: list[dict[str, Any
 
 
 def _coverage_retry_batch(batch: dict[str, Any], *, reason: str) -> dict[str, Any] | None:
-    rule_id = str(batch.get("rule_id") or "").strip()
-    checkpoint_id = str(batch.get("checkpoint_id") or "").strip()
-    if not rule_id and not checkpoint_id:
+    rule_ids = _batch_rule_ids(batch)
+    checkpoint_ids = _batch_checkpoint_ids(batch)
+    rule_id = rule_ids[0] if len(rule_ids) == 1 else ""
+    checkpoint_id = checkpoint_ids[0] if len(checkpoint_ids) == 1 else ""
+    target_ids = rule_ids or checkpoint_ids
+    if not target_ids:
         return None
     agent = dict(batch.get("agent") or {})
     applies_to = dict(agent.get("applies_to") or {})
-    target_id = rule_id or checkpoint_id
+    target_id = ",".join(target_ids)
     existing_prompt = str(applies_to.get("custom_prompt") or "").strip()
     retry_prompt = (
         f"绑定规则/Skill 补检视：上一轮没有输出 {target_id} 的命中或明确跳过结果。"
@@ -176,11 +229,19 @@ def _coverage_retry_batch(batch: dict[str, Any], *, reason: str) -> dict[str, An
     agent["applies_to"] = applies_to
     if rule_id:
         rule_batch = dict(agent.get("bound_rule_batch") or {})
-        rule_batch.update({"coverage_retry": True, "retry_reason": reason, "target_id": rule_id})
+        rule_batch.update({"coverage_retry": True, "retry_reason": reason, "target_id": target_id, "target_ids": target_ids})
+        agent["bound_rule_batch"] = rule_batch
+    elif rule_ids:
+        rule_batch = dict(agent.get("bound_rule_batch") or {})
+        rule_batch.update({"coverage_retry": True, "retry_reason": reason, "target_id": target_id, "target_ids": target_ids})
         agent["bound_rule_batch"] = rule_batch
     if checkpoint_id:
         skill_batch = dict(agent.get("bound_skill_batch") or {})
-        skill_batch.update({"coverage_retry": True, "retry_reason": reason, "target_id": checkpoint_id})
+        skill_batch.update({"coverage_retry": True, "retry_reason": reason, "target_id": target_id, "target_ids": target_ids})
+        agent["bound_skill_batch"] = skill_batch
+    elif checkpoint_ids:
+        skill_batch = dict(agent.get("bound_skill_batch") or {})
+        skill_batch.update({"coverage_retry": True, "retry_reason": reason, "target_id": target_id, "target_ids": target_ids})
         agent["bound_skill_batch"] = skill_batch
     return {**batch, "label": f"{batch.get('label')}:coverage_retry", "agent": agent, "coverage_retry": True}
 
@@ -291,56 +352,84 @@ def _rule_checked_status(items: list[dict[str, Any]], rule_id: str) -> dict[str,
     }
 
 
+def _batch_rule_ids(batch: dict[str, Any]) -> list[str]:
+    values = [str(item).strip() for item in (batch.get("rule_ids") or []) if str(item).strip()]
+    single = str(batch.get("rule_id") or "").strip()
+    if single and single not in values:
+        values.insert(0, single)
+    return _unique_strings(values)
+
+
+def _batch_checkpoint_ids(batch: dict[str, Any]) -> list[str]:
+    values = [str(item).strip() for item in (batch.get("checkpoint_ids") or []) if str(item).strip()]
+    single = str(batch.get("checkpoint_id") or "").strip()
+    if single and single not in values:
+        values.insert(0, single)
+    return _unique_strings(values)
+
+
+def _expected_batch_ids(batch: dict[str, Any]) -> list[str]:
+    return _batch_rule_ids(batch) or _batch_checkpoint_ids(batch)
+
+
 def _enforce_bound_batch_findings(batch: dict[str, Any], items: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    expected_rule_id = str(batch.get("rule_id") or "").strip()
-    expected_checkpoint_id = str(batch.get("checkpoint_id") or "").strip()
-    expected_id = expected_rule_id or expected_checkpoint_id
-    if not expected_id:
+    expected_rule_ids = _batch_rule_ids(batch)
+    expected_checkpoint_ids = _batch_checkpoint_ids(batch)
+    expected_ids = expected_rule_ids or expected_checkpoint_ids
+    if not expected_ids:
         return items, []
 
-    contract_source = _bound_batch_contract_source(batch)
-    is_skill_checkpoint = bool(expected_checkpoint_id)
+    is_skill_checkpoint = bool(expected_checkpoint_ids)
     mismatch_reason = "bound_skill_checkpoint_mismatch" if is_skill_checkpoint else "bound_rule_mismatch"
     attribution_flag = "bound_skill_checkpoint_attributed" if is_skill_checkpoint else "bound_rule_attributed"
+    expected_set = set(expected_ids)
     kept: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     for item in items:
         finding = dict(item)
         covered_rules = _string_list(finding.get("covered_rules"))
         skipped_rules = _string_list(finding.get("skipped_rules"))
-        if not covered_rules and expected_id in skipped_rules and not _has_finding_payload(finding):
+        matched_skipped = [rule for rule in skipped_rules if rule in expected_set]
+        matched_covered = [rule for rule in covered_rules if rule in expected_set]
+        if not covered_rules and matched_skipped and not _has_finding_payload(finding):
             kept.append(
                 {
                     **finding,
                     "__bound_skip_marker": True,
                     "covered_rules": [],
-                    "skipped_rules": [expected_id],
+                    "skipped_rules": matched_skipped,
                     "review_batch_label": str(batch.get("label") or ""),
-                    "bound_rule_id": expected_rule_id,
+                    "bound_rule_id": matched_skipped[0] if expected_rule_ids else "",
                     "skill_key": str(batch.get("skill_key") or ""),
-                    "checkpoint_id": expected_checkpoint_id,
+                    "checkpoint_id": matched_skipped[0] if is_skill_checkpoint else "",
                     "verification_flags": _unique_strings([*(_string_list(finding.get("verification_flags"))), "bound_rule_or_checkpoint_skipped"]),
                 }
             )
             continue
-        if not covered_rules and skipped_rules and expected_id not in skipped_rules:
+        if not covered_rules and skipped_rules and not matched_skipped:
             rejected.append(_with_rejected_reason(finding, mismatch_reason))
             continue
-        if covered_rules and expected_id not in covered_rules:
+        if covered_rules and not matched_covered:
             rejected.append(_with_rejected_reason(finding, mismatch_reason))
             continue
 
         if not covered_rules:
+            if len(expected_ids) > 1:
+                rejected.append(_with_rejected_reason(finding, "bound_batch_missing_rule_attribution"))
+                continue
+            matched_covered = [expected_ids[0]]
             finding["verification_flags"] = _unique_strings([*(_string_list(finding.get("verification_flags"))), attribution_flag])
-        finding["covered_rules"] = [expected_id]
-        finding["rule_id"] = expected_id
+        finding["covered_rules"] = matched_covered
+        primary_id = matched_covered[0]
+        finding["rule_id"] = primary_id
         finding["review_batch_label"] = str(batch.get("label") or "")
-        if expected_rule_id:
-            finding["bound_rule_id"] = expected_rule_id
+        if expected_rule_ids:
+            finding["bound_rule_id"] = primary_id
         if is_skill_checkpoint:
             finding["skill_key"] = str(batch.get("skill_key") or "")
-            finding["checkpoint_id"] = expected_checkpoint_id
-        contract = _audit_bound_evidence_contract(finding, contract_source, expected_id)
+            finding["checkpoint_id"] = primary_id
+        contract_source = _bound_batch_contract_source(batch, primary_id)
+        contract = _audit_bound_evidence_contract(finding, contract_source, primary_id)
         if contract:
             finding["bound_evidence_contract"] = contract
             if contract["status"] == "false_positive_pattern_matched":
@@ -352,15 +441,16 @@ def _enforce_bound_batch_findings(batch: dict[str, Any], items: list[dict[str, A
     return kept, rejected
 
 
-def _bound_batch_contract_source(batch: dict[str, Any]) -> dict[str, Any]:
+def _bound_batch_contract_source(batch: dict[str, Any], expected_id: str | None = None) -> dict[str, Any]:
     agent = batch.get("agent") if isinstance(batch.get("agent"), dict) else {}
-    checkpoint_id = str(batch.get("checkpoint_id") or "").strip()
-    if checkpoint_id:
+    is_skill_batch = bool(_batch_checkpoint_ids(batch))
+    checkpoint_id = str(expected_id or batch.get("checkpoint_id") or "").strip() if is_skill_batch else ""
+    if is_skill_batch and checkpoint_id:
         for checkpoint in agent.get("skill_checkpoints") or []:
             if isinstance(checkpoint, dict) and str(checkpoint.get("checkpoint_id") or "") == checkpoint_id:
                 return checkpoint
         return {}
-    rule_id = str(batch.get("rule_id") or "").strip()
+    rule_id = str(expected_id or batch.get("rule_id") or "").strip()
     if rule_id:
         for rule in agent.get("bound_rules") or []:
             if isinstance(rule, dict) and str(rule.get("rule_id") or "") == rule_id:
@@ -510,27 +600,57 @@ def _bound_review_coverage_record(
     items: list[dict[str, Any]],
     rejected_items: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    rule_id = str(batch.get("rule_id") or "").strip()
-    checkpoint_id = str(batch.get("checkpoint_id") or "").strip()
-    if not rule_id and not checkpoint_id:
-        return None
-    skip_markers = [item for item in items if _is_bound_skip_marker(item)]
-    finding_count = _bound_finding_count(items)
-    record = {
-        "agent_id": agent_id,
-        "batch_label": str(batch.get("label") or ""),
-        "type": "skill_checkpoint" if checkpoint_id else "rule",
-        "rule_id": rule_id,
-        "skill_key": str(batch.get("skill_key") or ""),
-        "checkpoint_id": checkpoint_id,
-        "checked": True,
-        "finding_count": finding_count,
-        "rejected_count": len(rejected_items),
-        "hit": finding_count > 0,
-        "skipped": bool(skip_markers),
-        "skipped_count": len(skip_markers),
-    }
-    return record
+    records = _bound_review_coverage_records(agent_id, batch, items, rejected_items)
+    return records[0] if records else None
+
+
+def _bound_review_coverage_records(
+    agent_id: str,
+    batch: dict[str, Any],
+    items: list[dict[str, Any]],
+    rejected_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rule_ids = _batch_rule_ids(batch)
+    checkpoint_ids = _batch_checkpoint_ids(batch)
+    expected_ids = rule_ids or checkpoint_ids
+    if not expected_ids:
+        return []
+    records: list[dict[str, Any]] = []
+    for expected_id in expected_ids:
+        skip_markers = [
+            item
+            for item in items
+            if _is_bound_skip_marker(item) and expected_id in _string_list(item.get("skipped_rules"))
+        ]
+        matched_findings = [
+            item
+            for item in items
+            if not _is_bound_skip_marker(item) and expected_id in _string_list(item.get("covered_rules"))
+        ]
+        matched_rejected = [
+            item
+            for item in rejected_items
+            if expected_id in _string_list(item.get("covered_rules")) or expected_id in _string_list(item.get("skipped_rules"))
+        ]
+        checkpoint_id = expected_id if checkpoint_ids else ""
+        rule_id = expected_id if rule_ids else ""
+        records.append(
+            {
+                "agent_id": agent_id,
+                "batch_label": str(batch.get("label") or ""),
+                "type": "skill_checkpoint" if checkpoint_id else "rule",
+                "rule_id": rule_id,
+                "skill_key": str(batch.get("skill_key") or ""),
+                "checkpoint_id": checkpoint_id,
+                "checked": True,
+                "finding_count": len(matched_findings),
+                "rejected_count": len(matched_rejected),
+                "hit": len(matched_findings) > 0,
+                "skipped": bool(skip_markers),
+                "skipped_count": len(skip_markers),
+            }
+        )
+    return records
 
 
 def _summarize_bound_review_coverage(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1042,7 +1162,11 @@ def make_run_experts_node(
                 llm_items = []
             else:
                 llm_items = []
-                rule_batches = _bound_rule_batches(agent_context, state.get("files") or [])
+                rule_batches = _bound_rule_batches(
+                    agent_context,
+                    state.get("files") or [],
+                    batch_limits=_bound_batch_limits(project_config),
+                )
                 for batch in rule_batches:
                     ensure_active()
                     if budget_tracker and budget_tracker.should_stop():
@@ -1062,10 +1186,12 @@ def make_run_experts_node(
                                 "rule_id": batch["rule_id"],
                             },
                         )
-                    if batch["rule_id"]:
+                    batch_rule_ids = _batch_rule_ids(batch)
+                    batch_checkpoint_ids = _batch_checkpoint_ids(batch)
+                    if batch_rule_ids:
                         batch_event_type = "bound_rule_batch_started"
                         batch_payload = batch_agent.get("bound_rule_batch") or {}
-                    elif batch.get("skill_key"):
+                    elif batch.get("skill_key") or batch_checkpoint_ids:
                         batch_event_type = "bound_skill_started"
                         batch_payload = batch_agent.get("bound_skill_batch") or {}
                     else:
@@ -1099,7 +1225,7 @@ def make_run_experts_node(
                     retry_hit = False
                     if (
                         not batch_items
-                        and (batch.get("rule_id") or batch.get("checkpoint_id"))
+                        and _expected_batch_ids(batch)
                         and not (budget_tracker and budget_tracker.should_stop())
                     ):
                         retry_batch = _coverage_retry_batch(batch, reason="missing_after_first_pass")
@@ -1153,11 +1279,11 @@ def make_run_experts_node(
                                     "rejected_count": len(retry_rejected_items),
                                 },
                             )
-                    coverage_record = _bound_review_coverage_record(agent_id, batch, batch_items, rejected_batch_items)
-                    if coverage_record:
+                    coverage_records = _bound_review_coverage_records(agent_id, batch, batch_items, rejected_batch_items)
+                    for coverage_record in coverage_records:
                         coverage_record["retry_count"] = retry_count
                         coverage_record["retry_hit"] = retry_hit
-                        bound_review_coverage_records.append(coverage_record)
+                    bound_review_coverage_records.extend(coverage_records)
                     if rejected_batch_items:
                         recorder.event(
                             span,
@@ -1185,21 +1311,26 @@ def make_run_experts_node(
                                 ],
                             },
                         )
-                    if batch["rule_id"]:
+                    if batch_rule_ids:
                         recorder.event(
                             span,
                             "bound_rule_checked",
-                            f"{agent_id} 完成绑定规则 {batch['rule_id']} 检视",
-                            _rule_checked_status(batch_items, str(batch["rule_id"])),
+                            f"{agent_id} 完成绑定规则 {','.join(batch_rule_ids)} 检视",
+                            {
+                                "rule_ids": batch_rule_ids,
+                                "checked": True,
+                                "rules": [_rule_checked_status(batch_items, rule_id) for rule_id in batch_rule_ids],
+                            },
                         )
-                    elif batch.get("skill_key"):
+                    elif batch.get("skill_key") or batch_checkpoint_ids:
                         recorder.event(
                             span,
                             "bound_skill_checked",
-                            f"{agent_id} 完成绑定 Skill {batch['skill_key']} checkpoint {batch.get('checkpoint_id') or ''} 检视",
+                            f"{agent_id} 完成绑定 Skill {batch.get('skill_key') or ''} checkpoint {','.join(batch_checkpoint_ids)} 检视",
                             {
-                                "skill_key": batch["skill_key"],
+                                "skill_key": batch.get("skill_key") or "",
                                 "checkpoint_id": batch.get("checkpoint_id"),
+                                "checkpoint_ids": batch_checkpoint_ids,
                                 "checked": True,
                                 "finding_count": _bound_finding_count(batch_items),
                                 "skipped_count": sum(1 for item in batch_items if _is_bound_skip_marker(item)),

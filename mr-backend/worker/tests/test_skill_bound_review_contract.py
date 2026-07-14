@@ -13,7 +13,7 @@ fake_deepagents_runner.run_bounded_deepagent = lambda **_kwargs: {"tool_calls": 
 sys.modules.setdefault("orchestration.deepagents_runner", fake_deepagents_runner)
 
 from prompts.builder import build_prompt
-from orchestration.nodes.run_experts import _bound_review_coverage_record, _bound_rule_batches, _coverage_retry_batch, _enforce_bound_batch_findings, _summarize_bound_review_coverage
+from orchestration.nodes.run_experts import _bound_review_coverage_record, _bound_review_coverage_records, _bound_rule_batches, _coverage_retry_batch, _enforce_bound_batch_findings, _summarize_bound_review_coverage
 from rules.skill_checkpoint_parser import parse_skill_checkpoints
 
 
@@ -112,6 +112,87 @@ def test_skill_reference_checkpoints_are_batched_even_when_skill_md_is_entrypoin
         "references/security-rules.md",
     ], checkpoints
     assert all(item["parse_quality"] == "structured" for item in checkpoints), checkpoints
+
+
+def test_skill_checkpoints_can_be_loaded_in_one_llm_batch_with_individual_audit() -> None:
+    batches = _bound_rule_batches(
+        {
+            "agent_id": "security_agent",
+            "custom_skills": ["secure-review-skill"],
+            "skill_assets": [
+                {"skill_key": "secure-review-skill", "asset_path": "SKILL.md", "content": SKILL_WITH_CHECKPOINTS}
+            ],
+            "bound_rules": [],
+        },
+        batch_limits={"skill_checkpoints_per_llm_call": 2},
+    )
+
+    assert len(batches) == 1
+    batch = batches[0]
+    assert batch["checkpoint_ids"] == ["SEC-CMD-001", "SEC-PATH-002"], batch
+    assert [item["checkpoint_id"] for item in batch["agent"]["skill_checkpoints"]] == ["SEC-CMD-001", "SEC-PATH-002"]
+
+    kept, rejected = _enforce_bound_batch_findings(
+        batch,
+        [
+            {
+                "title": "命令注入",
+                "covered_rules": ["SEC-CMD-001"],
+                "file_path": "src/A.java",
+                "line_start": 1,
+                "evidence": "外部输入进入 Runtime.exec，缺少白名单",
+                "recommendation": "使用白名单枚举。",
+                "suggested_code": "if (!allowed.contains(cmd)) throw new IllegalArgumentException();",
+            },
+            {"covered_rules": [], "skipped_rules": ["SEC-PATH-002"]},
+        ],
+    )
+
+    assert not rejected
+    records = _bound_review_coverage_records("security_agent", batch, kept, rejected)
+    assert [(item["checkpoint_id"], item["hit"], item["skipped"]) for item in records] == [
+        ("SEC-CMD-001", True, False),
+        ("SEC-PATH-002", False, True),
+    ]
+
+
+def test_bound_rules_can_be_loaded_in_one_llm_batch_with_individual_audit() -> None:
+    batches = _bound_rule_batches(
+        {
+            "agent_id": "security_agent",
+            "bound_rules": [
+                {"rule_id": "SEC-AUTH-001", "required_evidence": "鉴权调用"},
+                {"rule_id": "SEC-LOG-002", "required_evidence": "敏感字段"},
+            ],
+        },
+        batch_limits={"bound_rules_per_llm_call": 2},
+    )
+
+    assert len(batches) == 2  # one bound-rule batch + free-review batch
+    batch = batches[0]
+    assert batch["rule_ids"] == ["SEC-AUTH-001", "SEC-LOG-002"], batch
+    kept, rejected = _enforce_bound_batch_findings(
+        batch,
+        [
+            {
+                "title": "缺少鉴权",
+                "covered_rules": ["SEC-AUTH-001"],
+                "file_path": "src/Auth.java",
+                "line_start": 10,
+                "evidence": "入口方法没有鉴权调用",
+                "recommendation": "补充鉴权调用",
+                "suggested_code": "auth.check(user);",
+            },
+            {"covered_rules": [], "skipped_rules": ["SEC-LOG-002"]},
+        ],
+    )
+
+    assert not rejected
+    records = _bound_review_coverage_records("security_agent", batch, kept, rejected)
+    assert [(item["rule_id"], item["hit"], item["skipped"]) for item in records] == [
+        ("SEC-AUTH-001", True, False),
+        ("SEC-LOG-002", False, True),
+    ]
 
 
 def test_skill_scoped_prompt_disables_expert_free_review() -> None:
@@ -645,6 +726,8 @@ if __name__ == "__main__":
     test_skill_markdown_is_parsed_into_auditable_checkpoints()
     test_custom_skill_creates_skill_scoped_batch_without_free_review()
     test_skill_reference_checkpoints_are_batched_even_when_skill_md_is_entrypoint_only()
+    test_skill_checkpoints_can_be_loaded_in_one_llm_batch_with_individual_audit()
+    test_bound_rules_can_be_loaded_in_one_llm_batch_with_individual_audit()
     test_skill_scoped_prompt_disables_expert_free_review()
     test_skill_scoped_prompt_requires_skill_rule_id_and_source_priority()
     test_skill_checkpoint_rejects_lower_priority_rule_id_rewrite()

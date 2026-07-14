@@ -203,6 +203,8 @@ MR Backend 现在只保留 v2 Review Context Engine。真实 `production_review`
     "llm_replay": "record",
     "context_units_per_llm_call": 6,
     "coverage_retry_context_units_limit": 2,
+    "bound_rules_per_llm_call": 4,
+    "skill_checkpoints_per_llm_call": 4,
     "gold_dataset_path": "evaluation/production_review_quality_gold.jsonl"
   }
 }
@@ -213,6 +215,8 @@ MR Backend 现在只保留 v2 Review Context Engine。真实 `production_review`
 - `llm_replay`: `off` 只实时调用；`record` 记录稳定 Seed、请求/响应 Hash 和调用指纹；`replay` 只读取已有 Exchange，缺记录会明确失败且不会偷偷联网；`live_repeat` 实时重跑并更新记录。
 - `context_units_per_llm_call`: v2 会把多个 ContextUnit 合并进一次专家调用，默认每次 6 个；内网慢模型可以调小，长上下文模型可以调到 8-10，以减少“一个大 PR × 多专家 × 多规则”的调用爆炸。
 - `coverage_retry_context_units_limit`: 绑定规则首轮已经覆盖所有 ContextUnit 后，低覆盖补检视只抽取少量代表性单元，默认 2 个；避免补检视把完整 MR 再扫一遍。
+- `bound_rules_per_llm_call`: 每次绑定规范专属检视可批量加载的规则数，默认 4，运行时限制在 1-8。批量只减少 LLM 调用次数，不裁剪规范正文；模型必须对批次中每条 `rule_id` 输出命中或明确跳过，未标明规则归属的 finding 会被拒绝。
+- `skill_checkpoints_per_llm_call`: 每次 Skill 专属检视可批量加载的 checkpoint 数，默认 4，运行时限制在 1-8。Skill 的 `SKILL.md`、`references/*.md` 和编译后的 Checkpoint Manifest 保持完整传入；模型必须逐条使用 Skill 原始 `checkpoint_id/rule_id`，不能改写为专家画像或绑定规范 ID。
 - `gold_dataset_path`: Gold JSONL 路径，相对路径以仓库根目录为基准；用于离线评估召回率、精确率和严重级别准确性。
 
 #### 真实 Review Quality 验证

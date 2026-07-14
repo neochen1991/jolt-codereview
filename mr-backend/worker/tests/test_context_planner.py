@@ -13,7 +13,7 @@ from context.context_planner import plan_context_units  # noqa: E402
 from context.context_executor import call_llm_for_context_units  # noqa: E402
 from context.semantic_graph import SemanticEdge, SemanticGraph, SemanticNode  # noqa: E402
 from llm import client as llm_client  # noqa: E402
-from prompts.builder import build_context_unit_prompt  # noqa: E402
+from prompts.builder import build_context_unit_prompt, build_context_units_prompt  # noqa: E402
 
 
 @dataclass
@@ -345,6 +345,94 @@ def test_model_cannot_invent_a_trusted_semantic_edge() -> None:
     assert "semantic_evidence_unresolved" in findings[0]["unresolved_context"]
 
 
+def test_context_unit_prompt_scopes_related_context_to_current_change_graph() -> None:
+    context_unit = {
+        "unit_id": "ctx_1",
+        "hunk_ids": ["hunk_1"],
+        "file_path": "src/Changed.java",
+        "line_start": 10,
+        "line_end": 20,
+        "changed_symbol_ids": ["Changed#run"],
+        "source_text": "10: void run() { caller(); }",
+        "patch_text": "@@ -10,1 +10,1 @@\n+caller();",
+        "dependencies": [
+            {
+                "relation": "calls",
+                "symbol_id": "Caller#call",
+                "file_path": "src/Caller.java",
+                "line_start": 3,
+                "line_end": 5,
+                "confidence": "syntax",
+                "source_text": "3: void call() {}",
+            }
+        ],
+        "skill_checkpoint_ids": [],
+        "context_hash": "hash-1",
+    }
+    agent = {
+        **_agent(),
+        "related_context": {
+            "format": "related_context_v2",
+            "status": "resolved",
+            "changed_symbols": [
+                {"symbol_id": "Changed#run", "name": "run", "definition_file": "src/Changed.java"},
+                {"symbol_id": "Unrelated#run", "name": "unrelated", "definition_file": "src/Unrelated.java", "definition_snippet": "UNRELATED_SENTINEL"},
+            ],
+            "modified_symbols": [
+                {"symbol_id": "Caller#call", "name": "call", "definition_file": "src/Caller.java", "definition_snippet": "CALLER_SENTINEL"},
+                {"symbol_id": "Other#call", "name": "other", "definition_file": "src/Other.java", "definition_snippet": "OTHER_SENTINEL"},
+            ],
+            "related_tests": ["src/ChangedTest.java", "src/OtherTest.java"],
+        },
+    }
+
+    prompt, _ = build_context_units_prompt(agent, [context_unit], "")
+    payload = json.loads(prompt)
+
+    assert payload["related_context"]["status"] == "scoped_to_context_units"
+    assert "CALLER_SENTINEL" in prompt
+    assert "UNRELATED_SENTINEL" not in prompt
+    assert "OTHER_SENTINEL" not in prompt
+    assert "src/OtherTest.java" not in prompt
+    assert payload["input_budget_policy"]["symbols"].startswith("只发送当前 ContextUnit 批次相关")
+
+
+def test_context_unit_prompt_limits_dependency_source_payload() -> None:
+    context_unit = {
+        "unit_id": "ctx_1",
+        "hunk_ids": ["hunk_1"],
+        "file_path": "src/Changed.java",
+        "line_start": 1,
+        "line_end": 1,
+        "changed_symbol_ids": ["Changed#run"],
+        "source_text": "1: changed",
+        "patch_text": "@@ -1,1 +1,1 @@\n+changed",
+        "dependencies": [
+            {
+                "relation": "calls",
+                "symbol_id": f"Dep{index}",
+                "file_path": f"src/Dep{index}.java",
+                "line_start": 1,
+                "line_end": 1,
+                "confidence": "syntax",
+                "source_text": f"DEPENDENCY_SENTINEL_{index}",
+            }
+            for index in range(10)
+        ],
+        "skill_checkpoint_ids": [],
+        "context_hash": "hash-1",
+    }
+
+    prompt, _ = build_context_units_prompt(_agent(), [context_unit], "")
+    payload = json.loads(prompt)
+    dependencies = payload["structured_diff"]["items"][0]["dependencies"]
+
+    assert len(dependencies) == 8
+    assert "DEPENDENCY_SENTINEL_7" in prompt
+    assert "DEPENDENCY_SENTINEL_8" not in prompt
+    assert payload["structured_diff"]["items"][0]["dependency_scope_note"]
+
+
 if __name__ == "__main__":
     test_large_file_late_hunk_is_present_in_executable_context()
     test_distant_hunks_in_one_oversized_symbol_are_not_lost_by_center_crop()
@@ -356,4 +444,6 @@ if __name__ == "__main__":
     test_expert_batch_stops_before_next_context_unit_when_review_is_cancelled()
     test_context_unit_includes_cross_file_semantic_dependencies()
     test_model_cannot_invent_a_trusted_semantic_edge()
+    test_context_unit_prompt_scopes_related_context_to_current_change_graph()
+    test_context_unit_prompt_limits_dependency_source_payload()
     print("context planner tests passed")

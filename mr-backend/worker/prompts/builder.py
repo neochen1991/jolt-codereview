@@ -4,6 +4,12 @@ import json
 import re
 from typing import Any
 
+MAX_CONTEXT_UNIT_SOURCE_CHARS = 12_000
+MAX_CONTEXT_UNIT_PATCH_CHARS = 5_000
+MAX_DEPENDENCIES_PER_CONTEXT_UNIT = 8
+MAX_DEPENDENCY_SOURCE_CHARS = 2_400
+MAX_RELATED_CONTEXT_ITEMS_FOR_CONTEXT_UNITS = 12
+
 
 def redact_untrusted(text: str) -> tuple[str, dict[str, Any]]:
     redactions: list[str] = []
@@ -61,6 +67,103 @@ def _compact_json_value(value: Any, *, text_limit: int | None = 1000, list_limit
             for key, item in items
         }
     return value
+
+
+def _item_file_path(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(item.get("file_path") or item.get("definition_file") or item.get("file") or item.get("path") or "")
+    primary = getattr(item, "primary_source", None)
+    if primary is not None:
+        return str(getattr(primary, "file_path", "") or "")
+    return str(getattr(item, "file_path", "") or "")
+
+
+def _context_unit_related_keys(context_units: list[Any]) -> tuple[set[str], set[str]]:
+    files: set[str] = set()
+    symbols: set[str] = set()
+    for unit in context_units:
+        file_path = _item_file_path(unit)
+        if file_path:
+            files.add(file_path)
+        changed_symbol_ids = (
+            unit.get("changed_symbol_ids") if isinstance(unit, dict) else getattr(unit, "changed_symbol_ids", ())
+        ) or ()
+        for symbol_id in changed_symbol_ids:
+            if str(symbol_id).strip():
+                symbols.add(str(symbol_id))
+        dependencies = (
+            unit.get("dependencies") if isinstance(unit, dict) else getattr(unit, "dependencies", ())
+        ) or ()
+        for dependency in dependencies:
+            if isinstance(dependency, dict):
+                dep_symbol = str(dependency.get("symbol_id") or "")
+                dep_file = str(dependency.get("file_path") or "")
+            else:
+                source = getattr(dependency, "source", None)
+                dep_symbol = str(getattr(dependency, "symbol_id", "") or "")
+                dep_file = str(getattr(source, "file_path", "") or "")
+            if dep_symbol:
+                symbols.add(dep_symbol)
+            if dep_file:
+                files.add(dep_file)
+    return files, symbols
+
+
+def _symbol_identity(item: dict[str, Any]) -> set[str]:
+    values = {
+        str(item.get("symbol_id") or ""),
+        str(item.get("name") or ""),
+        str(item.get("qualified_name") or ""),
+    }
+    definition_file = str(item.get("definition_file") or item.get("file_path") or item.get("file") or "")
+    definition_line = str(item.get("definition_line") or item.get("line_start") or item.get("start_line") or "")
+    if definition_file and item.get("name"):
+        values.add(f"{definition_file}:{item.get('name')}")
+    if definition_file and definition_line:
+        values.add(f"{definition_file}:{definition_line}")
+    return {value for value in values if value}
+
+
+def _filter_related_context_for_units(related_context: dict[str, Any], context_units: list[Any]) -> dict[str, Any]:
+    if not related_context:
+        return {"format": "related_context_v2", "status": "scoped_empty", "usage_policy": "当前 ContextUnit 批次没有额外符号上下文。"}
+    allowed_files, allowed_symbols = _context_unit_related_keys(context_units)
+
+    def keep_symbol(item: Any) -> bool:
+        if not isinstance(item, dict):
+            return False
+        item_file = str(item.get("definition_file") or item.get("file_path") or item.get("file") or "")
+        if item_file and item_file in allowed_files:
+            return True
+        return bool(_symbol_identity(item) & allowed_symbols)
+
+    changed_symbols = [
+        item
+        for item in (related_context.get("changed_symbols") or [])
+        if keep_symbol(item)
+    ][:MAX_RELATED_CONTEXT_ITEMS_FOR_CONTEXT_UNITS]
+    modified_symbols = [
+        item
+        for item in (related_context.get("modified_symbols") or [])
+        if keep_symbol(item)
+    ][:MAX_RELATED_CONTEXT_ITEMS_FOR_CONTEXT_UNITS]
+    related_tests = [
+        str(item)
+        for item in (related_context.get("related_tests") or [])
+        if str(item) in allowed_files
+    ][:MAX_RELATED_CONTEXT_ITEMS_FOR_CONTEXT_UNITS]
+    return {
+        "format": related_context.get("format") or "related_context_v2",
+        "status": "scoped_to_context_units" if (changed_symbols or modified_symbols or related_tests) else "scoped_empty",
+        "changed_symbols": _compact_json_value(changed_symbols, text_limit=360, list_limit=MAX_RELATED_CONTEXT_ITEMS_FOR_CONTEXT_UNITS),
+        "modified_symbols": _compact_json_value(modified_symbols, text_limit=420, list_limit=MAX_RELATED_CONTEXT_ITEMS_FOR_CONTEXT_UNITS),
+        "related_tests": _compact_json_value(related_tests, text_limit=160, list_limit=MAX_RELATED_CONTEXT_ITEMS_FOR_CONTEXT_UNITS),
+        "limits": {
+            "scope": "current_context_unit_batch",
+            "max_items": MAX_RELATED_CONTEXT_ITEMS_FOR_CONTEXT_UNITS,
+        },
+        "usage_policy": "仅包含当前 ContextUnit 批次的变更文件、变更符号和已选依赖相关上下文；不要基于未出现的全量仓库符号做结论。",
+    }
 
 
 def _filename(changed: Any) -> str:
@@ -193,7 +296,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
             "priority": "如果 bound_skill_batch.enforce_skill_scope=true，当前批次只服务该 Skill，优先级高于 persona/review_scope 的自由检视。",
             "scope": (
                 "只允许输出当前 bound_skill_batch.skill_key 对应 Skill 明确要求检查的问题；"
-                "如果 skill_checkpoints 非空，只允许围绕当前 checkpoint 检查；"
+                "如果 skill_checkpoints 非空，只允许围绕当前批次 skill_checkpoints 逐条检查；"
                 "禁止执行专家自由检视，禁止输出 Skill 未要求的通用安全/编码/性能/架构问题。"
             ),
             "no_hit": "如果当前 MR 没有命中该 Skill 的检查点，返回空 JSON 数组，不要为了凑数输出相邻问题。",
@@ -280,7 +383,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
             "Skill 规则命中时 covered_rules、skipped_rules、rule_id 必须保留 Skill 定义的原始规则 ID，不能改写为绑定规范或专家画像中的 rule_id；"
             "当绑定规范和专家画像描述相同问题时，以绑定规范 rule_id 为准。"
             "如果 coverage_retry.enabled=true，本次是低覆盖补检视，只复核 coverage_retry.target_id；没有新证据时返回空 JSON 数组。"
-            "如果 review_rules.skill_checkpoints 非空，必须只检查当前 checkpoint，满足 required_evidence 才能输出；"
+            "如果 review_rules.skill_checkpoints 非空，必须逐条检查当前批次的每个 checkpoint，满足 required_evidence 才能输出；"
             "命中 false_positive_patterns、negative_examples 或 skip_conditions 必须跳过，除非当前 diff 中有新源码证据明确推翻反例。"
             "C. 如果 agent_profile.custom_prompt 不为空，必须按该自定义 Agent Prompt 执行补充检视。"
             "covered_rules 填写触发本问题的 rule_id；skipped_rules 填写已检查但未命中的 rule_id。"
@@ -319,18 +422,30 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
 
 def _context_unit_prompt_item(context_unit: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     item = context_unit.to_prompt_item() if hasattr(context_unit, "to_prompt_item") else dict(context_unit)
-    source_text, source_safety = redact_untrusted(str(item.get("source_text") or ""))
-    patch_text, patch_safety = redact_untrusted(str(item.get("patch_text") or ""))
+    source_text, source_safety = redact_untrusted(_compact_text(item.get("source_text") or "", MAX_CONTEXT_UNIT_SOURCE_CHARS))
+    patch_text, patch_safety = redact_untrusted(_compact_text(item.get("patch_text") or "", MAX_CONTEXT_UNIT_PATCH_CHARS))
     dependency_redactions: set[str] = set()
     dependency_injections: set[str] = set()
-    for dependency in item.get("dependencies") or []:
+    compact_dependencies: list[dict[str, Any]] = []
+    for dependency in list(item.get("dependencies") or [])[:MAX_DEPENDENCIES_PER_CONTEXT_UNIT]:
         if not isinstance(dependency, dict):
             continue
-        dependency_text, dependency_safety = redact_untrusted(str(dependency.get("source_text") or ""))
+        dependency = dict(dependency)
+        dependency_text, dependency_safety = redact_untrusted(
+            _compact_text(dependency.get("source_text") or "", MAX_DEPENDENCY_SOURCE_CHARS)
+        )
         dependency_redactions.update(dependency_safety["redactions"])
         dependency_injections.update(dependency_safety["injection_patterns"])
         dependency["source_text"] = (
             f'<untrusted source="dependency" file="{dependency.get("file_path")}">\n{dependency_text}\n</untrusted>'
+        )
+        compact_dependencies.append(dependency)
+    skipped_dependency_count = max(0, len(item.get("dependencies") or []) - len(compact_dependencies))
+    item["dependencies"] = compact_dependencies
+    if skipped_dependency_count:
+        item["dependency_scope_note"] = (
+            f"只提供与当前变更最相关的前 {MAX_DEPENDENCIES_PER_CONTEXT_UNIT} 条依赖；"
+            f"另有 {skipped_dependency_count} 条依赖因输入预算未进入本次 LLM。"
         )
     item["source_text"] = (
         f'<untrusted source="full_source" file="{item.get("file_path")}">\n{source_text}\n</untrusted>'
@@ -366,11 +481,23 @@ def build_context_units_prompt(agent: dict[str, Any], context_units: list[Any], 
         "planner_version": "context_planner_v2",
         "items": items,
     }
+    payload["related_context"] = _filter_related_context_for_units(agent.get("related_context") or {}, context_units)
+    payload["input_budget_policy"] = {
+        "mode": "context_units_scoped",
+        "source": "只发送当前 ContextUnit 批次的源码窗口，不发送全量源码文件。",
+        "patch": "只发送当前 ContextUnit 批次对应的 patch 窗口，不发送全部变更 patch。",
+        "symbols": "只发送当前 ContextUnit 批次相关的变更符号/依赖符号，不发送全量符号索引。",
+        "dependency_limits": {
+            "max_dependencies_per_context_unit": MAX_DEPENDENCIES_PER_CONTEXT_UNIT,
+            "max_dependency_source_chars": MAX_DEPENDENCY_SOURCE_CHARS,
+        },
+    }
     payload["task"] = (
         str(payload.get("task") or "")
         + " 当前输入是实际执行的 ContextUnit 批次；必须完整检查 structured_diff.items 中每个 item 的所有 hunk_ids，"
         + "并使用 source_text 理解符号上下文，不能只检查 patch_text 的开头。"
         + "如果输出 finding，尽量填写对应的 context_unit_id；不能确定时必须确保 file_path/line_start 能唯一落到某个 ContextUnit。"
+        + "不要引用 input_budget_policy 之外未出现在本次 prompt 的源码、patch 或全量符号索引。"
     )
     return json.dumps(payload, ensure_ascii=False), {
         "redactions": sorted(

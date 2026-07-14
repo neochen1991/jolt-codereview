@@ -151,6 +151,22 @@ export function migrate(db: Db) {
     CREATE INDEX IF NOT EXISTS idx_review_quality_shadow_pairs_project_status
       ON review_quality_shadow_pairs(project_id, status, created_at);
 
+    CREATE TABLE IF NOT EXISTS review_quality_rollback_events (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      trigger TEXT NOT NULL,
+      source_run_id TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      evidence_json TEXT NOT NULL DEFAULT '{}',
+      response_json TEXT NOT NULL DEFAULT '{}',
+      error_message TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_review_quality_rollback_events_project_status
+      ON review_quality_rollback_events(project_id, status, created_at);
+
     CREATE TABLE IF NOT EXISTS review_findings (
       id TEXT PRIMARY KEY,
       review_run_id TEXT NOT NULL,

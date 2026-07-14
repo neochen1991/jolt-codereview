@@ -11,8 +11,8 @@ const SETTINGS_KEYS = [
   "queue_policy",
   "publish_policy",
   "data_policy",
-  "token_usage"
-  ,"review_quality"
+  "token_usage",
+  "review_quality"
 ] as const;
 
 export type ProjectSettingsKey = typeof SETTINGS_KEYS[number];
@@ -77,6 +77,19 @@ export class ProjectConfigService {
       FROM project_settings
       WHERE project_id = $1 AND settings_key = $2
     `).get(projectId, key) as { key: string; settings_json: string; updated_at: string } | undefined;
+  }
+
+  rollbackReviewQuality(projectId: string) {
+    const existing = this.db.prepare(`
+      SELECT settings_json
+      FROM project_settings
+      WHERE project_id = $1 AND settings_key = 'review_quality'
+    `).get(projectId) as { settings_json: string } | undefined;
+    const before = existing ? JSON.parse(existing.settings_json || "{}") as Record<string, unknown> : {};
+    const after = { ...before, context_engine: "v1" };
+    const changed = before.context_engine !== "v1";
+    const row = this.upsertSetting(projectId, "review_quality", after);
+    return { changed, before, after, row };
   }
 
   effectiveConfig(projectId: string, deploymentDefaults: AppConfig) {

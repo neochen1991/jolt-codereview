@@ -57,6 +57,7 @@ from quality_shadow import (
     save_review_input_snapshot,
     should_capture_review_input,
 )
+from review_quality_rollback import evaluate_and_request_runtime_rollback
 from skill_debug import (
     SkillDebugStopped,
     apply_debug_snapshot,
@@ -211,6 +212,20 @@ def ensure_worker_schema(conn: Any) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_review_quality_shadow_pairs_project_status
           ON review_quality_shadow_pairs(project_id, status, created_at);
+        CREATE TABLE IF NOT EXISTS review_quality_rollback_events (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          trigger TEXT NOT NULL,
+          source_run_id TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL,
+          evidence_json TEXT NOT NULL DEFAULT '{}',
+          response_json TEXT NOT NULL DEFAULT '{}',
+          error_message TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_review_quality_rollback_events_project_status
+          ON review_quality_rollback_events(project_id, status, created_at);
         CREATE TABLE IF NOT EXISTS rule_suppression_hints (
           project_id TEXT NOT NULL,
           rule_id TEXT NOT NULL,
@@ -5186,6 +5201,11 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             recorder,
         )
         recorder.flush()
+        if production_side_effects_allowed(job):
+            rollback_result = evaluate_and_request_runtime_rollback(conn, project_config, str(project_id), run_id)
+            if rollback_result.get("status") in {"rolled_back", "rollback_pending", "monitoring_error"}:
+                level = "error" if rollback_result.get("status") == "monitoring_error" else "warn"
+                write_worker_log(config, "review_quality_runtime_rollback", rollback_result, level)
         try:
             token_report = report_token_usage(conn, project_config, run_id)
         except Exception as report_exc:
@@ -5275,6 +5295,11 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
         elif job_status == "dead_letter":
             complete_shadow_pair(conn, job=job, run_id=run_id, status=job_status, commit=False)
         conn.commit()
+        if job_status == "dead_letter" and production_side_effects_allowed(job):
+            rollback_result = evaluate_and_request_runtime_rollback(conn, project_config, str(project_id), run_id)
+            if rollback_result.get("status") in {"rolled_back", "rollback_pending", "monitoring_error"}:
+                level = "error" if rollback_result.get("status") == "monitoring_error" else "warn"
+                write_worker_log(config, "review_quality_runtime_rollback", rollback_result, level)
         try:
             token_report = report_token_usage(conn, project_config, run_id)
         except Exception as report_exc:

@@ -5,10 +5,16 @@ import re
 from typing import Any
 
 
-def changed_file_paths(files: list[dict[str, Any]]) -> list[str]:
+def _file_value(item: Any, name: str) -> Any:
+    if isinstance(item, dict):
+        return item.get(name)
+    return getattr(item, name, None)
+
+
+def changed_file_paths(files: list[Any]) -> list[str]:
     result: list[str] = []
     for item in files or []:
-        value = str(item.get("path") or item.get("file_path") or item.get("filename") or "").replace("\\", "/").lstrip("/")
+        value = str(_file_value(item, "path") or _file_value(item, "file_path") or _file_value(item, "filename") or "").replace("\\", "/").lstrip("/")
         if value and value not in result:
             result.append(value)
     return result
@@ -38,7 +44,7 @@ def path_matches_applies_to(path: str, applies_to: Any) -> bool:
     return False
 
 
-def checkpoint_applies_to_files(checkpoint: dict[str, Any], files: list[dict[str, Any]]) -> bool:
+def checkpoint_applies_to_files(checkpoint: dict[str, Any], files: list[Any]) -> bool:
     paths = changed_file_paths(files)
     return not paths or any(path_matches_applies_to(path, checkpoint.get("applies_to")) for path in paths)
 
@@ -46,7 +52,7 @@ def checkpoint_applies_to_files(checkpoint: dict[str, Any], files: list[dict[str
 def build_skill_routing_facts(
     agent_configs: list[dict[str, Any]],
     selected_agents: list[dict[str, Any]],
-    files: list[dict[str, Any]],
+    files: list[Any],
 ) -> list[dict[str, Any]]:
     selected_ids = {str(agent.get("agent_id") or "") for agent in selected_agents}
     paths = changed_file_paths(files)

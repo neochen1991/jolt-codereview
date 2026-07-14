@@ -240,7 +240,7 @@ async function writeFixture(client, projectId, manifest, fixture, cacheRoot) {
     await client.query(
       `INSERT INTO review_jobs (id, merge_request_id, head_sha, status, priority, requested_effort_level, requested_by, pr_summary)
        VALUES ($1, $2, $3, 'queued', $4, 'standard', 'real-pr-seed', $5)
-       ON CONFLICT(merge_request_id, head_sha) DO UPDATE SET
+       ON CONFLICT(merge_request_id, head_sha) WHERE execution_kind = 'production_review' DO UPDATE SET
          status = 'queued',
          priority = EXCLUDED.priority,
          requested_by = EXCLUDED.requested_by,

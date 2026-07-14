@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = path.resolve(import.meta.dirname, "..");
+const seederSource = readFileSync(path.join(root, "scripts", "seed-real-prs.mjs"), "utf8");
+assert.ok(
+  seederSource.includes("ON CONFLICT(merge_request_id, head_sha) WHERE execution_kind = 'production_review'"),
+  "real PR seeder must target the production-only partial unique index"
+);
 const tmp = mkdtempSync(path.join(tmpdir(), "jolt-real-pr-seed-"));
 const manifestDir = path.join(tmp, "manifests");
 const cacheDir = path.join(tmp, "cache");

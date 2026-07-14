@@ -8,6 +8,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from orchestration.skill_runtime_facts import build_skill_routing_facts, path_matches_applies_to, seal_skill_runtime_facts
 
 
+class ChangedFileLike:
+    def __init__(self, filename: str):
+        self.filename = filename
+
+
 AGENTS = [
     {
         "agent_id": "security_agent",
@@ -39,6 +44,9 @@ def test_routing_facts_include_applicable_and_non_applicable_opportunities() -> 
     assert not_applicable[0]["routed"] is False, not_applicable
 
     assert path_matches_applies_to("src/Main.java", "Java 后端") is True
+
+    object_files = build_skill_routing_facts(AGENTS, [AGENTS[0]], [ChangedFileLike("src/api/object.ts")])
+    assert object_files[0]["matched_files"] == ["src/api/object.ts"], object_files
 
 
 def test_runtime_facts_have_explicit_checkpoint_terminal_outcomes() -> None:

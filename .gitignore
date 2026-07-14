@@ -21,6 +21,7 @@ coverage/
 playwright-report/
 test-results/
 split-repos/
+.worktrees/
 
 # Runtime data
 data/

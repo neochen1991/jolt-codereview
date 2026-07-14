@@ -2425,43 +2425,62 @@ export function AgentProfileCard({
             {(toolNames.length ? toolNames : ["未绑定工具"]).map((name, index) => <span key={`${agentKey}-tool-${index}-${name}`}>{name}</span>)}
           </div>
           <div>
-            <strong>绑定 Skill</strong>
+            <div className="agent-binding-section-title">
+              <strong>绑定 Skill</strong>
+              <small>绑定后可用真实 MR 验证路由、Checkpoint 和 Finding 效果</small>
+            </div>
             {skillDetails.length
               ? skillDetails.map((detail, index) => (
                 <div
-                  className="agent-binding-item"
+                  className="agent-binding-item agent-binding-skill-card"
                   key={`${agentKey}-skill-${index}-${detail.title}`}
                 >
-                  <button
-                    className="agent-binding-button"
-                    type="button"
-                    onClick={() => setBindingDetail(detail)}
-                    title="查看 Skill 内容"
-                  >
-                    <b>{detail.title}</b>
-                    <small>{detail.subtitle}</small>
-                    {detail.assets?.length ? <span className="agent-binding-file-preview">{skillAssetPathPreview(detail.assets)}</span> : null}
-                  </button>
-                  <button
-                    className="agent-binding-debug-button"
-                    type="button"
-                    onClick={() => setDebugSkill(detail)}
-                    disabled={!canEdit}
-                    title="使用真实 MR 调试这个 Skill"
-                  >调试 Skill</button>
-                  <button
-                    className="agent-binding-remove-button"
-                    type="button"
-                    onClick={() => { removeSkillBinding(detail).catch((error) => setMessage(error instanceof Error ? error.message : String(error))); }}
-                    disabled={!canEdit}
-                    title="移除这个专家的 Skill 绑定"
-                    aria-label={`移除 Skill 绑定 ${detail.title}`}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  <div className="agent-binding-skill-main">
+                    <button
+                      className="agent-binding-button agent-binding-skill-title"
+                      type="button"
+                      onClick={() => setBindingDetail(detail)}
+                      title="查看 Skill 内容"
+                    >
+                      <b>{detail.title}</b>
+                      <small>{detail.subtitle}</small>
+                      {detail.assets?.length ? <span className="agent-binding-file-preview">{skillAssetPathPreview(detail.assets)}</span> : null}
+                    </button>
+                    <p>使用真实 MR 调试这个 Skill，检查是否会被正式任务加载、命中 Checkpoint 并产出有效 Finding。</p>
+                  </div>
+                  <div className="agent-binding-skill-actions">
+                    <button
+                      className="agent-binding-debug-button"
+                      type="button"
+                      onClick={() => setDebugSkill(detail)}
+                      disabled={!canEdit}
+                      title={canEdit ? "使用真实 MR 调试这个 Skill" : "当前账号无权限调试 Skill"}
+                    >开始调试</button>
+                    <button
+                      className="agent-binding-secondary-button"
+                      type="button"
+                      onClick={() => setBindingDetail(detail)}
+                    >查看内容</button>
+                    <button
+                      className="agent-binding-remove-button"
+                      type="button"
+                      onClick={() => { removeSkillBinding(detail).catch((error) => setMessage(error instanceof Error ? error.message : String(error))); }}
+                      disabled={!canEdit}
+                      title="移除这个专家的 Skill 绑定"
+                      aria-label={`移除 Skill 绑定 ${detail.title}`}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
               ))
-              : <span>未绑定自定义 Skill</span>}
+              : (
+                <div className="agent-binding-empty-skill">
+                  <strong>还没有绑定 Skill</strong>
+                  <span>先点击“编辑绑定”创建或绑定 Skill，绑定后可用真实 MR 调试效果。</span>
+                  <button type="button" onClick={() => setBindingEditorOpen(true)} disabled={!canEdit}>编辑绑定</button>
+                </div>
+              )}
           </div>
           <div>
             <strong>Skill 资源</strong>
@@ -2649,12 +2668,12 @@ function SkillDebugWorkbench({ projectId, agentKey, skill, canActivate, onClose 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Skill 调试工作台" onClick={onClose}>
       <section className="skill-debug-workbench" onClick={(event) => event.stopPropagation()}>
-        <header><div><span>真实 MR · 正式执行链</span><strong>Skill 调试工作台</strong><p>{skill.title} → {agentKey}</p></div><button type="button" className="modal-close-button" onClick={onClose}><X size={18} /></button></header>
+        <header><div><span>真实 MR · 正式执行链</span><strong>Skill 调试工作台</strong><p>用真实 MR 验证这个 Skill 是否会被正式任务加载、命中 Checkpoint 并产出有效 Finding。<br />{skill.title} → {agentKey}</p></div><button type="button" className="modal-close-button" onClick={onClose}><X size={18} /></button></header>
         <div className="skill-debug-controls skill-debug-controls-complete">
           <label><span>真实 MR</span><select value={mrId} onChange={(event) => setMrId(event.target.value)}>{mrs.map((mr) => <option key={String(mr.id)} value={String(mr.id)}>{String(mr.title || mr.external_id || mr.id)}</option>)}</select></label>
           <label><span>Skill 版本</span><select value={skillVersion} onChange={(event) => setSkillVersion(event.target.value)}>{versions.map((version) => <option key={String(version.version)} value={String(version.version)}>{String(version.version)} · {String(version.status || "draft")}</option>)}</select></label>
           <label><span>运行方式</span><select value={mode} onChange={(event) => setMode(event.target.value as "targeted" | "production_route")}><option value="targeted">Skill 定向调试</option><option value="production_route">严格生产路由</option></select></label>
-          <button type="button" onClick={startDebug} disabled={running || !mrId}>{running ? "运行中…" : "开始真实调试"}</button>
+          <button type="button" className="skill-debug-primary-action" onClick={startDebug} disabled={running || !mrId}>{running ? "运行中…" : "开始真实调试"}</button>
         </div>
         {selectedVersion && String(selectedVersion.status) !== "active" && <div className="skill-debug-draft-banner"><span>当前选择草稿版本，不会进入正式 MR 检视。{canActivate ? "" : " 调试证据通过后由项目管理员激活。"}</span>{canActivate && <button type="button" onClick={activateSelectedVersion}>激活此版本</button>}</div>}
         <p className="skill-debug-mode-note">{mode === "targeted" ? "同一生产执行图运行 baseline 与 candidate：两边都加入目标 Agent，baseline 移除目标 Skill，candidate 加载目标 Skill。预计 2 次 Review 执行。" : "不干预 Agent 路由，与真实任务路由完全一致；若目标 Agent 未被选中，会明确显示 Skill 未执行。预计 1 次 Review 执行。"}</p>

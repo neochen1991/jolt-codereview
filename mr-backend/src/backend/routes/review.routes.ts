@@ -343,6 +343,72 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     };
   }
 
+  function v2ValidationForRun(run: Record<string, any> | undefined) {
+    const runId = String(run?.id || "");
+    const empty = {
+      status: "v2_provisional",
+      pair_count: 0,
+      distinct_mr_count: 0,
+      minimum_distinct_mrs: 30,
+      missing_evidence: ["minimum_30_distinct_paired_mrs", "dual_reviewed_gold_complete"],
+      baseline: {},
+      candidate: {},
+      gate: {}
+    };
+    if (!runId) return empty;
+    const scope = get<Record<string, any>>(`
+      SELECT repo.project_id
+      FROM review_runs rr
+      JOIN review_jobs j ON j.id = rr.review_job_id
+      JOIN merge_requests mr ON mr.id = j.merge_request_id
+      JOIN repositories repo ON repo.id = mr.repository_id
+      WHERE rr.id = $1
+    `, [runId]);
+    const projectId = String(scope?.project_id || "");
+    if (!projectId) return empty;
+    const pairs = get<Record<string, any>>(`
+      SELECT COUNT(*) AS pair_count, COUNT(DISTINCT merge_request_id) AS distinct_mr_count
+      FROM review_quality_shadow_pairs
+      WHERE project_id = $1 AND status = 'completed'
+    `, [projectId]) || {};
+    const rollback = get<Record<string, any>>(`
+      SELECT status, trigger, error_message, created_at, updated_at
+      FROM review_quality_rollback_events
+      WHERE project_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, [projectId]);
+    const evaluations = all<Record<string, any>>(`
+      SELECT id, report_json, created_at
+      FROM evaluation_reports
+      WHERE project_id = $1
+      ORDER BY created_at DESC
+      LIMIT 20
+    `, [projectId]);
+    const latest = evaluations
+      .map((row) => ({ row, report: parseRecord(row.report_json) }))
+      .find((item) => String(item.report.schema_version || "").startsWith("review_quality_evaluation_"));
+    const report = latest?.report || {};
+    let status = "v2_provisional";
+    if (rollback?.status === "rollback_pending") status = "rollback_pending";
+    else if (rollback?.status === "rolled_back") status = "v1_rolled_back";
+    else if (report.validation_status === "verified") status = "v2_verified";
+    else if (report.validation_status === "rollback_required") status = "rollback_pending";
+    return {
+      status,
+      pair_count: Number(pairs.pair_count || 0),
+      distinct_mr_count: Number(pairs.distinct_mr_count || 0),
+      minimum_distinct_mrs: 30,
+      missing_evidence: Array.isArray(report.missing_evidence) ? report.missing_evidence : empty.missing_evidence,
+      baseline: parseRecord(report.baseline),
+      candidate: parseRecord(report.candidate),
+      gate: parseRecord(report.gate),
+      evaluation_report_id: latest?.row.id || "",
+      evaluated_at: report.generated_at || latest?.row.created_at || "",
+      rollback: rollback || {}
+    };
+  }
+
   function reviewQualityForRun(run: Record<string, any> | undefined) {
     const runId = String(run?.id || "");
     const empty = {
@@ -353,6 +419,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       published_precision: { value: null, accepted: 0, false_positive: 0, labeled: 0, confidence: "unlabeled" },
       skill_checkpoint_metrics: boundReviewCoverageFromRun(run),
       reproducibility: { status: "unavailable", llm_call_count: 0, fingerprint_complete_rate: null, exact_replay_ready: false },
+      v2_validation: v2ValidationForRun(run),
       unresolved_candidates: []
     };
     if (!runId) return empty;
@@ -411,6 +478,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         stored_exchange_count: replayRecords,
         replayed_call_count: llmCalls.filter((row) => row.replay_source === "recorded_response").length
       },
+      v2_validation: v2ValidationForRun(run),
       unresolved_candidates: unresolved.map((row) => ({ id: row.id, dedupe_hash: row.dedupe_hash, title: row.title, file_path: row.file_path, line_start: row.line_start, stage: row.stage, status: row.status }))
     };
   }

@@ -14,13 +14,20 @@ const apiFields = [
   "published_precision",
   "skill_checkpoint_metrics",
   "reproducibility",
+  "v2_validation",
   "unresolved_candidates"
 ];
 for (const field of apiFields) {
   if (!routeSource.includes(field)) throw new Error(`review quality API missing ${field}`);
 }
-for (const label of ["Context Health", "Quality Funnel", "Skill Checkpoint", "Reproducibility", "未闭环 Candidate"]) {
+for (const label of ["Context Health", "v2 Validation", "验证缺口", "Quality Funnel", "Skill Checkpoint", "Reproducibility", "未闭环 Candidate"]) {
   if (!uiSource.includes(label)) throw new Error(`review quality UI missing ${label}`);
+}
+for (const status of ["v2_provisional", "v2_verified", "rollback_pending", "v1_rolled_back"]) {
+  if (!routeSource.includes(status) || !uiSource.includes(status)) throw new Error(`v2 validation dashboard missing status ${status}`);
+}
+for (const field of ["pair_count", "distinct_mr_count", "missing_evidence"]) {
+  if (!routeSource.includes(field)) throw new Error(`v2 validation API missing ${field}`);
 }
 for (const status of ["full", "partial", "patch_only", "blocked"]) {
   if (!uiSource.includes(status)) throw new Error(`context health UI missing explicit status ${status}`);

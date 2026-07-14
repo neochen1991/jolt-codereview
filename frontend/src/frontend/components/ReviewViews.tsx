@@ -781,11 +781,20 @@ export function ReviewQualityCard({ quality }: { quality?: Record<string, unknow
   const funnel = quality?.candidate_recall && typeof quality.candidate_recall === "object" ? quality.candidate_recall as Record<string, unknown> : {};
   const precision = quality?.published_precision && typeof quality.published_precision === "object" ? quality.published_precision as Record<string, unknown> : {};
   const reproducibility = quality?.reproducibility && typeof quality.reproducibility === "object" ? quality.reproducibility as Record<string, unknown> : {};
+  const validation = quality?.v2_validation && typeof quality.v2_validation === "object" ? quality.v2_validation as Record<string, unknown> : {};
   const checkpoints = quality?.skill_checkpoint_metrics && typeof quality.skill_checkpoint_metrics === "object" ? quality.skill_checkpoint_metrics as Record<string, unknown> : {};
   const unresolved = Array.isArray(quality?.unresolved_candidates) ? quality.unresolved_candidates as Record<string, unknown>[] : [];
   const rawStatus = String(context.status || "blocked");
   const contextStatus = ["full", "partial", "patch_only", "blocked"].includes(rawStatus) ? rawStatus : "blocked";
   const contextLabels: Record<string, string> = { full: "完整", partial: "部分", patch_only: "仅 Patch", blocked: "阻塞" };
+  const validationStatus = String(validation.status || "v2_provisional");
+  const validationLabels: Record<string, string> = {
+    v2_provisional: "v2 待验证",
+    v2_verified: "v2 已验证",
+    rollback_pending: "回滚待完成",
+    v1_rolled_back: "已回滚 v1"
+  };
+  const missingEvidence = Array.isArray(validation.missing_evidence) ? validation.missing_evidence.map(String) : [];
   return (
     <div className="coverage-card review-quality-card" data-context-status={contextStatus}>
       <div>
@@ -794,6 +803,8 @@ export function ReviewQualityCard({ quality }: { quality?: Record<string, unknow
         <span>显示上下文完整性、候选漏斗、Checkpoint 闭环和可复现性；空数据不会视为成功。</span>
       </div>
       <p><Code2 size={15} /><span>Context Health</span><em>{String(context.context_engine || "unknown")} · 源码 {formatCoveragePercent(context.source_fetch_rate)} · Diff {formatCoveragePercent(context.diff_assignment_rate)}</em><strong>{contextStatus} / {contextLabels[contextStatus]}</strong></p>
+      <p className={validationStatus !== "v2_verified" ? "quality-warning" : ""}><ShieldCheck size={15} /><span>v2 Validation</span><em>{String(validation.distinct_mr_count || 0)} / {String(validation.minimum_distinct_mrs || 30)} 个不同 MR · {String(validation.pair_count || 0)} 对同输入运行</em><strong>{validationLabels[validationStatus] || validationStatus}</strong></p>
+      <p className={missingEvidence.length ? "quality-warning" : ""}><AlertTriangle size={15} /><span>验证缺口</span><em>{missingEvidence.length ? missingEvidence.join("；") : "双评审 Gold、成本与质量门禁均完整"}</em><strong>{missingEvidence.length}</strong></p>
       <p><CheckCircle2 size={15} /><span>Quality Funnel</span><em>Verifier {String(funnel.verifier_accepted || 0)} / Candidate {String(funnel.generated || 0)}</em><strong>{formatCoveragePercent(funnel.value)}</strong></p>
       <p><ShieldCheck size={15} /><span>Skill Checkpoint</span><em>完成 {String(checkpoints.resolved_count || 0)} / {String(checkpoints.required_count || 0)}</em><strong>{formatCoveragePercent(checkpoints.resolution_rate)}</strong></p>
       <p><RefreshCw size={15} /><span>Reproducibility</span><em>{String(reproducibility.llm_call_count || 0)} 次 LLM · 指纹 {formatCoveragePercent(reproducibility.fingerprint_complete_rate)}</em><strong>{String(reproducibility.status || "unavailable")}</strong></p>

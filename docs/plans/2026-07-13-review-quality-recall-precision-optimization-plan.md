@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3、现有 Worker orchestration、Tree-sitter、PostgreSQL、TypeScript/Node.js、React、现有 Skill Checkpoint Compiler、现有 Candidate Store 与 Review Artifacts。
 
+> 2026-07-14 实施状态：生产默认已切换 v2；每个成功 v2 Run 自动创建冻结同输入的 v1 Shadow；运行失败门禁和双评审 Gold 质量门均可审计回滚。仪表盘会区分 `v2_provisional` 与 `v2_verified`。在取得至少 30 个不同真实 MR 的双人标注之前，只能确认链路切换，不能宣称质量提升已经被证明。
+
 ---
 
 ## 1. 执行摘要

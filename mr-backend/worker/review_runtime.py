@@ -58,6 +58,7 @@ from quality_shadow import (
     should_capture_review_input,
 )
 from review_quality_rollback import evaluate_and_request_runtime_rollback
+from review_control import ReviewJobInterrupted, ensure_review_job_active
 from skill_debug import (
     SkillDebugStopped,
     apply_debug_snapshot,
@@ -5021,6 +5022,12 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
     project_config["_head_sha"] = str(job["head_sha"])
     project_config["_review_run_id"] = str(run_id)
 
+    def ensure_active() -> None:
+        debug_stop_reason = check_debug_cancelled_or_timed_out(conn, job, debug_context)
+        if debug_stop_reason:
+            raise SkillDebugStopped(debug_stop_reason)
+        ensure_review_job_active(conn, str(job["id"]))
+
     try:
         load_frozen_input_artifact = None
         save_frozen_input_artifact = None
@@ -5118,6 +5125,7 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
             sanitize_findings_for_policy=sanitize_findings_for_policy,
             call_llm=call_llm,
             dedupe=dedupe,
+            ensure_active=ensure_active,
         )
         verify_findings_node = make_verify_findings_node(
             conn=conn,
@@ -5186,15 +5194,14 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
                 ("summarize_pr", summarize_pr_node),
                 ("finalize", finalize_node),
             ]
-        if is_debug_job(job):
-            def guarded(name: str, node: Any) -> Any:
-                def run_guarded(state: dict[str, Any]) -> dict[str, Any]:
-                    reason = check_debug_cancelled_or_timed_out(conn, job, debug_context)
-                    if reason:
-                        raise SkillDebugStopped(reason)
-                    return node(state)
-                return run_guarded
-            graph_nodes = [(name, guarded(name, node)) for name, node in graph_nodes]
+        def guarded(node: Any) -> Any:
+            def run_guarded(state: dict[str, Any]) -> dict[str, Any]:
+                ensure_active()
+                return node(state)
+
+            return run_guarded
+
+        graph_nodes = [(name, guarded(node)) for name, node in graph_nodes]
         invoke_review_graph(
             {"run_id": run_id, "job_id": job["id"], "debug_context": debug_context},
             graph_nodes,
@@ -5255,6 +5262,37 @@ def process_mr_one(conn: Any, config: dict[str, Any]) -> bool:
         recorder.event(fail_span, "worker_error", str(exc))
         recorder.finish(fail_span, "failed")
         recorder.flush()
+        if isinstance(exc, ReviewJobInterrupted):
+            conn.execute(
+                "UPDATE review_runs SET status = 'cancelled', report_summary = %s, completed_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (str(exc), run_id),
+            )
+            conn.execute(
+                "UPDATE review_jobs SET locked_at = NULL, locked_by = NULL, heartbeat_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (job["id"],),
+            )
+            if is_shadow_job(job):
+                complete_shadow_pair(conn, job=job, run_id=run_id, status="cancelled", commit=False)
+            conn.commit()
+            write_worker_log(
+                config,
+                "review_run_interrupted",
+                {
+                    "review_run_id": run_id,
+                    "review_job_id": job["id"],
+                    "merge_request_id": job["merge_request_id"],
+                    "job_status": exc.status,
+                },
+                "warn",
+            )
+            write_review_run_log(
+                config,
+                run_id,
+                "review_run_interrupted",
+                {"review_job_id": job["id"], "merge_request_id": job["merge_request_id"], "job_status": exc.status},
+                "warn",
+            )
+            return True
         if isinstance(exc, SkillDebugStopped):
             session_id = str(job.get("debug_session_id") or debug_context.get("session_id") or "")
             conn.execute("UPDATE review_runs SET status = 'cancelled', report_summary = %s, completed_at = CURRENT_TIMESTAMP WHERE id = %s", (str(exc), run_id))

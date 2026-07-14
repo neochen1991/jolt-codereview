@@ -66,14 +66,19 @@ def call_llm_for_context_units(
     skill_summary: str,
     context_units: list[Any],
     budget_tracker: Any = None,
+    ensure_active: Callable[[], None] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str], list[dict[str, str]]]:
     if not context_units:
+        if ensure_active:
+            ensure_active()
         return call_llm(config, recorder, span, agent, files, skill_summary), [], []
 
     findings: list[dict[str, Any]] = []
     executed: list[str] = []
     unresolved: list[dict[str, str]] = []
     for unit in context_units:
+        if ensure_active:
+            ensure_active()
         unit_id = str(getattr(unit, "unit_id", "") or (unit.get("unit_id") if isinstance(unit, dict) else ""))
         if budget_tracker and budget_tracker.should_stop():
             unresolved.append({"unit_id": unit_id, "reason": "unresolved_budget"})

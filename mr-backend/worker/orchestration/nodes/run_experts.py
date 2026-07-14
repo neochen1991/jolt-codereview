@@ -749,17 +749,23 @@ def make_run_experts_node(
     sanitize_findings_for_policy: Callable[[list[dict[str, Any]], dict[str, Any], list[Any]], list[dict[str, Any]]],
     call_llm: Callable[..., list[dict[str, Any]]],
     dedupe: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
+    ensure_active: Callable[[], None],
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     def run_experts_node(state: dict[str, Any]) -> dict[str, Any]:
+        ensure_active()
         files = state["files"]
         llm_files = state.get("llm_files") or []
         effort = state["effort"]
         selected_agents = state["selected_agents"]
         project_id = _project_id_for_job(conn, job)
-        conn.execute("UPDATE review_jobs SET status = 'reviewing', heartbeat_at = CURRENT_TIMESTAMP WHERE id = %s", (job["id"],))
+        conn.execute(
+            "UPDATE review_jobs SET status = 'reviewing', heartbeat_at = CURRENT_TIMESTAMP WHERE id = %s AND status NOT IN ('cancelled', 'paused')",
+            (job["id"],),
+        )
+        ensure_active()
         if production_side_effects_allowed(job):
             conn.execute(
-                "UPDATE merge_requests SET review_status = 'reviewing' WHERE id = %s AND review_status NOT IN ('merged', 'closed')",
+                "UPDATE merge_requests SET review_status = 'reviewing' WHERE id = %s AND review_status NOT IN ('merged', 'closed', 'cancelled', 'paused')",
                 (job["merge_request_id"],),
             )
         conn.commit()
@@ -775,6 +781,7 @@ def make_run_experts_node(
             recorder.event(trivial_span, "trivial_short_circuit", "trivial 检视强度跳过 LLM，仅保留静态摘要")
             recorder.finish(trivial_span)
         for agent in selected_agents:
+            ensure_active()
             budget_tracker = state.get("budget_tracker")
             if budget_tracker and budget_tracker.should_stop():
                 budget_span = recorder.span("budget_truncated", "budget_guard")
@@ -1016,6 +1023,7 @@ def make_run_experts_node(
                 llm_items = []
                 rule_batches = _bound_rule_batches(agent_context, state.get("files") or [])
                 for batch in rule_batches:
+                    ensure_active()
                     if budget_tracker and budget_tracker.should_stop():
                         recorder.event(span, "llm_skipped_by_budget", f"预算已触发熔断：{budget_tracker.truncated_reason}", budget_tracker.snapshot())
                         break
@@ -1061,6 +1069,7 @@ def make_run_experts_node(
                         skill_summary=batch_skill_summary,
                         context_units=context_units,
                         budget_tracker=budget_tracker,
+                        ensure_active=ensure_active,
                     )
                     executed_context_unit_ids.update(executed_units)
                     unresolved_context_units.extend(unresolved_units)
@@ -1074,6 +1083,7 @@ def make_run_experts_node(
                     ):
                         retry_batch = _coverage_retry_batch(batch, reason="missing_after_first_pass")
                         if retry_batch:
+                            ensure_active()
                             recorder.event(
                                 span,
                                 "bound_rule_coverage_low",
@@ -1100,6 +1110,7 @@ def make_run_experts_node(
                                 skill_summary=retry_skill_summary,
                                 context_units=context_units,
                                 budget_tracker=budget_tracker,
+                                ensure_active=ensure_active,
                             )
                             executed_context_unit_ids.update(retry_executed_units)
                             unresolved_context_units.extend(retry_unresolved_units)

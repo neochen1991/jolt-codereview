@@ -188,6 +188,48 @@ def test_expert_batch_executes_every_context_unit() -> None:
     assert unresolved == []
 
 
+def test_expert_batch_stops_before_next_context_unit_when_review_is_cancelled() -> None:
+    files = [
+        ChangedFile("src/A.java", "@@ -1,1 +1,1 @@\n-old\n+new"),
+        ChangedFile("src/B.java", "@@ -1,1 +1,1 @@\n-old\n+new"),
+    ]
+    plan = plan_context_units(
+        files,
+        source_file_contents={"src/A.java": "new\n", "src/B.java": "new\n"},
+        related_context={},
+    )
+    seen: list[str] = []
+    checks = 0
+
+    def ensure_active() -> None:
+        nonlocal checks
+        checks += 1
+        if checks > 1:
+            raise RuntimeError("review_cancelled")
+
+    def fake_call(_config, _recorder, _span, agent, _files, _skill):
+        seen.append(agent["context_unit"].unit_id)
+        return []
+
+    try:
+        call_llm_for_context_units(
+            call_llm=fake_call,
+            config={},
+            recorder=None,
+            span="span",
+            agent=_agent(),
+            files=files,
+            skill_summary="",
+            context_units=list(plan.units),
+            ensure_active=ensure_active,
+        )
+        raise AssertionError("cancelled review should abort the remaining context units")
+    except RuntimeError as exc:
+        assert str(exc) == "review_cancelled"
+
+    assert len(seen) == 1
+
+
 def test_context_unit_includes_cross_file_semantic_dependencies() -> None:
     changed = ChangedFile("src/A.java", "@@ -1,1 +1,1 @@\n-old\n+new")
     target = SemanticNode("target", "function", "target", "src/A.java", 1, 1)
@@ -268,6 +310,7 @@ if __name__ == "__main__":
     test_missing_full_source_uses_audited_patch_fallback()
     test_expert_llm_uses_context_unit_prompt()
     test_expert_batch_executes_every_context_unit()
+    test_expert_batch_stops_before_next_context_unit_when_review_is_cancelled()
     test_context_unit_includes_cross_file_semantic_dependencies()
     test_model_cannot_invent_a_trusted_semantic_edge()
     print("context planner tests passed")

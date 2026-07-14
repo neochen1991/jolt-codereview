@@ -4466,22 +4466,27 @@ def route_agents(
         ordered.extend(agent for agent in matched if agent.get("agent_id") not in set(preferred_order))
         return ordered[:3]
     if effort == "standard":
+        try:
+            max_standard_agents = int(routing_config.get("max_standard_agents") or 6)
+        except (TypeError, ValueError):
+            max_standard_agents = 6
+        max_standard_agents = max(3, min(max_standard_agents, 10))
         preferred_order = [
             "security_agent",
             "dependency_agent",
             "database_agent",
             "performance_agent",
             "coding_agent",
-            "ddd_agent",
             "backend_agent",
-            "frontend_agent",
-            "redis_agent",
             "test_agent",
+            "ddd_agent",
+            "redis_agent",
+            "frontend_agent",
         ]
         by_id = {agent["agent_id"]: agent for agent in matched}
         ordered = [by_id[agent_id] for agent_id in preferred_order if agent_id in by_id]
         ordered.extend(agent for agent in matched if agent.get("agent_id") not in set(preferred_order))
-        return ordered[:10]
+        return ordered[:max_standard_agents]
     return matched
 
 

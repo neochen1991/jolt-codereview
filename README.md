@@ -195,16 +195,24 @@ MR Backend 现在只保留 v2 Review Context Engine。真实 `production_review`
 
 ```json
 {
+  "routing": {
+    "max_standard_agents": 6
+  },
   "review_quality": {
     "semantic_index": "tree_sitter",
     "llm_replay": "record",
+    "context_units_per_llm_call": 6,
+    "coverage_retry_context_units_limit": 2,
     "gold_dataset_path": "evaluation/production_review_quality_gold.jsonl"
   }
 }
 ```
 
+- `routing.max_standard_agents`: `standard` 检视默认最多选择 6 个强相关专家；避免 Java PR 被 frontend/redis 等低相关专家放大误报面和耗时。需要超深检视时可调高到 8-10。
 - `semantic_index`: `tree_sitter` 使用本地语法树；`regex` 是明确标记为 heuristic 的降级路径；`typed` 目前在缺少语言服务时会显示 `partial / typed_index_unavailable` 并回退 Tree-sitter，不会伪装为 typed 成功。
 - `llm_replay`: `off` 只实时调用；`record` 记录稳定 Seed、请求/响应 Hash 和调用指纹；`replay` 只读取已有 Exchange，缺记录会明确失败且不会偷偷联网；`live_repeat` 实时重跑并更新记录。
+- `context_units_per_llm_call`: v2 会把多个 ContextUnit 合并进一次专家调用，默认每次 6 个；内网慢模型可以调小，长上下文模型可以调到 8-10，以减少“一个大 PR × 多专家 × 多规则”的调用爆炸。
+- `coverage_retry_context_units_limit`: 绑定规则首轮已经覆盖所有 ContextUnit 后，低覆盖补检视只抽取少量代表性单元，默认 2 个；避免补检视把完整 MR 再扫一遍。
 - `gold_dataset_path`: Gold JSONL 路径，相对路径以仓库根目录为基准；用于离线评估召回率、精确率和严重级别准确性。
 
 #### 真实 Review Quality 验证

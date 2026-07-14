@@ -11,7 +11,7 @@ from db_postgres import open_app_database
 from llm_router import candidate_providers
 from llm.exchange import derive_seed, execute_chat_exchange, replay_mode_from_config
 from llm.retry import call_with_retry
-from prompts.builder import build_context_unit_prompt, build_prompt
+from prompts.builder import build_context_unit_prompt, build_context_units_prompt, build_prompt
 from prompts.system import REVIEW_SYSTEM_PROMPT
 
 LLM_REVIEW_SEED = 13
@@ -771,13 +771,30 @@ def call_llm(
     project_id = str(config.get("_project_id") or "project_default")
     budget_tracker = agent.get("budget_tracker")
     context_unit = agent.get("context_unit")
-    context_unit_id = str(getattr(context_unit, "unit_id", "") or (context_unit.get("unit_id") if isinstance(context_unit, dict) else ""))
-    context_hash = str(getattr(context_unit, "context_hash", "") or (context_unit.get("context_hash") if isinstance(context_unit, dict) else ""))
-    checkpoint_ids = getattr(context_unit, "skill_checkpoint_ids", ()) if context_unit is not None else ()
+    context_units = agent.get("context_units") if isinstance(agent.get("context_units"), list) else []
+    context_unit_ids = [
+        str(getattr(item, "unit_id", "") or (item.get("unit_id") if isinstance(item, dict) else ""))
+        for item in context_units
+    ]
+    context_hashes = [
+        str(getattr(item, "context_hash", "") or (item.get("context_hash") if isinstance(item, dict) else ""))
+        for item in context_units
+    ]
+    context_unit_id = ",".join(item for item in context_unit_ids if item) or str(getattr(context_unit, "unit_id", "") or (context_unit.get("unit_id") if isinstance(context_unit, dict) else ""))
+    context_hash = ",".join(item for item in context_hashes if item) or str(getattr(context_unit, "context_hash", "") or (context_unit.get("context_hash") if isinstance(context_unit, dict) else ""))
+    if context_units:
+        checkpoint_values: list[str] = []
+        for item in context_units:
+            checkpoint_values.extend(str(value) for value in (getattr(item, "skill_checkpoint_ids", ()) or (item.get("skill_checkpoint_ids") if isinstance(item, dict) else []) or []))
+        checkpoint_ids = tuple(dict.fromkeys(checkpoint_values))
+    else:
+        checkpoint_ids = getattr(context_unit, "skill_checkpoint_ids", ()) if context_unit is not None else ()
     checkpoint_id = ",".join(str(item) for item in checkpoint_ids) if checkpoint_ids else str(agent.get("checkpoint_id") or "")
     head_sha = str(agent.get("head_sha") or config.get("_head_sha") or "")
     exchange_mode = replay_mode_from_config(config)
-    if context_unit is not None:
+    if context_units:
+        prompt, safety = build_context_units_prompt(agent, context_units, skill_summary)
+    elif context_unit is not None:
         prompt, safety = build_context_unit_prompt(agent, context_unit, skill_summary)
     else:
         prompt, safety = build_prompt(agent, files, skill_summary)

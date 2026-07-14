@@ -165,10 +165,17 @@ def test_expert_batch_executes_every_context_unit() -> None:
         related_context={},
     )
     seen: list[str] = []
+    calls = 0
 
     def fake_call(_config, _recorder, _span, agent, _files, _skill):
-        seen.append(agent["context_unit"].unit_id)
-        return [{"title": agent["context_unit"].unit_id}]
+        nonlocal calls
+        calls += 1
+        batch = list(agent["context_units"])
+        seen.extend(unit.unit_id for unit in batch)
+        return [
+            {"title": unit.unit_id, "file_path": unit.primary_source.file_path, "line_start": unit.primary_source.line_start}
+            for unit in batch
+        ]
 
     items, executed, unresolved = call_llm_for_context_units(
         call_llm=fake_call,
@@ -183,8 +190,43 @@ def test_expert_batch_executes_every_context_unit() -> None:
     )
 
     assert len(items) == 2
+    assert calls == 1
     assert sorted(seen) == sorted(unit.unit_id for unit in plan.units)
     assert sorted(executed) == sorted(seen)
+    assert unresolved == []
+
+
+def test_context_units_are_chunked_to_control_real_review_call_volume() -> None:
+    files = [
+        ChangedFile(f"src/File{index}.java", "@@ -1,1 +1,1 @@\n-old\n+new")
+        for index in range(13)
+    ]
+    plan = plan_context_units(
+        files,
+        source_file_contents={item.filename: "new\n" for item in files},
+        related_context={},
+    )
+    batch_sizes: list[int] = []
+
+    def fake_call(_config, _recorder, _span, agent, _files, _skill):
+        batch = list(agent["context_units"])
+        batch_sizes.append(len(batch))
+        return []
+
+    _items, executed, unresolved = call_llm_for_context_units(
+        call_llm=fake_call,
+        config={"review_quality": {"context_units_per_llm_call": 6}},
+        recorder=None,
+        span="span",
+        agent=_agent(),
+        files=files,
+        skill_summary="",
+        context_units=list(plan.units),
+        budget_tracker=None,
+    )
+
+    assert batch_sizes == [6, 6, 1]
+    assert sorted(executed) == sorted(unit.unit_id for unit in plan.units)
     assert unresolved == []
 
 
@@ -208,13 +250,13 @@ def test_expert_batch_stops_before_next_context_unit_when_review_is_cancelled() 
             raise RuntimeError("review_cancelled")
 
     def fake_call(_config, _recorder, _span, agent, _files, _skill):
-        seen.append(agent["context_unit"].unit_id)
+        seen.extend(unit.unit_id for unit in agent["context_units"])
         return []
 
     try:
         call_llm_for_context_units(
             call_llm=fake_call,
-            config={},
+            config={"review_quality": {"context_units_per_llm_call": 1}},
             recorder=None,
             span="span",
             agent=_agent(),
@@ -310,6 +352,7 @@ if __name__ == "__main__":
     test_missing_full_source_uses_audited_patch_fallback()
     test_expert_llm_uses_context_unit_prompt()
     test_expert_batch_executes_every_context_unit()
+    test_context_units_are_chunked_to_control_real_review_call_volume()
     test_expert_batch_stops_before_next_context_unit_when_review_is_cancelled()
     test_context_unit_includes_cross_file_semantic_dependencies()
     test_model_cannot_invent_a_trusted_semantic_edge()

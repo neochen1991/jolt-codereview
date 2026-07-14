@@ -19,6 +19,7 @@ const ignoredPathParts = [
   `${path.sep}__pycache__${path.sep}`,
   `${path.sep}build${path.sep}`,
   `${path.sep}dist${path.sep}`,
+  `${path.sep}data${path.sep}`,
   `${path.sep}config${path.sep}static-rules${path.sep}`
 ];
 

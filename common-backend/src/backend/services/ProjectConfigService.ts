@@ -12,6 +12,7 @@ const SETTINGS_KEYS = [
   "publish_policy",
   "data_policy",
   "token_usage"
+  ,"review_quality"
 ] as const;
 
 export type ProjectSettingsKey = typeof SETTINGS_KEYS[number];

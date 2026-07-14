@@ -54,10 +54,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_added_lines_per_mr": 2000,
     },
     "review_quality": {
-        "context_engine": "v1",
+        "context_engine": "v2",
         "semantic_index": "tree_sitter",
         "llm_replay": "record",
-        "quality_shadow_mode": False,
+        "quality_shadow_mode": True,
+        "auto_shadow_baseline": True,
+        "auto_rollback_enabled": True,
+        "minimum_distinct_mrs": 30,
+        "gold_dataset_path": "evaluation/production_review_quality_gold.jsonl",
     },
     "agent_policy": {
         "deepagents": {
@@ -126,10 +130,14 @@ def load_config() -> dict[str, Any]:
 def normalize_review_quality_config(config: dict[str, Any]) -> dict[str, Any]:
     raw = config.get("review_quality") if isinstance(config.get("review_quality"), dict) else {}
     result = {
-        "context_engine": str(raw.get("context_engine") or "v1"),
+        "context_engine": str(raw.get("context_engine") or "v2"),
         "semantic_index": str(raw.get("semantic_index") or "tree_sitter"),
         "llm_replay": str(raw.get("llm_replay") or "record"),
-        "quality_shadow_mode": bool(raw.get("quality_shadow_mode", False)),
+        "quality_shadow_mode": bool(raw.get("quality_shadow_mode", True)),
+        "auto_shadow_baseline": bool(raw.get("auto_shadow_baseline", True)),
+        "auto_rollback_enabled": bool(raw.get("auto_rollback_enabled", True)),
+        "minimum_distinct_mrs": max(30, int(raw.get("minimum_distinct_mrs") or 30)),
+        "gold_dataset_path": str(raw.get("gold_dataset_path") or "evaluation/production_review_quality_gold.jsonl"),
     }
     allowed = {
         "context_engine": {"v1", "v2"},

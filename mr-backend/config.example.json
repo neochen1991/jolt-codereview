@@ -38,10 +38,14 @@
     "max_added_lines_per_mr": 2000
   },
   "review_quality": {
-    "context_engine": "v1",
+    "context_engine": "v2",
     "semantic_index": "tree_sitter",
     "llm_replay": "record",
-    "quality_shadow_mode": false
+    "quality_shadow_mode": true,
+    "auto_shadow_baseline": true,
+    "auto_rollback_enabled": true,
+    "minimum_distinct_mrs": 30,
+    "gold_dataset_path": "evaluation/production_review_quality_gold.jsonl"
   },
   "agent_policy": {
     "deepagents": {

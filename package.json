@@ -72,6 +72,7 @@
     "verify:review-context-dashboard": "node scripts/verify-review-context-dashboard.mjs",
     "verify:review-quality-uplift": "node scripts/test-review-quality-uplift.mjs && node scripts/verify-review-quality-uplift.mjs --fixture scripts/fixtures/review-quality-gate-pass.json",
     "verify:review-quality-shadow": "python3 scripts/test_run_review_quality_shadow_case.py && node scripts/test-review-quality-shadow.mjs",
+    "verify:v2-production-default": "PYTHONPATH=mr-backend/worker python3 mr-backend/worker/tests/test_quality_shadow.py && node scripts/verify-v2-production-default.mjs",
     "verify:review-quality-v2": "PYTHONPATH=mr-backend/worker python3 mr-backend/worker/tests/test_context_metrics.py && PYTHONPATH=mr-backend/worker python3 mr-backend/worker/tests/test_context_planner.py && mr-backend/.venv/bin/python mr-backend/worker/tests/test_semantic_graph.py && PYTHONPATH=mr-backend/worker python3 mr-backend/worker/tests/test_source_tools.py && npm run verify:worker-exact-replay && PYTHONPATH=mr-backend/worker python3 mr-backend/worker/tests/test_evidence_pack.py && PYTHONPATH=mr-backend/worker python3 mr-backend/worker/tests/test_skill_context_requirements.py && npm run verify:review-context-dashboard && npm run verify:review-quality-shadow && npm run verify:review-quality-uplift",
     "verify:real-pr-repeatability": "python3 scripts/verify_real_pr_repeatability.py",
     "verify:real-pr-report": "python3 scripts/test_render_real_pr_quality_report.py",

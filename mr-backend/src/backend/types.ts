@@ -85,6 +85,10 @@ export interface AppConfig {
     semantic_index?: "regex" | "tree_sitter" | "typed";
     llm_replay?: "off" | "record" | "replay" | "live_repeat";
     quality_shadow_mode?: boolean;
+    auto_shadow_baseline?: boolean;
+    auto_rollback_enabled?: boolean;
+    minimum_distinct_mrs?: number;
+    gold_dataset_path?: string;
   };
 }
 

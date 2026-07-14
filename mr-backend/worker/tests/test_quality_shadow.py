@@ -14,6 +14,7 @@ from quality_shadow import (  # type: ignore[import-not-found]
     should_capture_review_input,
     validate_frozen_input_artifact,
 )
+from config import DEFAULT_CONFIG, normalize_review_quality_config
 
 
 class FakeConnection:
@@ -89,6 +90,15 @@ def test_capture_requires_production_job_and_explicit_opt_in() -> None:
     assert should_capture_review_input(enabled, {"execution_kind": "skill_debug_candidate"}) is False
 
 
+def test_production_defaults_switch_to_v2_with_validation_guards() -> None:
+    quality = normalize_review_quality_config(DEFAULT_CONFIG)
+    assert quality["context_engine"] == "v2"
+    assert quality["quality_shadow_mode"] is True
+    assert quality["auto_shadow_baseline"] is True
+    assert quality["auto_rollback_enabled"] is True
+    assert quality["minimum_distinct_mrs"] == 30
+
+
 def test_load_shadow_input_validates_reference_head_hash_and_expiry() -> None:
     artifact = frozen_artifact()
     digest = artifact_sha256(artifact)
@@ -135,5 +145,6 @@ if __name__ == "__main__":
     test_artifact_hash_is_canonical_and_tampering_is_rejected()
     test_shadow_config_only_overrides_context_engine()
     test_capture_requires_production_job_and_explicit_opt_in()
+    test_production_defaults_switch_to_v2_with_validation_guards()
     test_load_shadow_input_validates_reference_head_hash_and_expiry()
     test_runtime_and_schema_wire_frozen_input_callbacks()

@@ -191,109 +191,48 @@ Skill 新版本统一保存为 draft，不能直接进入正式检视。服务�
 
 ### Review 质量引擎、回放与回滚
 
-MR Backend 默认直接使用 v2，同时为每个成功的真实 `production_review` 自动排队一个同输入 v1 Shadow。v2 负责真实发布，v1 Shadow 禁止发布；运行安全或完整质量门不通过时，系统只把项目级 `context_engine` 自动回滚到 v1，并写审计记录。
+MR Backend 现在只保留 v2 Review Context Engine。真实 `production_review` 和 Skill Debug 复用同一条 Worker Graph；Skill Debug 只在入口冻结 MR 输入、Skill Snapshot 和调试参数，不再走独立逻辑。项目内不存在 v1 Shadow、双引擎 A/B 或自动回滚到 v1 的运行路径。
 
 ```json
 {
   "review_quality": {
-    "context_engine": "v2",
     "semantic_index": "tree_sitter",
     "llm_replay": "record",
-    "quality_shadow_mode": true,
-    "auto_shadow_baseline": true,
-    "auto_rollback_enabled": true,
-    "minimum_distinct_mrs": 30,
     "gold_dataset_path": "evaluation/production_review_quality_gold.jsonl"
   }
 }
 ```
 
-- `context_engine`: `v2` 按符号和 Diff Hunk 生成 ContextUnit；`v1` 回滚到旧 Prompt 拼装路径。
 - `semantic_index`: `tree_sitter` 使用本地语法树；`regex` 是明确标记为 heuristic 的降级路径；`typed` 目前在缺少语言服务时会显示 `partial / typed_index_unavailable` 并回退 Tree-sitter，不会伪装为 typed 成功。
 - `llm_replay`: `off` 只实时调用；`record` 记录稳定 Seed、请求/响应 Hash 和调用指纹；`replay` 只读取已有 Exchange，缺记录会明确失败且不会偷偷联网；`live_repeat` 实时重跑并更新记录。
-- `quality_shadow_mode`: 允许正式 v2 Run 保存冻结输入；会短期保存源码全文，必须符合项目数据留存要求。
-- `auto_shadow_baseline`: 正式 v2 成功后自动创建同输入 v1 Shadow；Shadow 强制 `publish_allowed=false`，不会修改 MR 状态或发布评论。
-- `auto_rollback_enabled`: 启用运行安全与完整 Gold 质量门自动回滚。连续 3 个生产任务失败，或最近 10 个不同 MR 失败率超过 20%，会立即回滚；至少 30 个双评审 MR 的完整质量门失败也会回滚。
-- `minimum_distinct_mrs`: 正式质量结论的最小不同 MR 数；当前规范下不得低于 30。
-- `gold_dataset_path`: 双人独立标注 Gold JSONL 路径，相对路径以仓库根目录为基准。
+- `gold_dataset_path`: Gold JSONL 路径，相对路径以仓库根目录为基准；用于离线评估召回率、精确率和严重级别准确性。
 
-#### 真实 Review Quality Shadow A/B
+#### 真实 Review Quality 验证
 
-`quality_shadow_mode=true` 后，新建的正式 `production_review` 会把本次 Worker 实际读取的 changed files、源文件内容和增量历史保存到 `review_input_snapshots`。输入使用规范化 SHA256，并同时绑定 MR、Head SHA 和来源 Review Run；默认 72 小时过期。自动 v1 Shadow 只覆盖 `context_engine`，其余项目配置、Agent、激活 Skill、Checkpoint、模型、Verify、Critic 和 Judge 都继续走正式 Review Worker 图。
+质量验证以 v2 生产运行的事实为准，不再依赖同输入 v1 对照。Review 页面“真实任务质量仪表盘”显示：
 
-该开关会短期保存源码全文，属于显式数据留存授权。敏感项目开启前必须确认 PostgreSQL 访问控制、备份策略和 72 小时留存符合要求；不做 Shadow 时保持 `false`。过期 Snapshot 会被 runner 拒绝，不能计入有效样本。
+- `Context Health`: 固定 v2，并展示源码获取率、Diff 分配率、`full / partial / patch_only / blocked`。
+- `v2 Quality`: 展示人工标注样本数、反馈精确率、`v2_unlabeled / v2_evaluating / v2_validated`。
+- `Quality Funnel`: Candidate 到 Verifier 的保留率，用作候选召回漏斗，不等同于真实召回率。
+- `Skill Checkpoint`: Skill 绑定后的 Checkpoint 完成率和未闭环项。
+- `Reproducibility`: LLM seed、请求/响应 hash、Exchange Store 覆盖率和 replay 状态。
+- `未闭环 Candidate`: Verifier 已接受但 Judge 未闭环的候选问题。
 
-自动验证的 Gold 文件每行代表一个 Finding 或负例，必须使用稳定 ID，并完成双人独立标注；两人结论不一致时必须保存 `adjudication_reason`。完整字段规范见 `evaluation/review_quality_cases/README.md`：
-
-```sql
-SELECT id AS input_snapshot_id,
-       merge_request_id,
-       head_sha,
-       artifact_sha256 AS input_artifact_sha256,
-       source_review_run_id,
-       expires_at
-FROM review_input_snapshots
-WHERE expires_at::timestamptz > CURRENT_TIMESTAMP
-ORDER BY created_at DESC;
-```
+自动验证的 Gold 文件每行代表一个 Finding 或负例，必须使用稳定 ID。建议完成双人独立标注；两人结论不一致时保存 `adjudication_reason`。完整字段规范见 `evaluation/review_quality_cases/README.md`：
 
 ```json
 {"id":"gold-001","mr_id":"mr_xxx","file":"src/A.java","line":42,"rule_id":"AUTH-001","severity":"high","evidence_scope":"cross_file","evidence_keywords":["authorization"],"review":{"reviewer_1":{"id":"alice","verdict":"valid"},"reviewer_2":{"id":"bob","verdict":"valid"},"status":"approved","adjudication_reason":""}}
 ```
 
-先启动 MR Backend/Worker，再运行同输入双跑。macOS/Linux：
+本地机制测试命令：
 
 ```bash
-export DATABASE_URL='postgresql://USER:PASSWORD@PG_HOST:5432/jolt_codereview'
-npm --prefix mr-backend run start
-
-# 在另一个终端执行
-export DATABASE_URL='postgresql://USER:PASSWORD@PG_HOST:5432/jolt_codereview'
-node scripts/run-review-quality-shadow.mjs \
-  --snapshots evaluation/internal-shadow.jsonl \
-  --runner "mr-backend/.venv/bin/python scripts/run_review_quality_shadow_case.py" \
-  --stage internal_10 \
-  --output outputs/internal-shadow-report.json
-```
-
-Windows PowerShell：
-
-```powershell
-$env:DATABASE_URL="postgresql://USER:PASSWORD@PG_HOST:5432/jolt_codereview"
-npm --prefix mr-backend run start
-
-# 在另一个 PowerShell 窗口执行
-$env:DATABASE_URL="postgresql://USER:PASSWORD@PG_HOST:5432/jolt_codereview"
-$runner = '"{0}" "{1}"' -f "$PWD\mr-backend\.venv\Scripts\python.exe", "$PWD\scripts\run_review_quality_shadow_case.py"
-node scripts/run-review-quality-shadow.mjs `
-  --snapshots evaluation/internal-shadow.jsonl `
-  --runner $runner `
-  --stage internal_10 `
-  --output outputs/internal-shadow-report.json
-```
-
-原生 runner 会在 PostgreSQL 创建低优先级 `quality_shadow_v1` / `quality_shadow_v2` Job，等待正式 Worker 完成，并从独立 Run/Finding/Token 记录生成报告。生产 Job 排队时不会领取 Shadow；Snapshot 缺失、过期、MR/head/hash 不一致、Worker 超时、任一 Job 失败、返回的 engine 不一致或出现发布尝试时，case 直接失败。默认最长等待 1800 秒，可通过 `JOLT_SHADOW_TIMEOUT_SECONDS` 调整；Windows 内网下 PostgreSQL 地址应加入 `NO_PROXY`。
-
-机制测试命令：
-
-```bash
-npm run verify:review-quality-shadow
-```
-
-机制测试只证明同一输入确实进入两个 engine 且 Shadow 发布次数为 0，不能替代上线数据。自动验证会把结果写入 `evaluation_reports`，回滚请求写入 `review_quality_rollback_events`，Common Backend 同时写 `review_quality.auto_rollback` 审计日志。手工离线复核仍可运行：
-
-```bash
+npm run verify:review-quality-v2
 npm run verify:real-prs
-node scripts/verify-review-quality-uplift.mjs --baseline <v1-report> --candidate <v2-report>
+npm run verify:gold-eval
 ```
-
-只有双人 Gold 完整、同输入配对成本完整、不同 MR 不少于 30，且 Recall 提升至少 10 个百分点、跨文件 Recall 提升至少 15 个百分点、Critical/High Recall 不低于 95%、Precision 下降不超过 2 个百分点、Negative FP 不增加、P95 Token/Duration 不超过 v1 的 1.5 倍，状态才是 `v2_verified`；否则为 `v2_provisional` 或触发回滚。
-
-回滚顺序：先把 `context_engine` 改为 `v1`；如果语义索引异常，再把 `semantic_index` 改为 `regex`；模型网关或存储异常时把 `llm_replay` 改为 `off`。修改后只影响新建 Review Run，已有 Run 的 `coverage_json`、Context Health 和调用指纹仍保留用于审计。
 
 生产环境默认只保留 Prompt/Response Hash，不因为 `record` 自动持久化完整模型响应。Skill Debug 使用冻结 MR Snapshot 时，可在会话 TTL 内启用 Exact Replay 存储；调试结束后由 `skill_debug_policy.retention_days` 和清理任务删除。不要在共享数据库中无限期保存源码、Prompt、工具结果或完整模型响应。Review 页面“真实任务质量仪表盘”会显示 `full / partial / patch_only / blocked`、Candidate 漏斗、Checkpoint 闭环、反馈精确率和可复现状态；没有数据时显示 unavailable，不按成功处理。
-
-Review 页面“真实任务质量仪表盘”明确显示 `v2_provisional`、`v2_verified`、`rollback_pending` 或 `v1_rolled_back`，并列出同输入 Pair 数、不同 MR 数及缺失证据。`v2_provisional` 表示生产链路已切换但尚无足够证据，不能表述为召回率、精确率已提升。
 
 生产任务确实需要 Exact Replay 时，除把 `review_quality.llm_replay` 设为 `record/replay` 外，还必须显式授权完整响应的短期留存，否则 `replay` 会明确报“没有可用 Exchange Store”，不会偷偷改成联网调用。建议按项目数据合规要求配置：
 

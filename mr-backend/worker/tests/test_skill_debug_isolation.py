@@ -7,10 +7,8 @@ from skill_debug import (
     apply_debug_execution_controls,
     apply_debug_snapshot,
     is_non_production_job,
-    is_shadow_job,
     production_side_effects_allowed,
     redact_snapshot,
-    shadow_context_engine,
 )
 from context.context_planner import plan_context_units
 from context.skill_requirements import collect_skill_context_requirements
@@ -28,16 +26,25 @@ def test_production_side_effect_policy_keeps_production_mutations() -> None:
     assert production_side_effects_allowed({}) is True
 
 
-def test_shadow_jobs_are_non_production_and_engine_is_explicit() -> None:
-    for engine in ("v1", "v2"):
-        job = {"execution_kind": f"quality_shadow_{engine}"}
-        assert is_shadow_job(job) is True
-        assert is_non_production_job(job) is True
-        assert production_side_effects_allowed(job) is False
-        assert shadow_context_engine(job) == engine
+def test_only_skill_debug_jobs_are_non_production() -> None:
+    unsupported = {"execution_kind": "quality_" + "shadow_v1"}
+    assert is_non_production_job(unsupported) is False
+    assert production_side_effects_allowed(unsupported) is True
 
-    assert is_shadow_job({"execution_kind": "quality_shadow"}) is False
-    assert shadow_context_engine({"execution_kind": "production_review"}) is None
+
+def test_worker_source_has_no_dual_engine_side_effects() -> None:
+    worker_root = Path(__file__).resolve().parents[1]
+    runtime = (worker_root / "review_runtime.py").read_text("utf-8")
+    finalize = (worker_root / "orchestration/nodes/finalize.py").read_text("utf-8")
+    forbidden = [
+        "review_quality_" + "shadow_pairs",
+        "review_quality_" + "rollback_events",
+        "enqueue_v1_" + "shadow_pair",
+        "evaluate_and_request_runtime_" + "rollback",
+    ]
+    for token in forbidden:
+        assert token not in runtime
+        assert token not in finalize
 
 
 def _snapshot() -> dict:
@@ -154,7 +161,8 @@ def test_debug_and_production_share_context_and_judge_contract() -> None:
 if __name__ == "__main__":
     test_debug_side_effect_policy_disables_production_mutations()
     test_production_side_effect_policy_keeps_production_mutations()
-    test_shadow_jobs_are_non_production_and_engine_is_explicit()
+    test_only_skill_debug_jobs_are_non_production()
+    test_worker_source_has_no_dual_engine_side_effects()
     test_targeted_baseline_removes_only_target_skill()
     test_targeted_candidate_keeps_target_skill()
     test_targeted_baseline_removes_target_skill_manifest()

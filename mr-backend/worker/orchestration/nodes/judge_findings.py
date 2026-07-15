@@ -3445,9 +3445,30 @@ def _has_structured_agent_evidence(finding: dict[str, Any]) -> bool:
     return has_agent and has_location and has_rule and has_problem and has_recommendation and confidence >= 0.6
 
 
+def _has_source_grounded_attribution_gap(finding: dict[str, Any]) -> bool:
+    flags = {str(flag) for flag in (finding.get("verification_flags") or [])}
+    if not flags & {"rule_attribution_missing", "rule_attribution_mismatch", "bound_required_evidence_incomplete"}:
+        return False
+    severity = str(finding.get("severity") or "").lower()
+    if severity not in SELECTABLE_SEVERITIES:
+        return False
+    has_agent = _has_text(finding.get("agent_id"))
+    has_location = _has_text(finding.get("file_path")) and bool(_as_int(finding.get("line_start")))
+    has_direct_source = _has_text(finding.get("evidence"))
+    has_problem = _has_text(finding.get("title")) and _has_text(finding.get("problem_description"))
+    has_recommendation = _has_text(finding.get("recommendation"))
+    try:
+        confidence = float(finding.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return has_agent and has_location and has_direct_source and has_problem and has_recommendation and confidence >= 0.55
+
+
 def should_retain_low_precision_without_tool_support(finding: dict[str, Any], source_observations: list[dict[str, Any]]) -> bool:
     if source_observations:
         return False
+    if _has_source_grounded_attribution_gap(finding):
+        return True
     if not _has_structured_agent_evidence(finding):
         return False
     covered = {str(rule) for rule in (finding.get("covered_rules") or []) if rule}

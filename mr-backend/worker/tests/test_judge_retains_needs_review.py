@@ -48,6 +48,49 @@ def test_agent_only_complete_finding_is_retained_without_tool_support() -> None:
     assert should_retain_low_precision_without_tool_support(finding, []) is True
 
 
+def test_minimax_source_grounded_unattributed_finding_is_retained_for_review() -> None:
+    finding = agent_finding(
+        severity="high",
+        confidence=0.72,
+        covered_rules=[],
+        rule_id="",
+        tool_rule_id="",
+        verification_flags=["rule_attribution_missing"],
+        title="异常被吞掉后返回空列表",
+        problem_description="查询失败被伪装成没有数据。",
+        evidence="catch (Exception e) { e.printStackTrace(); return Collections.emptyList(); }",
+        recommendation="记录结构化错误并向上返回明确失败，避免把异常等同于空结果。",
+    )
+
+    assert should_retain_low_precision_without_tool_support(finding, []) is True
+    assert should_retain_final_candidate_for_review(
+        finding,
+        reason="evidence_contract_not_satisfied",
+        source_observations=[],
+    ) is True
+
+
+def test_unattributed_claim_without_location_or_source_evidence_is_rejectable() -> None:
+    finding = agent_finding(
+        severity="high",
+        covered_rules=[],
+        rule_id="",
+        tool_rule_id="",
+        file_path="",
+        line_start=0,
+        line_end=0,
+        evidence="",
+        verification_flags=["rule_attribution_missing"],
+    )
+
+    assert should_retain_low_precision_without_tool_support(finding, []) is False
+    assert should_retain_final_candidate_for_review(
+        finding,
+        reason="evidence_contract_not_satisfied",
+        source_observations=[],
+    ) is False
+
+
 def test_title_like_rule_does_not_retain_advisory_without_rule_anchor() -> None:
     finding = agent_finding(
         severity="info",
@@ -398,6 +441,8 @@ def test_secondary_test_advisory_never_prunes_critical_or_high_findings() -> Non
 
 if __name__ == "__main__":
     test_agent_only_complete_finding_is_retained_without_tool_support()
+    test_minimax_source_grounded_unattributed_finding_is_retained_for_review()
+    test_unattributed_claim_without_location_or_source_evidence_is_rejectable()
     test_partial_evidence_contract_is_retained_as_needs_review()
     test_quality_trace_preserves_bound_evidence_contract()
     test_skill_checkpoint_rule_is_not_reconciled_to_tool_rule()

@@ -100,6 +100,73 @@ def test_unmodified_caller_remains_discoverable_without_claiming_typed_resolutio
     assert {edge.confidence for edge in edges} == {"heuristic"}
 
 
+def test_java_receiver_type_promotes_call_to_syntax_edge() -> None:
+    raw = _raw_graph()
+    raw["classes"].extend(
+        [
+            {
+                "file_path": "src/PaymentAdminController.java",
+                "name": "PaymentAdminController",
+                "line": 1,
+                "line_end": 20,
+                "node_type": "class_declaration",
+                "snippet": "class PaymentAdminController { PaymentQueryService paymentQueryService; }",
+            },
+            {
+                "file_path": "src/PaymentQueryService.java",
+                "name": "PaymentQueryService",
+                "line": 1,
+                "line_end": 30,
+                "node_type": "class_declaration",
+                "snippet": "class PaymentQueryService { List searchByUser(String userId) { return null; } }",
+            },
+        ]
+    )
+    raw["functions"].extend(
+        [
+            {
+                "file_path": "src/PaymentAdminController.java",
+                "name": "search",
+                "line": 10,
+                "line_end": 14,
+                "snippet": "Map search(Map payload) { return paymentQueryService.searchByUser(userId); }",
+            },
+            {
+                "file_path": "src/PaymentQueryService.java",
+                "name": "searchByUser",
+                "line": 12,
+                "line_end": 18,
+                "snippet": "List searchByUser(String userId) { return jdbc.queryForList(sql + userId); }",
+            },
+        ]
+    )
+    raw["callers"].append(
+        {
+            "file_path": "src/PaymentAdminController.java",
+            "caller": "search",
+            "callee": "searchByUser",
+            "line": 12,
+            "receiver": "paymentQueryService",
+            "receiver_type": "PaymentQueryService",
+            "snippet": "paymentQueryService.searchByUser(userId)",
+        }
+    )
+
+    graph = semantic_graph_from_tree_sitter(raw)
+
+    edges = [
+        edge
+        for edge in graph.edges
+        if edge.kind == "calls"
+        and graph.node(edge.source_id).file_path == "src/PaymentAdminController.java"
+        and graph.node(edge.target_id).file_path == "src/PaymentQueryService.java"
+        and graph.node(edge.target_id).name == "searchByUser"
+    ]
+    assert len(edges) == 1
+    assert edges[0].confidence == "syntax"
+    assert edges[0].resolver == "tree_sitter_receiver_type"
+
+
 def test_test_import_and_config_read_create_audited_semantic_edges() -> None:
     graph = semantic_graph_from_tree_sitter(_raw_graph())
 
@@ -175,6 +242,7 @@ def test_changed_files_are_prioritized_without_losing_repository_scan() -> None:
 if __name__ == "__main__":
     test_explicit_interface_implementation_is_audited_syntax_edge()
     test_unmodified_caller_remains_discoverable_without_claiming_typed_resolution()
+    test_java_receiver_type_promotes_call_to_syntax_edge()
     test_test_import_and_config_read_create_audited_semantic_edges()
     test_ambiguous_same_name_call_is_never_promoted_to_typed_edge()
     test_graph_serialization_keeps_parse_degradation()

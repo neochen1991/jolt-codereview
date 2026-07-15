@@ -101,6 +101,7 @@ def make_prescan_node(
             source_worktree_path,
         )
         external_tool_findings = sanitize_findings_for_policy(external_tool_findings, data_policy, files)
+        semantic_graph_record = external_toolchain.get("semantic_graph_record") if isinstance(external_toolchain, dict) else None
         tool_observations = findings_to_observations(external_tool_findings)
         save_tool_observations(conn, run_id, tool_observations, new_id)
         conn.commit()
@@ -228,6 +229,7 @@ def make_prescan_node(
             "diff_slices": diff_slices,
             "code_context": {**code_context, "related_context": {key: value for key, value in repo_related_context.items() if key != "source_file_contents"}},
             "related_context": {key: value for key, value in repo_related_context.items() if key != "source_file_contents"},
+            "semantic_graph_record": semantic_graph_record if isinstance(semantic_graph_record, dict) else {},
             "source_file_contents": fetched_source_contents or repo_related_context.get("source_file_contents") or {},
         }
 

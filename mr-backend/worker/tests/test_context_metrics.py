@@ -118,6 +118,31 @@ def test_context_health_counts_hunks_not_context_unit_containers() -> None:
     assert metrics["diff_assignment_rate"] == 1.0
 
 
+def test_context_health_uses_semantic_graph_as_symbol_resolution_fallback() -> None:
+    metrics = context_health_from_state(
+        {
+            "files": [ChangedFile("src/A.java", ""), ChangedFile("src/B.java", "")],
+            "llm_files": [ChangedFile("src/A.java", ""), ChangedFile("src/B.java", "")],
+            "source_file_contents": {"src/A.java": "source", "src/B.java": "source"},
+            "source_worktree_path": None,
+            "source_worktree_errors": [],
+            "context_units": [],
+            "related_context": {"status": "resolved", "changed_symbols": []},
+            "semantic_graph_record": {
+                "status": "full",
+                "nodes": [
+                    {"node_id": "a", "kind": "function", "name": "a", "file_path": "src/A.java", "line_start": 1, "line_end": 2},
+                    {"node_id": "b", "kind": "function", "name": "b", "file_path": "src/B.java", "line_start": 1, "line_end": 2},
+                ],
+                "edges": [],
+                "degradations": [],
+            },
+        }
+    )
+
+    assert metrics["changed_symbol_resolution_rate"] == 1.0
+
+
 def test_build_context_creates_executable_context_units() -> None:
     changed = ChangedFile("src/A.java", "@@ -1,1 +1,1 @@\n-old\n+new")
     node = make_build_context_node(recorder=FakeRecorder())
@@ -190,6 +215,7 @@ if __name__ == "__main__":
     test_build_context_node_attaches_context_health()
     test_finalize_coverage_preserves_context_health()
     test_context_health_counts_hunks_not_context_unit_containers()
+    test_context_health_uses_semantic_graph_as_symbol_resolution_fallback()
     test_build_context_creates_executable_context_units()
     test_legacy_v1_setting_cannot_disable_v2_context_units()
     test_review_quality_normalization_ignores_removed_dual_engine_fields()

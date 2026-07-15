@@ -11,7 +11,7 @@ from db_postgres import open_app_database
 from llm_router import candidate_providers
 from llm.exchange import derive_seed, execute_chat_exchange, replay_mode_from_config
 from llm.retry import call_with_retry
-from prompts.builder import build_context_unit_prompt, build_context_units_prompt, build_prompt
+from prompts.builder import build_context_unit_prompt_parts, build_context_units_prompt_parts, build_prompt
 from prompts.system import REVIEW_SYSTEM_PROMPT
 
 LLM_REVIEW_SEED = 13
@@ -35,6 +35,62 @@ def estimate_tokens(text: str) -> int:
     cjk = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
     non_cjk = max(0, len(text) - cjk)
     return max(1, int(cjk * 0.6 + non_cjk / 4) + 1)
+
+
+def _estimate_optional(value: Any) -> int:
+    text = str(value or "")
+    return estimate_tokens(text) if text else 0
+
+
+def input_composition_for_prompt(prompt: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    stable_prompt = str(metadata.get("stable_prompt") or "")
+    dynamic_prompt = str(metadata.get("dynamic_prompt") or "")
+    try:
+        stable = json.loads(stable_prompt) if stable_prompt else {}
+    except json.JSONDecodeError:
+        stable = {}
+    try:
+        dynamic = json.loads(dynamic_prompt) if dynamic_prompt else {}
+    except json.JSONDecodeError:
+        dynamic = {}
+    stable_rules = stable.get("review_rules") if isinstance(stable.get("review_rules"), dict) else {}
+    skill_text = str(stable_rules.get("dedicated_markdown_standard") or "")
+    structured = dynamic.get("structured_diff") if isinstance(dynamic.get("structured_diff"), dict) else {}
+    items = [item for item in (structured.get("items") or []) if isinstance(item, dict)]
+    source_text = "\n".join(str(item.get("source_text") or "") for item in items)
+    patch_text = "\n".join(str(item.get("patch_text") or "") for item in items)
+    dependency_text = "\n".join(
+        str(dependency.get("source_text") or "")
+        for item in items
+        for dependency in (item.get("dependencies") or [])
+        if isinstance(dependency, dict)
+    )
+    tool_section = dynamic.get("static_tool_scan_findings") if isinstance(dynamic.get("static_tool_scan_findings"), dict) else {}
+    tool_items = tool_section.get("items") or []
+    source_tokens = _estimate_optional(source_text)
+    dependency_tokens = _estimate_optional(dependency_text)
+    patch_tokens = _estimate_optional(patch_text)
+    skill_tokens = _estimate_optional(skill_text)
+    tool_tokens = _estimate_optional(json.dumps(tool_items, ensure_ascii=False, sort_keys=True)) if tool_items else 0
+    stable_total = _estimate_optional(REVIEW_SYSTEM_PROMPT) + _estimate_optional(stable_prompt)
+    fixed_tokens = max(0, stable_total - skill_tokens)
+    dynamic_total = _estimate_optional(dynamic_prompt or prompt)
+    known_dynamic = source_tokens + dependency_tokens + patch_tokens + tool_tokens
+    other_dynamic = max(0, dynamic_total - known_dynamic)
+    estimated_total = source_tokens + dependency_tokens + skill_tokens + tool_tokens + fixed_tokens + patch_tokens + other_dynamic
+    return {
+        "source_tokens": source_tokens,
+        "dependency_tokens": dependency_tokens,
+        "skill_tokens": skill_tokens,
+        "tool_observation_tokens": tool_tokens,
+        "fixed_instruction_tokens": fixed_tokens,
+        "patch_tokens": patch_tokens,
+        "other_dynamic_tokens": other_dynamic,
+        "estimated_input_tokens": estimated_total,
+        "stable_prefix_hash": str(metadata.get("stable_prefix_hash") or ""),
+        "context_unit_count": len(items),
+        "tool_observation_count": len(tool_items) if isinstance(tool_items, list) else 0,
+    }
 
 
 def llm_request_timeout_seconds(llm: dict[str, Any] | None, operation: str = "default") -> int:
@@ -793,12 +849,24 @@ def call_llm(
     head_sha = str(agent.get("head_sha") or config.get("_head_sha") or "")
     exchange_mode = replay_mode_from_config(config)
     if context_units:
-        prompt, safety = build_context_units_prompt(agent, context_units, skill_summary)
+        prompt, safety = build_context_units_prompt_parts(agent, context_units, skill_summary)
     elif context_unit is not None:
-        prompt, safety = build_context_unit_prompt(agent, context_unit, skill_summary)
+        prompt, safety = build_context_unit_prompt_parts(agent, context_unit, skill_summary)
     else:
         prompt, safety = build_prompt(agent, files, skill_summary)
-    prompt_tokens = estimate_tokens(prompt)
+    input_composition = input_composition_for_prompt(prompt, safety)
+    prompt_tokens = int(input_composition["estimated_input_tokens"])
+    recorder.event(
+        span_id,
+        "llm_input_composition",
+        f"{agent_id} 本次专家调用预计输入 {prompt_tokens} tokens",
+        {
+            **input_composition,
+            "agent_id": agent_id,
+            "batch_label": str(agent.get("review_batch_label") or ""),
+            "context_unit_ids": context_unit_ids,
+        },
+    )
     providers = candidate_providers(llm, required_context=prompt_tokens)
     first_provider = providers[0] if providers else {
         "provider": llm.get("default_provider") or "dashscope-openai-compatible",
@@ -807,35 +875,49 @@ def call_llm(
     provider = str(first_provider.get("provider"))
     model = str(first_provider.get("model"))
     if budget_tracker and budget_tracker.should_stop():
-        recorder.llm_call(span_id, provider, model, prompt, f"skipped_by_budget:{budget_tracker.truncated_reason}", 0, prompt_tokens, 0)
+        recorder.llm_call(span_id, provider, model, prompt, f"skipped_by_budget:{budget_tracker.truncated_reason}", 0, prompt_tokens, 0, input_composition=input_composition)
         recorder.event(span_id, "llm_skipped_by_budget", f"预算已触发熔断：{budget_tracker.truncated_reason}", budget_tracker.snapshot())
         return []
     if not files:
-        recorder.llm_call(span_id, provider, model, prompt, "skipped_no_llm_allowed_files", 0, prompt_tokens, 0)
+        recorder.llm_call(span_id, provider, model, prompt, "skipped_no_llm_allowed_files", 0, prompt_tokens, 0, input_composition=input_composition)
         recorder.event(span_id, "llm_skipped_by_data_policy", "没有可进入 LLM 的变更文件，按数据策略跳过模型调用")
         return []
-    if safety["injection_patterns"]:
-        recorder.event(span_id, "injection_attempt_detected", "diff 中出现疑似 prompt injection 文本，已按 untrusted 内容处理", safety)
-    if safety["redactions"]:
-        recorder.event(span_id, "redaction_applied", "送入 LLM 前完成敏感片段脱敏", safety)
+    public_safety = {
+        "redactions": list(safety.get("redactions") or []),
+        "injection_patterns": list(safety.get("injection_patterns") or []),
+        "stable_prefix_hash": str(safety.get("stable_prefix_hash") or ""),
+    }
+    if public_safety["injection_patterns"]:
+        recorder.event(span_id, "injection_attempt_detected", "diff 中出现疑似 prompt injection 文本，已按 untrusted 内容处理", public_safety)
+    if public_safety["redactions"]:
+        recorder.event(span_id, "redaction_applied", "送入 LLM 前完成敏感片段脱敏", public_safety)
     if not providers:
-        recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, prompt_tokens, 0)
+        recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, prompt_tokens, 0, input_composition=input_composition)
         return []
 
     last_error: Exception | None = None
+    cache_prompt = f"expert_messages_v2\n{prompt}" if safety.get("stable_prompt") and safety.get("dynamic_prompt") else prompt
     for index, candidate in enumerate(providers):
         provider = str(candidate.get("provider"))
         model = str(candidate.get("model"))
         base_url = str(candidate.get("base_url") or "").rstrip("/")
         api_key = candidate.get("api_key")
         if not base_url or not api_key:
-            recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, prompt_tokens, 0)
+            recorder.llm_call(span_id, provider, model, prompt, "skipped_no_api_key", 0, prompt_tokens, 0, input_composition=input_composition)
             continue
         started = time.time()
-        messages = [
-            {"role": "system", "content": REVIEW_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ]
+        stable_prompt = str(safety.get("stable_prompt") or "")
+        dynamic_prompt = str(safety.get("dynamic_prompt") or "")
+        messages = [{"role": "system", "content": REVIEW_SYSTEM_PROMPT}]
+        if stable_prompt and dynamic_prompt:
+            messages.extend(
+                [
+                    {"role": "user", "content": stable_prompt},
+                    {"role": "user", "content": dynamic_prompt},
+                ]
+            )
+        else:
+            messages.append({"role": "user", "content": prompt})
         payload = {
             "model": model,
             "messages": messages,
@@ -854,7 +936,7 @@ def call_llm(
                 {"provider": provider, "model": model},
             )
         operation_seed = derive_seed(head_sha, "expert", agent_id, context_unit_id, checkpoint_id)
-        cache_key = llm_cache_key(provider, model, prompt, seed=operation_seed, schema_name=schema_name, project_id=project_id)
+        cache_key = llm_cache_key(provider, model, cache_prompt, seed=operation_seed, schema_name=schema_name, project_id=project_id)
         cached = None if exchange_mode in {"replay", "live_repeat"} else _read_cached_llm_response(config, cache_key, project_id)
         if cached is not None:
             exchange = execute_chat_exchange(
@@ -867,13 +949,14 @@ def call_llm(
                 head_sha=head_sha,
                 provider=provider,
                 model=model,
-                prompt=prompt,
+                prompt=cache_prompt,
                 messages=messages,
                 temperature=0.1,
                 replay_mode="record" if exchange_mode == "record" else "off",
                 invoke=lambda _seed: cached,
                 context_hash=context_hash,
                 response_source="legacy_response_cache",
+                input_composition=input_composition,
             )
             content = exchange.response.get("choices", [{}])[0].get("message", {}).get("content", "[]")
             try:
@@ -903,7 +986,7 @@ def call_llm(
                         raise
                     fallback_payload = {key: value for key, value in seeded_payload.items() if key != "response_format"}
                     fallback_schema_name = LLM_REVIEW_FALLBACK_SCHEMA_NAME
-                    fallback_cache_key = llm_cache_key(provider, model, prompt, seed=seed, schema_name=fallback_schema_name, project_id=project_id)
+                    fallback_cache_key = llm_cache_key(provider, model, cache_prompt, seed=seed, schema_name=fallback_schema_name, project_id=project_id)
                     cached_fallback = _read_cached_llm_response(config, fallback_cache_key, project_id)
                     if cached_fallback is not None and exchange_mode != "replay":
                         mark_schema_strict_disabled(provider, model)
@@ -947,12 +1030,13 @@ def call_llm(
                 head_sha=head_sha,
                 provider=provider,
                 model=model,
-                prompt=prompt,
+                prompt=cache_prompt,
                 messages=messages,
                 temperature=0.1,
                 replay_mode=exchange_mode,
                 invoke=invoke_expert,
                 context_hash=context_hash,
+                input_composition=input_composition,
             )
             response = exchange.response
             duration_ms = int((time.time() - started) * 1000)
@@ -968,7 +1052,7 @@ def call_llm(
                 model=model,
                 schema_name=schema_name,
                 seed=operation_seed,
-                prompt=prompt,
+                prompt=cache_prompt,
                 response=response,
             )
             if budget_tracker:
@@ -984,7 +1068,7 @@ def call_llm(
             last_error = exc
             duration_ms = int((time.time() - started) * 1000)
             error_text = json.dumps({"error": str(exc), "timeout_seconds": timeout_seconds, "stream": stream_enabled}, ensure_ascii=False)
-            recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, prompt_tokens, 0, None, messages, error_text)
+            recorder.llm_call(span_id, provider, model, prompt, f"failed:{type(exc).__name__}", duration_ms, prompt_tokens, 0, None, messages, error_text, input_composition=input_composition)
             if index < len(providers) - 1:
                 recorder.event(span_id, "llm_failover", f"{provider} 调用失败，尝试下一个 provider：{type(exc).__name__}", {"error": str(exc)[:300]})
                 continue

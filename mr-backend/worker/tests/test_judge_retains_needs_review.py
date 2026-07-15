@@ -47,6 +47,50 @@ def test_agent_only_complete_finding_is_retained_without_tool_support() -> None:
     assert should_retain_low_precision_without_tool_support(finding, []) is True
 
 
+def test_title_like_rule_does_not_retain_advisory_without_rule_anchor() -> None:
+    finding = agent_finding(
+        severity="info",
+        confidence=0.75,
+        title="DirectFieldAccessor 强制类型转换安全性确认",
+        rule_id="DirectFieldAccessor 强制类型转换安全性确认",
+        tool_rule_id="DirectFieldAccessor 强制类型转换安全性确认",
+        covered_rules=[],
+        verification_flags=["low_evidence_match", "source_location_supported"],
+    )
+
+    assert should_retain_low_precision_without_tool_support(finding, []) is False
+    assert should_retain_final_candidate_for_review(
+        finding,
+        reason="evidence_contract_not_satisfied",
+        source_observations=[],
+    ) is False
+
+
+def test_custom_rule_id_can_still_retain_needs_review_without_tool_support() -> None:
+    finding = agent_finding(
+        rule_id="PAYMENT-AUTH-001",
+        covered_rules=["PAYMENT-AUTH-001"],
+    )
+
+    assert should_retain_low_precision_without_tool_support(finding, []) is True
+
+
+def test_minor_agent_only_candidate_is_not_retained_without_tool_or_bound_rule() -> None:
+    finding = agent_finding(
+        severity="minor",
+        confidence=0.82,
+        rule_id="CODE-STATE-004",
+        covered_rules=["CODE-STATE-004"],
+        title="接口返回类型与实际使用方法的类型不匹配导致强制类型转换",
+    )
+
+    assert should_retain_final_candidate_for_review(
+        finding,
+        reason="not_selected_final_issue",
+        source_observations=[],
+    ) is False
+
+
 def test_partial_evidence_contract_is_retained_as_needs_review() -> None:
     finding = agent_finding(suggested_code="")
     trace = build_quality_trace(finding, [])

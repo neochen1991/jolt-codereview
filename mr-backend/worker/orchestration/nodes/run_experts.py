@@ -98,7 +98,198 @@ def _bound_batch_limits(config: dict[str, Any] | None = None) -> dict[str, int]:
     return {
         "bound_rules_per_llm_call": _batch_size(quality.get("bound_rules_per_llm_call"), 4),
         "skill_checkpoints_per_llm_call": _batch_size(quality.get("skill_checkpoints_per_llm_call"), 4),
+        "include_free_review_after_bound_rules": 1 if quality.get("include_free_review_after_bound_rules") is True else 0,
     }
+
+
+def _value(item: Any, name: str, default: Any = "") -> Any:
+    if isinstance(item, dict):
+        return item.get(name, default)
+    return getattr(item, name, default)
+
+
+def _unit_file_path(unit: Any) -> str:
+    primary = _value(unit, "primary_source", None)
+    if isinstance(primary, dict):
+        return str(primary.get("file_path") or "")
+    if primary is not None:
+        return str(getattr(primary, "file_path", "") or "")
+    return str(_value(unit, "file_path", "") or "")
+
+
+def _unit_dependency_files(unit: Any) -> set[str]:
+    dependencies = _value(unit, "dependencies", []) or []
+    files: set[str] = set()
+    for dependency in dependencies:
+        if isinstance(dependency, dict):
+            files.add(str(dependency.get("file_path") or ""))
+            source = dependency.get("source") if isinstance(dependency.get("source"), dict) else {}
+            files.add(str(source.get("file_path") or ""))
+        else:
+            source = getattr(dependency, "source", None)
+            files.add(str(getattr(source, "file_path", "") or ""))
+    return {item for item in files if item}
+
+
+def _observation_rule_ids(observation: dict[str, Any]) -> set[str]:
+    values = {
+        str(observation.get("rule_id") or "").strip(),
+        str(observation.get("tool_rule_id") or "").strip(),
+    }
+    values.update(str(item).strip() for item in (observation.get("covered_rules") or []) if str(item).strip())
+    return {item for item in values if item}
+
+
+def _batch_target_ids(batch: dict[str, Any]) -> set[str]:
+    return {
+        str(item).strip()
+        for item in [*_batch_rule_ids(batch), *_batch_checkpoint_ids(batch)]
+        if str(item).strip()
+    }
+
+
+def _batch_semantic_relations(batch: dict[str, Any]) -> tuple[set[str], bool]:
+    agent = batch.get("agent") if isinstance(batch.get("agent"), dict) else {}
+    requirements = [
+        item
+        for item in [*(agent.get("bound_rules") or []), *(agent.get("skill_checkpoints") or [])]
+        if isinstance(item, dict)
+    ]
+    query_to_relations = {
+        "callers": {"calls"},
+        "callees": {"calls"},
+        "implementations": {"implements"},
+        "tests": {"tests", "tested_by"},
+        "config_refs": {"reads_config", "configures"},
+    }
+    relations: set[str] = set()
+    cross_file = False
+    for requirement in requirements:
+        cross_file = cross_file or str(requirement.get("evidence_scope") or "") == "cross_file"
+        queries = requirement.get("context_queries") or []
+        if isinstance(queries, str):
+            queries = [item.strip() for item in queries.replace("，", ",").split(",") if item.strip()]
+        for query in queries:
+            relations.update(query_to_relations.get(str(query).strip(), set()))
+    return relations, cross_file
+
+
+def _batch_rule_evidence_anchors(batch: dict[str, Any]) -> set[str]:
+    agent = batch.get("agent") if isinstance(batch.get("agent"), dict) else {}
+    requirements = [
+        item
+        for item in [*(agent.get("bound_rules") or []), *(agent.get("skill_checkpoints") or [])]
+        if isinstance(item, dict)
+    ]
+    target_ids = {item.lower() for item in _batch_target_ids(batch)}
+    fields = (
+        "title",
+        "check",
+        "description",
+        "required_evidence",
+        "evidence_required",
+        "match_patterns",
+        "triggers",
+    )
+    anchors: set[str] = set()
+    for requirement in requirements:
+        text = " ".join(
+            json.dumps(requirement.get(field), ensure_ascii=False)
+            if isinstance(requirement.get(field), (dict, list))
+            else str(requirement.get(field) or "")
+            for field in fields
+        )
+        for token in re.findall(r"@?[A-Za-z_][A-Za-z0-9_.:#/-]{2,}", text):
+            normalized = token.lstrip("@").lower().strip("._-:/#")
+            if not normalized or normalized in target_ids:
+                continue
+            technical = (
+                any(mark in token for mark in ("@", ".", "#", "/"))
+                or any(char.isupper() for char in token[1:])
+                or token.isupper()
+            )
+            if technical and len(normalized) >= 4:
+                anchors.add(normalized)
+    return anchors
+
+
+def _unit_matches_rule_evidence(unit: Any, batch: dict[str, Any]) -> bool:
+    anchors = _batch_rule_evidence_anchors(batch)
+    if not anchors:
+        return False
+    dependency_parts: list[str] = []
+    for dependency in (_value(unit, "dependencies", []) or []):
+        dependency_parts.extend(
+            [
+                str(_value(dependency, "symbol_id", "") or ""),
+                str(_value(dependency, "relation", "") or ""),
+                str(_value(dependency, "file_path", "") or ""),
+            ]
+        )
+    haystack = "\n".join(
+        [
+            str(_value(unit, "source_text", "") or ""),
+            str(_value(unit, "patch_text", "") or ""),
+            " ".join(str(item) for item in (_value(unit, "changed_symbol_ids", []) or [])),
+            *dependency_parts,
+        ]
+    ).lower()
+    return any(anchor in haystack for anchor in anchors)
+
+
+def _unit_semantically_matches_batch(unit: Any, batch: dict[str, Any]) -> bool:
+    required_relations, cross_file = _batch_semantic_relations(batch)
+    dependencies = _value(unit, "dependencies", []) or []
+    if not dependencies:
+        return False
+    if cross_file and not required_relations:
+        return True
+    for dependency in dependencies:
+        relation = str(_value(dependency, "relation", "") or "")
+        confidence = str(_value(dependency, "confidence", "") or "")
+        if relation in required_relations and confidence in {"typed", "syntax"}:
+            return True
+    return False
+
+
+def _scope_tool_observations_for_batch(batch: dict[str, Any], context_units: list[Any]) -> list[dict[str, Any]]:
+    agent = batch.get("agent") if isinstance(batch.get("agent"), dict) else {}
+    observations = [item for item in (agent.get("tool_observations") or []) if isinstance(item, dict)]
+    target_ids = _batch_target_ids(batch)
+    allowed_files = {
+        file_path
+        for unit in context_units
+        for file_path in {_unit_file_path(unit), *_unit_dependency_files(unit)}
+        if file_path
+    }
+    return [
+        item
+        for item in observations
+        if (not target_ids or bool(_observation_rule_ids(item) & target_ids))
+        and str(item.get("file_path") or "") in allowed_files
+    ]
+
+
+def _context_units_for_batch(context_units: list[Any], batch: dict[str, Any], agent_id: str) -> list[Any]:
+    if not context_units:
+        return []
+    target_ids = _batch_target_ids(batch)
+    batch_agent = batch.get("agent") if isinstance(batch.get("agent"), dict) else {}
+    observations = [item for item in (batch_agent.get("tool_observations") or []) if isinstance(item, dict)]
+    matching_files = {
+        str(item.get("file_path") or "")
+        for item in observations
+        if str(item.get("file_path") or "")
+        and (not target_ids or bool(_observation_rule_ids(item) & target_ids))
+    }
+    return [
+        unit
+        for unit in context_units
+        if _unit_file_path(unit) in matching_files
+        or bool(_unit_dependency_files(unit) & matching_files)
+        or _unit_matches_rule_evidence(unit, batch)
+        or _unit_semantically_matches_batch(unit, batch)
+    ]
 
 
 def _bound_rule_batches(
@@ -188,7 +379,10 @@ def _bound_rule_batches(
                     },
                 }
             )
-    if not custom_skills:
+    include_free_review = True
+    if batch_limits is not None and rules and "include_free_review_after_bound_rules" in batch_limits:
+        include_free_review = bool((batch_limits or {}).get("include_free_review_after_bound_rules"))
+    if not custom_skills and include_free_review:
         batches.append(
             {
                 "label": "expert_free_review",
@@ -265,6 +459,11 @@ def _coverage_retry_context_units(config: dict[str, Any], context_units: list[An
         ),
     )
     return [unit for _index, unit in ranked[:limit]]
+
+
+def _coverage_retry_enabled(config: dict[str, Any]) -> bool:
+    quality = config.get("review_quality") if isinstance(config.get("review_quality"), dict) else {}
+    return bool(quality.get("enable_bound_rule_coverage_retry") is True or quality.get("coverage_retry_enabled") is True)
 
 
 def _skill_checkpoints(
@@ -1206,6 +1405,48 @@ def make_run_experts_node(
                     batch_skill_summary = skill_summary
                     if batch.get("skill_key"):
                         batch_skill_summary = load_skill_summary(str(batch["skill_key"]), files)
+                    batch_context_units = _context_units_for_batch(context_units, batch, agent_id)
+                    scoped_observations = _scope_tool_observations_for_batch(batch, batch_context_units)
+                    batch_agent = {
+                        **batch_agent,
+                        "tool_observations": scoped_observations,
+                        "review_batch_label": str(batch.get("label") or ""),
+                    }
+                    if len(batch_context_units) < len(context_units):
+                        recorder.event(
+                            span,
+                            "context_units_scoped",
+                            f"{agent_id} 将 {batch['label']} 上下文从 {len(context_units)} 个缩减到 {len(batch_context_units)} 个",
+                            {
+                                "batch_label": batch["label"],
+                                "agent_id": agent_id,
+                                "before": len(context_units),
+                                "after": len(batch_context_units),
+                            },
+                        )
+                    recorder.event(
+                        span,
+                        "tool_observations_scoped",
+                        f"{agent_id} 将 {batch['label']} 工具观察缩减到 {len(scoped_observations)} 条",
+                        {
+                            "batch_label": batch["label"],
+                            "agent_id": agent_id,
+                            "before": len(batch.get("agent", {}).get("tool_observations") or []),
+                            "after": len(scoped_observations),
+                            "rule_ids": sorted(_batch_target_ids(batch)),
+                        },
+                    )
+                    if not batch_context_units:
+                        recorder.event(
+                            span,
+                            "no_relevant_context_units",
+                            f"{agent_id} 的 {batch['label']} 没有规则证据或可信语义依赖，跳过 LLM 调用",
+                            {
+                                "batch_label": batch["label"],
+                                "agent_id": agent_id,
+                                "rule_ids": sorted(_batch_target_ids(batch)),
+                            },
+                        )
                     batch_items, executed_units, unresolved_units = call_llm_for_context_units(
                         call_llm=call_llm,
                         config=project_config,
@@ -1214,7 +1455,7 @@ def make_run_experts_node(
                         agent=batch_agent,
                         files=llm_files,
                         skill_summary=batch_skill_summary,
-                        context_units=context_units,
+                        context_units=batch_context_units,
                         budget_tracker=budget_tracker,
                         ensure_active=ensure_active,
                     )
@@ -1226,6 +1467,7 @@ def make_run_experts_node(
                     if (
                         not batch_items
                         and _expected_batch_ids(batch)
+                        and _coverage_retry_enabled(project_config)
                         and not (budget_tracker and budget_tracker.should_stop())
                     ):
                         retry_batch = _coverage_retry_batch(batch, reason="missing_after_first_pass")

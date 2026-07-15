@@ -12,7 +12,7 @@ fake_deepagents_runner.run_bounded_deepagent = lambda **_kwargs: {"tool_calls": 
 sys.modules.setdefault("orchestration.deepagents_runner", fake_deepagents_runner)
 
 import review_runtime
-from review_runtime import ChangedFile, route_agents, router_prompt_payload
+from review_runtime import ChangedFile, choose_effort, route_agents, router_prompt_payload
 
 
 def agent(agent_id: str, paths: list[str] | None = None, languages: list[str] | None = None) -> dict:
@@ -115,6 +115,47 @@ def main() -> None:
         fast_ids = [item["agent_id"] for item in fast_selected]
         assert fast_ids[0] == "dependency_agent", fast_ids
         assert "dependency_agent" in fast_ids, fast_ids
+
+        spring_files = [
+            ChangedFile(
+                "spring-context/src/main/java/org/springframework/validation/DataBinder.java",
+                "modified",
+                1,
+                1,
+                2,
+                "@@ -341,7 +341,7 @@ public void initDirectFieldAccess() {\n"
+                " protected AbstractPropertyBindingResult createDirectFieldBindingResult() {\n"
+                " \tDirectFieldBindingResult result = new DirectFieldBindingResult(getTarget(),\n"
+                "-\t\t\tgetObjectName(), isAutoGrowNestedPaths());\n"
+                "+\t\t\tgetObjectName(), isAutoGrowNestedPaths(), getAutoGrowCollectionLimit());\n",
+            ),
+            ChangedFile(
+                "spring-context/src/test/java/org/springframework/validation/DataBinderFieldAccessTests.java",
+                "modified",
+                10,
+                0,
+                10,
+                "@@ -136,0 +136,10 @@\n"
+                "+\t@Test\n"
+                "+\tvoid directFieldAccessHonorsDefaultAutoGrowCollectionLimit() {\n"
+                "+\t\tDataBinder binder = new DataBinder(target);\n"
+                "+\t\tbinder.initDirectFieldAccess();\n"
+                "+\t\toutOfBounds.add(\"items[256].name\", \"too-far\");\n"
+                "+\t}\n",
+            ),
+        ]
+        spring_agents = [
+            agent("security_agent"),
+            agent("coding_agent"),
+            agent("backend_agent"),
+            agent("performance_agent"),
+            agent("test_agent"),
+        ]
+        spring_effort = choose_effort("standard", spring_files, risk_score=5)
+        assert spring_effort == "standard", spring_effort
+        spring_fast_selected = route_agents(spring_agents, spring_files, "fast", project_config={"routing": {}}, recorder=None, span_id="span")
+        spring_fast_ids = [item["agent_id"] for item in spring_fast_selected]
+        assert spring_fast_ids == ["security_agent", "backend_agent", "performance_agent", "test_agent", "coding_agent"], spring_fast_ids
     finally:
         review_runtime.route_agents_with_llm = original
     print({"selected": sorted(selected_ids), "llm_router_called": called["value"]})

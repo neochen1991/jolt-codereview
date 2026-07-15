@@ -76,6 +76,20 @@ def context_health_from_state(state: dict[str, Any]) -> dict[str, Any]:
         for item in modified_symbols + changed_symbols
         if str(item.get("definition_file") or item.get("file_path") or item.get("file") or "")
     }
+    graph_nodes = (
+        semantic_graph_record.get("nodes")
+        if isinstance(semantic_graph_record, dict)
+        else []
+    )
+    symbol_files.update(
+        {
+            str(item.get("file_path") or "")
+            for item in graph_nodes or []
+            if isinstance(item, dict)
+            and str(item.get("file_path") or "")
+            and str(item.get("kind") or "") in {"class", "interface", "function", "config", "schema", "test"}
+        }
+    )
     changed_symbol_resolution_rate = _rate(len(symbol_files & changed_filenames), total_files)
     related_status = str(related_context.get("status") or "unavailable")
     semantic_status = str(semantic_graph_record.get("status") or "")

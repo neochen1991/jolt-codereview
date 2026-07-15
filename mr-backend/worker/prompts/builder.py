@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from typing import Any
 
@@ -511,5 +512,61 @@ def build_context_units_prompt(agent: dict[str, Any], context_units: list[Any], 
     }
 
 
+def build_context_units_prompt_parts(
+    agent: dict[str, Any],
+    context_units: list[Any],
+    skill_summary: str = "",
+) -> tuple[str, dict[str, Any]]:
+    prompt, safety = build_context_units_prompt(agent, context_units, skill_summary)
+    payload = json.loads(prompt)
+    review_rules = payload.get("review_rules") if isinstance(payload.get("review_rules"), dict) else {}
+    stable_rule_keys = {
+        "dedicated_markdown_standard",
+        "rule_source_priority",
+        "canonical_rule_id_policy",
+        "bound_rule_review_contract",
+        "bound_skill_review_contract",
+        "output_rule_fields",
+    }
+    stable_rules = {key: review_rules.get(key) for key in stable_rule_keys if key in review_rules}
+    dynamic_rules = {key: value for key, value in review_rules.items() if key not in stable_rule_keys}
+    agent_profile = payload.get("agent_profile") if isinstance(payload.get("agent_profile"), dict) else {}
+    stable_profile = {key: value for key, value in agent_profile.items() if key != "custom_prompt"}
+    dynamic_profile = {"custom_prompt": agent_profile.get("custom_prompt")}
+    stable_payload = {
+        "format": "expert_stable_prefix_v1",
+        "agent_id": payload.get("agent_id"),
+        "display_name": payload.get("display_name"),
+        "agent_profile": stable_profile,
+        "review_rules": stable_rules,
+        "task": payload.get("task"),
+        "non_overlap_policy": payload.get("non_overlap_policy"),
+    }
+    dynamic_payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"agent_id", "display_name", "agent_profile", "review_rules", "task", "non_overlap_policy"}
+    }
+    dynamic_payload.update(
+        {
+            "format": "expert_dynamic_batch_v1",
+            "agent_profile": dynamic_profile,
+            "review_rules": dynamic_rules,
+        }
+    )
+    stable_prompt = json.dumps(stable_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    dynamic_prompt = json.dumps(dynamic_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return prompt, {
+        **safety,
+        "stable_prompt": stable_prompt,
+        "dynamic_prompt": dynamic_prompt,
+        "stable_prefix_hash": hashlib.sha256(stable_prompt.encode("utf-8")).hexdigest(),
+    }
+
+
 def build_context_unit_prompt(agent: dict[str, Any], context_unit: Any, skill_summary: str = "") -> tuple[str, dict[str, Any]]:
     return build_context_units_prompt(agent, [context_unit], skill_summary)
+
+
+def build_context_unit_prompt_parts(agent: dict[str, Any], context_unit: Any, skill_summary: str = "") -> tuple[str, dict[str, Any]]:
+    return build_context_units_prompt_parts(agent, [context_unit], skill_summary)

@@ -13,6 +13,7 @@ from context.context_planner import plan_context_units  # noqa: E402
 from context.context_executor import call_llm_for_context_units  # noqa: E402
 from context.semantic_graph import SemanticEdge, SemanticGraph, SemanticNode  # noqa: E402
 from llm import client as llm_client  # noqa: E402
+from prompts import builder as prompt_builder  # noqa: E402
 from prompts.builder import build_context_unit_prompt, build_context_units_prompt  # noqa: E402
 
 
@@ -136,7 +137,7 @@ def test_expert_llm_uses_context_unit_prompt() -> None:
         def __init__(self):
             self.prompt = ""
 
-        def llm_call(self, _span, _provider, _model, prompt, *_args):
+        def llm_call(self, _span, _provider, _model, prompt, *_args, **_kwargs):
             self.prompt = prompt
 
         def event(self, *_args):
@@ -194,6 +195,31 @@ def test_expert_batch_executes_every_context_unit() -> None:
     assert sorted(seen) == sorted(unit.unit_id for unit in plan.units)
     assert sorted(executed) == sorted(seen)
     assert unresolved == []
+
+
+def test_empty_scoped_context_does_not_fall_back_to_full_file_review() -> None:
+    calls = 0
+
+    def fake_call(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return [{"title": "must not execute"}]
+
+    findings, executed, unresolved = call_llm_for_context_units(
+        call_llm=fake_call,
+        config={},
+        recorder=object(),
+        span="span",
+        agent=_agent(),
+        files=[ChangedFile("src/A.java", "@@ -1,1 +1,1 @@\n-old\n+new")],
+        skill_summary="# complete skill",
+        context_units=[],
+    )
+
+    assert calls == 0
+    assert findings == []
+    assert executed == []
+    assert unresolved == [{"unit_id": "", "reason": "no_relevant_context_units"}]
 
 
 def test_context_units_are_chunked_to_control_real_review_call_volume() -> None:
@@ -320,6 +346,148 @@ def test_context_unit_includes_cross_file_semantic_dependencies() -> None:
     assert findings[0]["semantic_paths"][0]["edges"][0]["confidence"] == "syntax"
 
 
+def test_validated_semantic_dependency_synthesizes_evidence_path() -> None:
+    changed = ChangedFile(
+        "src/main/java/com/acme/payment/service/PaymentQueryService.java",
+        "@@ -22,1 +22,1 @@\n-old\n+String sql = \"select * from payments where user_id='\" + userId + \"'\";",
+    )
+    service = SemanticNode(
+        "service_search",
+        "function",
+        "searchByUser",
+        "src/main/java/com/acme/payment/service/PaymentQueryService.java",
+        20,
+        26,
+    )
+    controller = SemanticNode(
+        "controller_search",
+        "function",
+        "search",
+        "src/main/java/com/acme/payment/api/PaymentAdminController.java",
+        18,
+        24,
+    )
+    graph = SemanticGraph(
+        nodes=(service, controller),
+        edges=(SemanticEdge("controller_search", "service_search", "calls", "syntax", "tree_sitter_receiver_type"),),
+        status="full",
+        degradations=(),
+    )
+    plan = plan_context_units(
+        [changed],
+        source_file_contents={
+            changed.filename: "class PaymentQueryService {\n  java.util.List searchByUser(String userId) {\n    String sql = \"select * from payments where user_id='\" + userId + \"'\";\n    return jdbc.queryForList(sql);\n  }\n}\n",
+            "src/main/java/com/acme/payment/api/PaymentAdminController.java": "class PaymentAdminController {\n  Map search(Map payload) {\n    return paymentQueryService.searchByUser(String.valueOf(payload.get(\"userId\")));\n  }\n}\n",
+        },
+        related_context={},
+        semantic_graph=graph,
+        source_loader=lambda path: "class PaymentAdminController {\n  Map search(Map payload) {\n    return paymentQueryService.searchByUser(String.valueOf(payload.get(\"userId\")));\n  }\n}\n"
+        if path == "src/main/java/com/acme/payment/api/PaymentAdminController.java"
+        else "",
+    )
+
+    assert plan.units[0].dependencies
+
+    def fake_call(_config, _recorder, _span, _agent_config, _files, _skill):
+        return [
+            {
+                "title": "SQL 拼接漏洞：用户输入直接拼接入 SQL 语句",
+                "file_path": changed.filename,
+                "line_start": 22,
+                "line_end": 22,
+                "evidence_scope": "cross_file",
+                "semantic_evidence": [
+                    {
+                        "symbol_id": "controller_search",
+                        "relation": "calls",
+                        "file_path": "src/main/java/com/acme/payment/api/PaymentAdminController.java",
+                    }
+                ],
+            }
+        ]
+
+    findings, _executed, _unresolved = call_llm_for_context_units(
+        call_llm=fake_call,
+        config={},
+        recorder=None,
+        span="span",
+        agent=_agent(),
+        files=[changed],
+        skill_summary="",
+        context_units=list(plan.units),
+    )
+
+    assert findings[0]["semantic_paths"][0]["complete"] is True
+    assert len(findings[0]["evidence_path"]) >= 2
+    assert findings[0]["evidence_path"][0]["file_path"] == changed.filename
+    assert findings[0]["evidence_path"][1]["file_path"] == "src/main/java/com/acme/payment/api/PaymentAdminController.java"
+
+
+def test_trusted_dependency_synthesizes_evidence_path_without_model_claim() -> None:
+    changed = ChangedFile(
+        "src/main/java/com/acme/payment/service/PaymentQueryService.java",
+        "@@ -22,1 +22,1 @@\n-old\n+String sql = \"select * from payments where user_id='\" + userId + \"'\";",
+    )
+    service = SemanticNode(
+        "service_search",
+        "function",
+        "searchByUser",
+        "src/main/java/com/acme/payment/service/PaymentQueryService.java",
+        20,
+        26,
+    )
+    controller = SemanticNode(
+        "controller_search",
+        "function",
+        "search",
+        "src/main/java/com/acme/payment/api/PaymentAdminController.java",
+        18,
+        24,
+    )
+    graph = SemanticGraph(
+        nodes=(service, controller),
+        edges=(SemanticEdge("controller_search", "service_search", "calls", "syntax", "tree_sitter_receiver_type"),),
+        status="full",
+        degradations=(),
+    )
+    plan = plan_context_units(
+        [changed],
+        source_file_contents={changed.filename: "class PaymentQueryService { List searchByUser(String userId) { return jdbc.query(sql); } }"},
+        related_context={},
+        semantic_graph=graph,
+        source_loader=lambda path: "class PaymentAdminController { Map search(Map payload) { return paymentQueryService.searchByUser(String.valueOf(payload.get(\"userId\"))); } }"
+        if path == "src/main/java/com/acme/payment/api/PaymentAdminController.java"
+        else "",
+    )
+
+    def fake_call(_config, _recorder, _span, _agent_config, _files, _skill):
+        return [
+            {
+                "title": "SQL 拼接漏洞：用户输入直接拼接入 SQL 语句",
+                "file_path": changed.filename,
+                "line_start": 22,
+                "line_end": 22,
+                "evidence_scope": "cross_file",
+            }
+        ]
+
+    findings, _executed, _unresolved = call_llm_for_context_units(
+        call_llm=fake_call,
+        config={},
+        recorder=None,
+        span="span",
+        agent=_agent(),
+        files=[changed],
+        skill_summary="",
+        context_units=list(plan.units),
+    )
+
+    assert findings[0]["semantic_paths"][0]["complete"] is True
+    assert findings[0]["semantic_paths"][0]["edges"][0]["resolver"] == "context_planner_fallback"
+    assert len(findings[0]["evidence_path"]) >= 2
+    assert findings[0]["evidence_path"][1]["file_path"] == "src/main/java/com/acme/payment/api/PaymentAdminController.java"
+
+
 def test_model_cannot_invent_a_trusted_semantic_edge() -> None:
     changed = ChangedFile("src/A.java", "@@ -1,1 +1,1 @@\n-old\n+new")
     plan = plan_context_units(
@@ -433,6 +601,144 @@ def test_context_unit_prompt_limits_dependency_source_payload() -> None:
     assert payload["structured_diff"]["items"][0]["dependency_scope_note"]
 
 
+def test_context_prompt_has_stable_complete_skill_prefix_and_dynamic_batch_body() -> None:
+    build_parts = getattr(prompt_builder, "build_context_units_prompt_parts", None)
+    assert callable(build_parts), "context prompt must expose stable and dynamic request parts"
+    context_unit = {
+        "unit_id": "ctx_1",
+        "hunk_ids": ["hunk_1"],
+        "file_path": "src/Changed.java",
+        "line_start": 1,
+        "line_end": 1,
+        "changed_symbol_ids": ["Changed#run"],
+        "source_text": "1: changed",
+        "patch_text": "@@ -1,1 +1,1 @@\n+changed",
+        "dependencies": [],
+        "skill_checkpoint_ids": [],
+        "context_hash": "hash-1",
+    }
+    skill = "# COMPLETE SKILL\n\nAll standards and counterexamples must remain available."
+    agent_a = {
+        **_agent(),
+        "bound_rules": [{"rule_id": "RULE-A", "required_evidence": "Changed#run"}],
+        "bound_rule_batch": {"rule_ids": ["RULE-A"]},
+    }
+    agent_b = {
+        **_agent(),
+        "bound_rules": [{"rule_id": "RULE-B", "required_evidence": "Changed#run"}],
+        "bound_rule_batch": {"rule_ids": ["RULE-B"]},
+    }
+
+    _prompt_a, safety_a = build_parts(agent_a, [context_unit], skill)
+    _prompt_b, safety_b = build_parts(agent_b, [context_unit], skill)
+
+    assert safety_a["stable_prompt"] == safety_b["stable_prompt"]
+    assert safety_a["dynamic_prompt"] != safety_b["dynamic_prompt"]
+    stable_payload = json.loads(safety_a["stable_prompt"])
+    assert stable_payload["review_rules"]["dedicated_markdown_standard"] == skill
+    assert "RULE-A" not in safety_a["stable_prompt"]
+    assert "RULE-A" in safety_a["dynamic_prompt"]
+    assert safety_a["stable_prefix_hash"] == safety_b["stable_prefix_hash"]
+
+
+def test_input_composition_reports_all_prompt_token_categories() -> None:
+    compose = getattr(llm_client, "input_composition_for_prompt", None)
+    assert callable(compose), "expert client must expose deterministic input composition"
+    context_unit = {
+        "unit_id": "ctx_1",
+        "hunk_ids": ["hunk_1"],
+        "file_path": "src/Changed.java",
+        "line_start": 1,
+        "line_end": 2,
+        "changed_symbol_ids": ["Changed#run"],
+        "source_text": "1: class Changed {\n2: void run() {}\n}",
+        "patch_text": "@@ -1,1 +1,2 @@\n+void run() {}",
+        "dependencies": [
+            {
+                "relation": "calls",
+                "symbol_id": "Caller#call",
+                "file_path": "src/Caller.java",
+                "line_start": 3,
+                "line_end": 3,
+                "confidence": "typed",
+                "source_text": "3: changed.run();",
+            }
+        ],
+        "skill_checkpoint_ids": [],
+        "context_hash": "hash-1",
+    }
+    agent = {
+        **_agent(),
+        "bound_rules": [{"rule_id": "RULE-A", "required_evidence": "Changed#run"}],
+        "bound_rule_batch": {"rule_ids": ["RULE-A"]},
+        "tool_observations": [{"rule_id": "RULE-A", "file_path": "src/Changed.java", "evidence": "run"}],
+    }
+    prompt, metadata = prompt_builder.build_context_units_prompt_parts(agent, [context_unit], "# COMPLETE SKILL")
+
+    composition = compose(prompt, metadata)
+
+    required = {
+        "source_tokens",
+        "dependency_tokens",
+        "skill_tokens",
+        "tool_observation_tokens",
+        "fixed_instruction_tokens",
+        "patch_tokens",
+        "other_dynamic_tokens",
+        "estimated_input_tokens",
+        "stable_prefix_hash",
+    }
+    assert required <= set(composition)
+    assert all(composition[key] > 0 for key in required - {"stable_prefix_hash", "other_dynamic_tokens"})
+    assert composition["estimated_input_tokens"] == sum(
+        composition[key]
+        for key in (
+            "source_tokens",
+            "dependency_tokens",
+            "skill_tokens",
+            "tool_observation_tokens",
+            "fixed_instruction_tokens",
+            "patch_tokens",
+            "other_dynamic_tokens",
+        )
+    )
+
+
+def test_expert_llm_logs_input_composition_when_provider_is_unavailable() -> None:
+    changed = ChangedFile("src/A.java", "@@ -1,1 +1,1 @@\n-old\n+new")
+    unit = plan_context_units(
+        [changed],
+        source_file_contents={"src/A.java": "password=supersecret123\n"},
+        related_context={},
+    ).units[0]
+
+    class Recorder:
+        def __init__(self):
+            self.events = []
+            self.composition = None
+
+        def llm_call(self, *_args, **kwargs):
+            self.composition = kwargs.get("input_composition")
+
+        def event(self, _span, event_type, _summary, payload=None):
+            self.events.append((event_type, payload or {}))
+
+    recorder = Recorder()
+    original = llm_client.candidate_providers
+    llm_client.candidate_providers = lambda *_args, **_kwargs: []
+    try:
+        llm_client.call_llm({}, recorder, "span", {**_agent(), "context_unit": unit}, [changed], "# COMPLETE SKILL")
+    finally:
+        llm_client.candidate_providers = original
+
+    assert recorder.composition is not None
+    assert recorder.composition["skill_tokens"] > 0
+    assert any(event_type == "llm_input_composition" for event_type, _payload in recorder.events)
+    redaction_payloads = [payload for event_type, payload in recorder.events if event_type == "redaction_applied"]
+    assert redaction_payloads
+    assert all("stable_prompt" not in payload and "dynamic_prompt" not in payload for payload in redaction_payloads)
+
+
 if __name__ == "__main__":
     test_large_file_late_hunk_is_present_in_executable_context()
     test_distant_hunks_in_one_oversized_symbol_are_not_lost_by_center_crop()
@@ -440,10 +746,15 @@ if __name__ == "__main__":
     test_missing_full_source_uses_audited_patch_fallback()
     test_expert_llm_uses_context_unit_prompt()
     test_expert_batch_executes_every_context_unit()
+    test_empty_scoped_context_does_not_fall_back_to_full_file_review()
     test_context_units_are_chunked_to_control_real_review_call_volume()
     test_expert_batch_stops_before_next_context_unit_when_review_is_cancelled()
     test_context_unit_includes_cross_file_semantic_dependencies()
+    test_validated_semantic_dependency_synthesizes_evidence_path()
     test_model_cannot_invent_a_trusted_semantic_edge()
     test_context_unit_prompt_scopes_related_context_to_current_change_graph()
     test_context_unit_prompt_limits_dependency_source_payload()
+    test_context_prompt_has_stable_complete_skill_prefix_and_dynamic_batch_body()
+    test_input_composition_reports_all_prompt_token_categories()
+    test_expert_llm_logs_input_composition_when_provider_is_unavailable()
     print("context planner tests passed")

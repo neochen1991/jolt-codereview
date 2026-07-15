@@ -5,7 +5,7 @@ from typing import Any
 
 from context.context_metrics import context_health_from_state
 from context.context_planner import plan_context_units
-from context.semantic_graph import SemanticGraph, semantic_graph_from_tree_sitter
+from context.semantic_graph import SemanticGraph, semantic_graph_from_record, semantic_graph_from_tree_sitter
 from tools.gitnexus_tool import impact_paths
 from tools.tree_sitter_tool import build_graph
 from context.skill_requirements import collect_skill_context_requirements
@@ -32,8 +32,14 @@ def make_build_context_node(*, recorder: Any, project_config: dict[str, Any] | N
             str(getattr(item, "filename", "") or (item.get("filename") if isinstance(item, dict) else ""))
             for item in (state.get("llm_files") or state.get("files") or [])
         ]
+        semantic_graph_record = state.get("semantic_graph_record") if isinstance(state.get("semantic_graph_record"), dict) else {}
         raw_semantic_graph = build_graph(Path(worktree_path), {"include_paths": priority_paths}) if worktree_path and semantic_index != "regex" else {"status": "regex_selected", "parse_errors": []}
-        semantic_graph = semantic_graph_from_tree_sitter(raw_semantic_graph) if worktree_path and semantic_index != "regex" else SemanticGraph.empty()
+        if worktree_path and semantic_index != "regex":
+            semantic_graph = semantic_graph_from_tree_sitter(raw_semantic_graph)
+        elif semantic_index != "regex" and semantic_graph_record:
+            semantic_graph = semantic_graph_from_record(semantic_graph_record)
+        else:
+            semantic_graph = SemanticGraph.empty()
         if semantic_index == "typed" and semantic_graph.status != "unavailable":
             semantic_graph = SemanticGraph(
                 nodes=semantic_graph.nodes,

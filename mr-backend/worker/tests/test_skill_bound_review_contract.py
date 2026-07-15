@@ -13,7 +13,8 @@ fake_deepagents_runner.run_bounded_deepagent = lambda **_kwargs: {"tool_calls": 
 sys.modules.setdefault("orchestration.deepagents_runner", fake_deepagents_runner)
 
 from prompts.builder import build_prompt
-from orchestration.nodes.run_experts import _bound_review_coverage_record, _bound_review_coverage_records, _bound_rule_batches, _coverage_retry_batch, _enforce_bound_batch_findings, _summarize_bound_review_coverage
+from orchestration.nodes import run_experts
+from orchestration.nodes.run_experts import _bound_review_coverage_record, _bound_review_coverage_records, _bound_rule_batches, _context_units_for_batch, _coverage_retry_batch, _enforce_bound_batch_findings, _summarize_bound_review_coverage
 from rules.skill_checkpoint_parser import parse_skill_checkpoints
 
 
@@ -53,6 +54,178 @@ def test_skill_markdown_is_parsed_into_auditable_checkpoints() -> None:
     assert "Runtime.exec" in first["check"], first
     assert "命令执行 sink" in first["required_evidence"], first
     assert "固定常量命令" in first["false_positive_patterns"], first
+
+
+def test_bound_rule_batch_scopes_context_units_by_matching_tool_observation() -> None:
+    units = [
+        {"unit_id": "ctx_pom", "file_path": "pom.xml", "dependencies": []},
+        {"unit_id": "ctx_service", "file_path": "src/PaymentQueryService.java", "dependencies": []},
+        {"unit_id": "ctx_redis", "file_path": "src/RedisPaymentCache.java", "dependencies": []},
+    ]
+    batches = _bound_rule_batches(
+        {
+            "agent_id": "dependency_agent",
+            "bound_rules": [{"rule_id": "DEP-CVE-001", "title": "vulnerable dependency"}],
+            "tool_observations": [{"rule_id": "DEP-CVE-001", "file_path": "pom.xml"}],
+        },
+        [],
+    )
+
+    scoped = _context_units_for_batch(units, batches[0], "dependency_agent")
+
+    assert [item["unit_id"] for item in scoped] == ["ctx_pom"]
+
+
+def test_bound_rule_batch_context_scope_does_not_fall_back_when_no_unit_matches() -> None:
+    units = [{"unit_id": "ctx_service", "file_path": "src/PaymentQueryService.java", "dependencies": []}]
+    batches = _bound_rule_batches(
+        {
+            "agent_id": "dependency_agent",
+            "bound_rules": [{"rule_id": "DEP-CVE-001", "title": "vulnerable dependency"}],
+            "tool_observations": [{"rule_id": "DEP-CVE-001", "file_path": "pom.xml"}],
+        },
+        [],
+    )
+
+    scoped = _context_units_for_batch(units, batches[0], "dependency_agent")
+
+    assert scoped == []
+
+
+def test_bound_rule_batch_accepts_semantic_dependency_required_by_checkpoint() -> None:
+    units = [
+        {
+            "unit_id": "ctx_controller",
+            "file_path": "src/PaymentController.java",
+            "source_text": "public void create() {}",
+            "patch_text": "+public void create() {}",
+            "dependencies": [
+                {
+                    "relation": "calls",
+                    "symbol_id": "PaymentService#create",
+                    "file_path": "src/PaymentService.java",
+                    "confidence": "typed",
+                }
+            ],
+        },
+        {
+            "unit_id": "ctx_config",
+            "file_path": "application.yml",
+            "source_text": "feature: true",
+            "patch_text": "+feature: true",
+            "dependencies": [],
+        },
+    ]
+    batch = {
+        "checkpoint_ids": ["SKILL-CROSS-001"],
+        "agent": {
+            "skill_checkpoints": [
+                {
+                    "checkpoint_id": "SKILL-CROSS-001",
+                    "evidence_scope": "cross_file",
+                    "context_queries": ["callees"],
+                }
+            ],
+            "tool_observations": [],
+        },
+    }
+
+    scoped = _context_units_for_batch(units, batch, "backend_agent")
+
+    assert [item["unit_id"] for item in scoped] == ["ctx_controller"]
+
+
+def test_bound_rule_batch_accepts_unit_with_rule_evidence_anchor() -> None:
+    units = [
+        {
+            "unit_id": "ctx_controller",
+            "file_path": "src/PaymentController.java",
+            "source_text": "public void create(@RequestBody Map<String, Object> payload) {}",
+            "patch_text": "+public void create(@RequestBody Map<String, Object> payload) {}",
+            "changed_symbol_ids": ["PaymentController#create"],
+            "dependencies": [],
+        },
+        {
+            "unit_id": "ctx_cache",
+            "file_path": "src/PaymentCache.java",
+            "source_text": "redisTemplate.opsForValue().set(key, value);",
+            "patch_text": "+redisTemplate.opsForValue().set(key, value);",
+            "changed_symbol_ids": ["PaymentCache#put"],
+            "dependencies": [],
+        },
+    ]
+    batch = {
+        "rule_ids": ["BE-API-001"],
+        "agent": {
+            "bound_rules": [
+                {
+                    "rule_id": "BE-API-001",
+                    "title": "RequestBody 输入必须进行 Bean Validation",
+                    "required_evidence": "RequestBody 方法参数以及缺少 Valid 注解",
+                }
+            ],
+            "tool_observations": [],
+        },
+    }
+
+    scoped = _context_units_for_batch(units, batch, "backend_agent")
+
+    assert [item["unit_id"] for item in scoped] == ["ctx_controller"]
+
+
+def test_generic_capitalized_words_are_not_rule_evidence_anchors() -> None:
+    units = [
+        {
+            "unit_id": "ctx_unrelated",
+            "file_path": "src/Unrelated.java",
+            "source_text": "public class Unrelated { String value; }",
+            "patch_text": "+String value;",
+            "changed_symbol_ids": ["Unrelated#value"],
+            "dependencies": [],
+        }
+    ]
+    batch = {
+        "rule_ids": ["RULE-GENERIC-001"],
+        "agent": {
+            "bound_rules": [
+                {
+                    "rule_id": "RULE-GENERIC-001",
+                    "title": "Java Spring String 安全检查",
+                    "required_evidence": "必须存在明确危险 API",
+                }
+            ],
+            "tool_observations": [],
+        },
+    }
+
+    assert _context_units_for_batch(units, batch, "security_agent") == []
+
+
+def test_tool_observations_are_filtered_by_rule_and_selected_context_files() -> None:
+    scope_observations = getattr(run_experts, "_scope_tool_observations_for_batch", None)
+    assert callable(scope_observations), "batch-level tool observation scoping must exist"
+    batch = {
+        "rule_ids": ["SEC-INJECT-003"],
+        "agent": {
+            "tool_observations": [
+                {"rule_id": "SEC-INJECT-003", "file_path": "src/QueryService.java", "title": "keep-primary"},
+                {"tool_rule_id": "SEC-INJECT-003", "file_path": "src/Controller.java", "title": "keep-dependency"},
+                {"rule_id": "SEC-AUTHZ-002", "file_path": "src/QueryService.java", "title": "drop-rule"},
+                {"rule_id": "SEC-INJECT-003", "file_path": "src/Other.java", "title": "drop-file"},
+            ]
+        },
+    }
+    units = [
+        {
+            "unit_id": "ctx_query",
+            "file_path": "src/QueryService.java",
+            "dependencies": [{"file_path": "src/Controller.java", "relation": "calls"}],
+        }
+    ]
+
+    scoped = scope_observations(batch, units)
+
+    assert [item["title"] for item in scoped] == ["keep-primary", "keep-dependency"]
 
 
 def test_custom_skill_creates_skill_scoped_batch_without_free_review() -> None:
@@ -724,6 +897,12 @@ def test_coverage_retry_batch_focuses_prompt_on_missed_bound_rule() -> None:
 
 if __name__ == "__main__":
     test_skill_markdown_is_parsed_into_auditable_checkpoints()
+    test_bound_rule_batch_scopes_context_units_by_matching_tool_observation()
+    test_bound_rule_batch_context_scope_does_not_fall_back_when_no_unit_matches()
+    test_bound_rule_batch_accepts_semantic_dependency_required_by_checkpoint()
+    test_bound_rule_batch_accepts_unit_with_rule_evidence_anchor()
+    test_generic_capitalized_words_are_not_rule_evidence_anchors()
+    test_tool_observations_are_filtered_by_rule_and_selected_context_files()
     test_custom_skill_creates_skill_scoped_batch_without_free_review()
     test_skill_reference_checkpoints_are_batched_even_when_skill_md_is_entrypoint_only()
     test_skill_checkpoints_can_be_loaded_in_one_llm_batch_with_individual_audit()

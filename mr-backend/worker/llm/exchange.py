@@ -214,6 +214,7 @@ def execute_chat_exchange(
     prompt_version: str = "review_prompt_v1",
     top_p: float | None = None,
     response_source: str = "",
+    input_composition: dict[str, Any] | None = None,
 ) -> ExchangeResult:
     seed = derive_seed(head_sha, operation, agent_id, context_unit_id, checkpoint_id)
     normalized_mode = str(replay_mode or "off").strip().lower()
@@ -282,6 +283,13 @@ def execute_chat_exchange(
     response_hash = _sha256(_stable_json(response))
     usage = response.get("usage") if isinstance(response, dict) else {}
     usage = usage if isinstance(usage, dict) else {}
+    prompt_details = usage.get("prompt_tokens_details") if isinstance(usage.get("prompt_tokens_details"), dict) else {}
+    input_details = usage.get("input_tokens_details") if isinstance(usage.get("input_tokens_details"), dict) else {}
+    provider_cached_tokens = int(prompt_details.get("cached_tokens") or input_details.get("cached_tokens") or 0)
+    logged_composition = {
+        **(input_composition or {}),
+        "provider_cached_input_tokens": provider_cached_tokens,
+    }
     recorder.llm_call(
         span_id,
         provider,
@@ -305,5 +313,6 @@ def execute_chat_exchange(
         response_hash=response_hash,
         cache_key=cache_key,
         replay_source=replay_source,
+        input_composition=logged_composition,
     )
     return ExchangeResult(response=response, envelope=envelope, response_hash=response_hash, replay_source=replay_source)

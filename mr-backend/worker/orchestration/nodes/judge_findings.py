@@ -799,21 +799,31 @@ def _merge_semantic_dedupe_trace(primary: dict[str, Any], secondary: dict[str, A
 
 def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
     covered = set(primary.get("covered_rules") or [])
+    secondary_covered = set(secondary.get("covered_rules") or [])
     bound_ids: set[str] = set()
+    strict_bound_skill = False
     if _has_bound_authoritative_rule(primary):
         bound_ids = _bound_authoritative_ids(primary)
-        covered = {rule for rule in covered if rule in bound_ids} or bound_ids or covered
-        if len(covered) == 1:
-            canonical_bound_id = next(iter(covered))
+        primary_bound_covered = {rule for rule in covered if rule in bound_ids} or bound_ids or covered
+        if len(primary_bound_covered) == 1:
+            canonical_bound_id = next(iter(primary_bound_covered))
             primary["rule_id"] = canonical_bound_id
             if str(primary.get("review_batch_label") or "").startswith("bound_rule:"):
                 primary["bound_rule_id"] = canonical_bound_id
-    else:
-        covered.update(secondary.get("covered_rules") or [])
+        if (
+            (primary.get("skill_key") and primary.get("checkpoint_id") and not primary.get("bound_rule_id"))
+            or str(primary.get("review_batch_label") or "").startswith("bound_skill:")
+        ):
+            strict_bound_skill = True
+            covered = set(primary_bound_covered)
+            secondary_covered = {rule for rule in secondary_covered if rule in bound_ids}
+    covered.update(secondary_covered)
     skipped = set(primary.get("skipped_rules") or [])
     skipped.update(secondary.get("skipped_rules") or [])
     if bound_ids:
-        skipped = {rule for rule in skipped if rule in bound_ids}
+        skipped = {rule for rule in skipped if rule in bound_ids or rule in secondary_covered}
+    if not strict_bound_skill:
+        skipped.difference_update(covered)
     agents = set(str(item) for item in (primary.get("merged_agent_ids") or []) if item)
     for value in [primary.get("agent_id"), secondary.get("agent_id"), *(secondary.get("merged_agent_ids") or [])]:
         if value:
@@ -866,7 +876,25 @@ def _looks_like_bound_document_rule(rule_id: str) -> bool:
     if "-DOC-" in value:
         return True
     known_prefixes = ("BE-", "CODE-", "DB-", "DDD-", "DEP-", "PERF-", "REDIS-", "SEC-", "TEST-", "ALI-", "HW-")
-    return bool(value) and not value.startswith(known_prefixes)
+    if any(value.startswith(prefix) for prefix in known_prefixes):
+        return False
+    return bool(re.fullmatch(r"[A-Z][A-Z0-9]+(?:-[A-Z0-9]+)+", value))
+
+
+def _is_review_rule_id(value: Any) -> bool:
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    upper = raw.upper()
+    known_prefixes = ("BE-", "CODE-", "DB-", "DDD-", "DEP-", "PERF-", "REDIS-", "SEC-", "TEST-", "ALI-", "HW-")
+    return any(upper.startswith(prefix) for prefix in known_prefixes) or _looks_like_bound_document_rule(upper)
+
+
+def _has_review_rule_anchor(finding: dict[str, Any]) -> bool:
+    for rule in finding.get("covered_rules") or []:
+        if _is_review_rule_id(rule):
+            return True
+    return _is_review_rule_id(finding.get("rule_id")) or _is_review_rule_id(finding.get("tool_rule_id"))
 
 
 def _token_set(value: str) -> set[str]:
@@ -3295,12 +3323,10 @@ def _has_text(value: Any) -> bool:
 
 
 def build_evidence_contract(finding: dict[str, Any], source_observations: list[dict[str, Any]]) -> dict[str, Any]:
-    rules = [str(rule) for rule in (finding.get("covered_rules") or []) if str(rule or "").strip()]
-    explicit_rule = str(finding.get("tool_rule_id") or finding.get("rule_id") or "").strip()
-    has_rule = bool(rules or re.fullmatch(r"[A-Z][A-Z0-9]+(?:-[A-Z0-9]+)+(?::[A-Z0-9_]+)?", explicit_rule))
+    has_rule = _has_review_rule_anchor(finding)
     has_location = _has_text(finding.get("file_path")) and bool(_as_int(finding.get("line_start")))
     has_source_context = _has_text(finding.get("evidence")) or bool(source_observations)
-    has_tool_evidence = bool(source_observations or _has_text(finding.get("tool_name")) or _has_text(finding.get("tool_rule_id")))
+    has_tool_evidence = bool(source_observations or _has_text(finding.get("tool_name")))
     has_recommendation = _has_text(finding.get("recommendation"))
     suggested_code = str(finding.get("suggested_code") or "").strip()
     has_suggested_code = bool(suggested_code and "未提供明确代码片段" not in suggested_code)
@@ -3408,7 +3434,7 @@ def _has_structured_agent_evidence(finding: dict[str, Any]) -> bool:
         return False
     has_agent = _has_text(finding.get("agent_id"))
     has_location = _has_text(finding.get("file_path")) and bool(_as_int(finding.get("line_start")))
-    has_rule = bool([rule for rule in (finding.get("covered_rules") or []) if str(rule or "").strip()] or _has_text(finding.get("rule_id")) or _has_text(finding.get("tool_rule_id")))
+    has_rule = _has_review_rule_anchor(finding)
     has_problem = _has_text(finding.get("title")) and (_has_text(finding.get("problem_description")) or _has_text(finding.get("evidence")))
     has_recommendation = _has_text(finding.get("recommendation"))
     try:
@@ -3450,11 +3476,16 @@ def should_retain_final_candidate_for_review(
     if "invalid_suggested_code" in flags:
         return False
     observations = source_observations or []
+    severity = str(finding.get("severity") or "").lower()
+    covered_rules = [str(rule) for rule in (finding.get("covered_rules") or []) if _is_review_rule_id(rule)]
+    has_bound_rule_support = any(_looks_like_bound_document_rule(rule) for rule in covered_rules) or "bound_rule_document_supplement" in flags
+    if severity not in SELECTABLE_SEVERITIES and not observations and not has_bound_rule_support:
+        return False
     if should_retain_low_precision_without_tool_support(finding, observations):
         return True
     has_agent = _has_text(finding.get("agent_id"))
     has_location = _has_text(finding.get("file_path")) and bool(_as_int(finding.get("line_start")))
-    has_rule = bool([rule for rule in (finding.get("covered_rules") or []) if str(rule or "").strip()] or _has_text(finding.get("rule_id")) or _has_text(finding.get("tool_rule_id")))
+    has_rule = _has_review_rule_anchor(finding)
     has_problem = _has_text(finding.get("title")) and (_has_text(finding.get("problem_description")) or _has_text(finding.get("evidence")))
     has_source_context = _has_text(finding.get("evidence")) or bool(observations)
     has_recommendation = _has_text(finding.get("recommendation"))
@@ -3973,6 +4004,7 @@ def make_judge_findings_node(
                 continue
             duplicate = next((item for item in prepared_findings if _duplicate_same_issue(item, finding)), None)
             if duplicate is not None:
+                _merge_finding_metadata(duplicate, finding)
                 judge_rejections.append({**finding, "rejected_reasons": ["deduped_after_rule_reconciliation"]})
                 recorder.event(
                     judge_span,

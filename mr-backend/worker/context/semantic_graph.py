@@ -191,6 +191,20 @@ def semantic_graph_from_tree_sitter(raw: dict[str, Any]) -> SemanticGraph:
     functions_by_name: dict[str, list[SemanticNode]] = {}
     for _, node in function_nodes:
         functions_by_name.setdefault(node.name, []).append(node)
+    functions_by_owner_and_name: dict[tuple[str, str], list[SemanticNode]] = {}
+    for _, function_node in function_nodes:
+        owner = min(
+            (
+                class_node
+                for _, class_node in class_nodes
+                if class_node.file_path == function_node.file_path
+                and class_node.line_start <= function_node.line_start <= class_node.line_end
+            ),
+            key=lambda candidate: candidate.line_end - candidate.line_start,
+            default=None,
+        )
+        if owner:
+            functions_by_owner_and_name.setdefault((owner.name, function_node.name), []).append(function_node)
     for call in raw.get("callers") or []:
         if not isinstance(call, dict):
             continue
@@ -201,7 +215,13 @@ def semantic_graph_from_tree_sitter(raw: dict[str, Any]) -> SemanticGraph:
         caller = caller_candidates[0] if len(caller_candidates) == 1 else add_node(
             SemanticNode(_id("caller", path, caller_name, line), "function", caller_name, path, line, line)
         )
-        targets = functions_by_name.get(str(call.get("callee") or "")) or []
+        callee_name = str(call.get("callee") or "")
+        receiver_type = str(call.get("receiver_type") or call.get("receiver_class") or "").strip()
+        receiver_targets = functions_by_owner_and_name.get((receiver_type, callee_name), []) if receiver_type else []
+        if len(receiver_targets) == 1:
+            edges.append(SemanticEdge(caller.node_id, receiver_targets[0].node_id, "calls", "syntax", "tree_sitter_receiver_type"))
+            continue
+        targets = functions_by_name.get(callee_name) or []
         same_file = [target for target in targets if target.file_path == path]
         if len(same_file) == 1:
             edges.append(SemanticEdge(caller.node_id, same_file[0].node_id, "calls", "syntax", "tree_sitter_local_call"))
@@ -240,4 +260,50 @@ def semantic_graph_from_tree_sitter(raw: dict[str, Any]) -> SemanticGraph:
         edges=tuple(sorted(unique_edges.values(), key=lambda item: (item.source_id, item.kind, item.target_id))),
         status=status,
         degradations=degradations,
+    )
+
+
+def semantic_graph_from_record(record: dict[str, Any] | None) -> SemanticGraph:
+    if not isinstance(record, dict):
+        return SemanticGraph.empty()
+    nodes: list[SemanticNode] = []
+    for item in record.get("nodes") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            nodes.append(
+                SemanticNode(
+                    str(item.get("node_id") or ""),
+                    str(item.get("kind") or "file"),  # type: ignore[arg-type]
+                    str(item.get("name") or ""),
+                    str(item.get("file_path") or ""),
+                    int(item.get("line_start") or 1),
+                    int(item.get("line_end") or item.get("line_start") or 1),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    edges: list[SemanticEdge] = []
+    for item in record.get("edges") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            edges.append(
+                SemanticEdge(
+                    str(item.get("source_id") or ""),
+                    str(item.get("target_id") or ""),
+                    str(item.get("kind") or "calls"),  # type: ignore[arg-type]
+                    str(item.get("confidence") or "heuristic"),  # type: ignore[arg-type]
+                    str(item.get("resolver") or "record"),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    if not nodes:
+        return SemanticGraph.empty()
+    return SemanticGraph(
+        nodes=tuple(node for node in nodes if node.node_id and node.file_path),
+        edges=tuple(edge for edge in edges if edge.source_id and edge.target_id),
+        status=str(record.get("status") or "partial"),
+        degradations=tuple(item for item in record.get("degradations") or [] if isinstance(item, dict)),
     )

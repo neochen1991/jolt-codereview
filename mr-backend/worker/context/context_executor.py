@@ -10,6 +10,8 @@ def _dependency_record(item: Any) -> dict[str, Any]:
             "symbol_id": str(item.get("symbol_id") or ""),
             "relation": str(item.get("relation") or ""),
             "file_path": str(source.get("file_path") or item.get("file_path") or ""),
+            "line_start": int(source.get("line_start") or item.get("line_start") or 0),
+            "line_end": int(source.get("line_end") or item.get("line_end") or source.get("line_start") or item.get("line_start") or 0),
             "confidence": str(item.get("confidence") or "heuristic"),
         }
     source = getattr(item, "source", None)
@@ -17,8 +19,61 @@ def _dependency_record(item: Any) -> dict[str, Any]:
         "symbol_id": str(getattr(item, "symbol_id", "") or ""),
         "relation": str(getattr(item, "relation", "") or ""),
         "file_path": str(getattr(source, "file_path", "") or ""),
+        "line_start": int(getattr(source, "line_start", 0) or 0),
+        "line_end": int(getattr(source, "line_end", 0) or getattr(source, "line_start", 0) or 0),
         "confidence": str(getattr(item, "confidence", "heuristic") or "heuristic"),
     }
+
+
+def _synthesize_evidence_path(finding: dict[str, Any], unit: Any, validated_edges: list[dict[str, Any]]) -> None:
+    if finding.get("evidence_path") or not validated_edges:
+        return
+    primary_file, primary_start, primary_end = _unit_file_range(unit)
+    file_path = str(finding.get("file_path") or primary_file or "")
+    try:
+        line_start = int(finding.get("line_start") or primary_start or 0)
+    except (TypeError, ValueError):
+        line_start = int(primary_start or 0)
+    try:
+        line_end = int(finding.get("line_end") or primary_end or line_start or 0)
+    except (TypeError, ValueError):
+        line_end = int(primary_end or line_start or 0)
+    if not file_path or line_start <= 0:
+        return
+    path: list[dict[str, Any]] = [
+        {
+            "type": "changed_location",
+            "file_path": file_path,
+            "line_start": line_start,
+            "line_end": line_end or line_start,
+            "summary": str(finding.get("title") or "changed code location")[:240],
+            "source": "context_planner",
+        }
+    ]
+    for edge in validated_edges:
+        related_file = str(edge.get("file_path") or "")
+        try:
+            related_start = int(edge.get("line_start") or 0)
+        except (TypeError, ValueError):
+            related_start = 0
+        if not related_file or related_start <= 0:
+            continue
+        relation = str(edge.get("relation") or "related")
+        path.append(
+            {
+                "type": relation,
+                "file_path": related_file,
+                "line_start": related_start,
+                "line_end": int(edge.get("line_end") or related_start),
+                "summary": f"{relation} dependency validated by {edge.get('resolver') or 'context_planner'}",
+                "symbol_id": str(edge.get("target_id") or ""),
+                "confidence": str(edge.get("confidence") or ""),
+                "source": "context_planner",
+            }
+        )
+        break
+    if len(path) >= 2:
+        finding["evidence_path"] = path
 
 
 def _attach_semantic_paths(finding: dict[str, Any], unit: Any) -> None:
@@ -46,10 +101,37 @@ def _attach_semantic_paths(finding: dict[str, Any], unit: Any) -> None:
                 "target_id": dependency["symbol_id"],
                 "relation": dependency["relation"],
                 "file_path": dependency["file_path"],
+                "line_start": dependency["line_start"],
+                "line_end": dependency["line_end"],
                 "confidence": dependency["confidence"],
                 "resolver": "context_planner_validated",
             })
-    finding["semantic_paths"] = [{"complete": len(validated) == len(claims), "edges": validated}] if validated else []
+    if not claims and not validated:
+        finding_file = str(finding.get("file_path") or "")
+        fallback = next(
+            (
+                item
+                for item in dependencies
+                if item["file_path"]
+                and item["file_path"] != finding_file
+                and item["line_start"] > 0
+                and item["confidence"] in {"typed", "syntax"}
+            ),
+            None,
+        )
+        if fallback:
+            validated.append({
+                "source_id": "context_unit_primary",
+                "target_id": fallback["symbol_id"],
+                "relation": fallback["relation"] or "related",
+                "file_path": fallback["file_path"],
+                "line_start": fallback["line_start"],
+                "line_end": fallback["line_end"],
+                "confidence": fallback["confidence"],
+                "resolver": "context_planner_fallback",
+            })
+    finding["semantic_paths"] = [{"complete": True if not claims else len(validated) == len(claims), "edges": validated}] if validated else []
+    _synthesize_evidence_path(finding, unit, validated)
     if claims and len(validated) != len(claims):
         unresolved = [str(item) for item in finding.get("unresolved_context") or [] if str(item)]
         finding["unresolved_context"] = list(dict.fromkeys([*unresolved, "semantic_evidence_unresolved"]))
@@ -144,7 +226,7 @@ def call_llm_for_context_units(
     if not context_units:
         if ensure_active:
             ensure_active()
-        return call_llm(config, recorder, span, agent, files, skill_summary), [], []
+        return [], [], [{"unit_id": "", "reason": "no_relevant_context_units"}]
 
     findings: list[dict[str, Any]] = []
     executed: list[str] = []

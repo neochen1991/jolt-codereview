@@ -27,6 +27,7 @@ from db_helpers import table_exists
 from file_logger import clear_worker_logs, write_review_run_log, write_worker_log
 from agents.registry import load_expert_profiles
 from context.repo_index import build_repo_index
+from context.semantic_graph import semantic_graph_from_tree_sitter
 from context.snapshot import build_code_context_snapshot
 from context.symbol_resolver import resolve_diff_symbols
 from diff.slicer import build_diff_slices, diff_hunks_by_file, extract_added_lines, source_snippet_loader_for_files
@@ -500,6 +501,7 @@ class Recorder:
         cache_key: str = "",
         replay_source: str = "",
         response_artifact_id: str | None = None,
+        input_composition: dict[str, Any] | None = None,
     ) -> None:
         self.conn.execute(
             """
@@ -571,6 +573,10 @@ class Recorder:
                 "cache_key": cache_key,
                 "replay_source": replay_source,
                 "response_artifact_id": response_artifact_id,
+                "input_composition": {
+                    **(input_composition or {}),
+                    "provider_reported_input_tokens": input_tokens,
+                },
             },
             "error" if status.startswith("failed") else "info",
         )
@@ -3402,6 +3408,7 @@ def run_external_static_prescan(
     outputs_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
     tree_sitter_findings: list[dict[str, Any]] = []
+    semantic_graph_record: dict[str, Any] | None = None
     if static_tool_enabled(project_config, "tree_sitter_code_graph"):
         tree_started = time.time()
         tree_options = tree_sitter_graph_options(project_config, files)
@@ -3421,6 +3428,7 @@ def run_external_static_prescan(
             },
         )
         tree_graph = build_tree_sitter_graph(worktree, tree_options)
+        semantic_graph_record = semantic_graph_from_tree_sitter(tree_graph).to_record()
         tree_graph_output = outputs_dir / "tree-sitter-code-graph.json"
         tree_graph_output.write_text(json.dumps(tree_graph, ensure_ascii=False, indent=2), "utf-8")
         tree_sitter_findings = [
@@ -3640,6 +3648,7 @@ def run_external_static_prescan(
         "rule_policy_suppressed": rule_policy_suppressed,
         "rule_policy_applied": rule_policy_applied[:50],
         "external_reports": external_reports,
+        "semantic_graph_record": semantic_graph_record,
         "raw_reports": [
             {
                 "tool": item.get("tool"),
@@ -4056,6 +4065,8 @@ def choose_effort(requested: str, files: list[ChangedFile], risk_score: int, fet
     churn = sum(item.additions + item.deletions for item in files)
     if file_count == 0 or all(is_short_circuit_file(item.filename) for item in files):
         return "trivial"
+    if is_spring_binding_limit_change(files, added_text(files)):
+        return "standard"
     if risk_score < 25 and churn < 80 and file_count <= 3:
         return "fast"
     return "standard"
@@ -4080,6 +4091,50 @@ def is_short_circuit_file(path: str) -> bool:
         ".pdf",
     )
     return lowered.endswith(suffixes) or lowered.startswith(("dist/", "build/"))
+
+
+def is_spring_binding_limit_change(files: list[ChangedFile], text: str) -> bool:
+    """Detect Spring binding changes where fast routing is too lossy.
+
+    Data binding, direct field access, and auto-grow collection limits form a
+    backend API/security/performance/test boundary. These MRs are often small,
+    so the generic churn-based effort selector used to classify them as "fast"
+    and then sliced away backend/test experts. Keep the detector deliberately
+    narrow to avoid broad Java MRs becoming standard by default.
+    """
+
+    filenames = "\n".join(str(changed.filename or "").lower() for changed in files)
+    lowered = str(text or "").lower()
+    has_spring_validation_file = any(
+        token in filenames
+        for token in [
+            "org/springframework/validation",
+            "springframework/validation",
+            "databinder.java",
+            "directfieldbindingresult.java",
+            "databinderfieldaccesstests.java",
+        ]
+    )
+    if not has_spring_validation_file:
+        return False
+    binding_tokens = [
+        "databinder",
+        "directfieldbindingresult",
+        "directfieldaccess",
+        "directfieldaccessor",
+        "propertyaccessor",
+        "bindingresult",
+    ]
+    limit_tokens = [
+        "autogrowcollectionlimit",
+        "auto-grow collection",
+        "collection limit",
+        "setautogrowcollectionlimit",
+        "getautogrowcollectionlimit",
+        "items[256]",
+        "items[255]",
+    ]
+    return any(token in lowered for token in binding_tokens) and any(token in lowered for token in limit_tokens)
 
 
 def agent_matches_files(agent: dict[str, Any], files: list[ChangedFile], change_text: str) -> bool:
@@ -4334,6 +4389,8 @@ def required_java_agent_ids(files: list[ChangedFile], text: str) -> list[str]:
     if not is_java_mr:
         return []
     required = ["security_agent", "coding_agent", "backend_agent"]
+    if is_spring_binding_limit_change(files, text):
+        required.extend(["performance_agent", "test_agent"])
     if any(token in text for token in ["select ", "limit", "resultset", "pageable", "order by", "query"]):
         required.append("performance_agent")
     if any(token in text for token in ["redis", "redistemplate", ".keys(", "opsforvalue"]):
@@ -4450,21 +4507,36 @@ def route_agents(
             {"agents": appended_required, "reason": "rule_router_with_java_domain_coverage_guard"},
         )
     if effort == "fast":
-        preferred_order = [
-            "dependency_agent",
-            "database_agent",
-            "security_agent",
-            "performance_agent",
-            "coding_agent",
-            "backend_agent",
-            "frontend_agent",
-            "redis_agent",
-            "test_agent",
-        ]
+        spring_binding_limit_change = is_spring_binding_limit_change(files, text)
+        preferred_order = (
+            [
+                "security_agent",
+                "backend_agent",
+                "performance_agent",
+                "test_agent",
+                "coding_agent",
+                "dependency_agent",
+                "database_agent",
+                "frontend_agent",
+                "redis_agent",
+            ]
+            if spring_binding_limit_change
+            else [
+                "dependency_agent",
+                "database_agent",
+                "security_agent",
+                "performance_agent",
+                "coding_agent",
+                "backend_agent",
+                "frontend_agent",
+                "redis_agent",
+                "test_agent",
+            ]
+        )
         by_id = {agent["agent_id"]: agent for agent in matched}
         ordered = [by_id[agent_id] for agent_id in preferred_order if agent_id in by_id]
         ordered.extend(agent for agent in matched if agent.get("agent_id") not in set(preferred_order))
-        return ordered[:3]
+        return ordered[:5] if spring_binding_limit_change else ordered[:3]
     if effort == "standard":
         try:
             max_standard_agents = int(routing_config.get("max_standard_agents") or 6)

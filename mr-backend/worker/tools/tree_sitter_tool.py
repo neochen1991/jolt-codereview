@@ -401,13 +401,15 @@ def _walk(
         callee = _call_name(node, source)
         if callee and callee not in CONTROL_WORDS:
             snippet = _snippet(node, source, 500)
+            receiver = _call_receiver(node, source)
             call_record = {
                 "file_path": file_path,
                 "language": language,
                 "line": _line(node),
                 "caller": scope[-1] if scope else "<module>",
                 "callee": callee,
-                "receiver": _call_receiver(node, source),
+                "receiver": receiver,
+                "receiver_type": _receiver_type(receiver, node, source) if language == "java" and receiver else "",
                 "snippet": snippet,
                 "loop_depth": loop_depth,
             }
@@ -458,6 +460,24 @@ def _call_receiver(node: Any, source: bytes) -> str:
     text = _text(node, source)
     match = re.search(r"([A-Za-z_]\w*)\s*\.\s*[A-Za-z_]\w*\s*\(", text)
     return match.group(1) if match else ""
+
+
+def _receiver_type(receiver: str, node: Any, source: bytes) -> str:
+    if not receiver:
+        return ""
+    prefix = source[: int(getattr(node, "start_byte", 0) or 0)].decode("utf-8", errors="replace")
+    receiver_pattern = re.escape(receiver)
+    candidates: list[str] = []
+    for match in re.finditer(
+        rf"\b(?:private|protected|public|final|static|transient|volatile|\s)*\s*([A-Z][A-Za-z0-9_$.<>?,\s]*)\s+{receiver_pattern}\b",
+        prefix,
+    ):
+        raw_type = re.sub(r"\s+", "", match.group(1).strip())
+        raw_type = raw_type.split("<", 1)[0]
+        simple = raw_type.rsplit(".", 1)[-1].strip()
+        if simple and simple not in {"String", "Integer", "Long", "Boolean", "Object", "Map", "List", "Set"}:
+            candidates.append(simple)
+    return candidates[-1] if candidates else ""
 
 
 def _config_key_from_call(callee: str, snippet: str) -> str:

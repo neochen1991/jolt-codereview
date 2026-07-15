@@ -92,6 +92,94 @@ def test_bound_rule_batch_context_scope_does_not_fall_back_when_no_unit_matches(
     assert scoped == []
 
 
+def test_empty_strict_scope_uses_at_most_three_ranked_fallback_units() -> None:
+    select_with_fallback = getattr(run_experts, "_context_units_with_fallback", None)
+    assert callable(select_with_fallback), "bounded ContextUnit fallback must exist"
+    units = [
+        {
+            "unit_id": "ctx_plain_b",
+            "file_path": "src/B.java",
+            "source_text": "class B {}",
+            "patch_text": "+class B {}",
+            "dependencies": [],
+        },
+        {
+            "unit_id": "ctx_typed",
+            "file_path": "src/Caller.java",
+            "source_text": "class Caller {}",
+            "patch_text": "+service.call();",
+            "dependencies": [
+                {
+                    "relation": "calls",
+                    "symbol_id": "Service#call",
+                    "file_path": "src/Service.java",
+                    "confidence": "typed",
+                }
+            ],
+        },
+        {
+            "unit_id": "ctx_plain_a",
+            "file_path": "src/A.java",
+            "source_text": "class A {}",
+            "patch_text": "+class A {}",
+            "dependencies": [],
+        },
+        {"unit_id": "ctx_source_only", "file_path": "src/C.java", "source_text": "class C {}", "patch_text": "", "dependencies": []},
+        {"unit_id": "ctx_empty", "file_path": "src/D.java", "source_text": "", "patch_text": "", "dependencies": []},
+    ]
+    batch = {
+        "rule_ids": ["RULE-GENERIC-001"],
+        "agent": {
+            "bound_rules": [{"rule_id": "RULE-GENERIC-001", "title": "业务行为一致性"}],
+            "tool_observations": [],
+        },
+    }
+
+    selected, mode = select_with_fallback(units, batch, "backend_agent")
+
+    assert mode == "fallback", mode
+    assert len(selected) == 3, selected
+    assert selected[0]["unit_id"] == "ctx_typed", selected
+    assert {item["unit_id"] for item in selected} != {item["unit_id"] for item in units}, selected
+
+
+def test_context_fallback_keeps_strict_match_and_true_empty_state() -> None:
+    select_with_fallback = getattr(run_experts, "_context_units_with_fallback", None)
+    assert callable(select_with_fallback), "bounded ContextUnit fallback must exist"
+    units = [
+        {"unit_id": "ctx_pom", "file_path": "pom.xml", "dependencies": []},
+        {"unit_id": "ctx_service", "file_path": "src/Service.java", "dependencies": []},
+    ]
+    batch = {
+        "rule_ids": ["DEP-CVE-001"],
+        "agent": {
+            "bound_rules": [{"rule_id": "DEP-CVE-001", "title": "vulnerable dependency"}],
+            "tool_observations": [{"rule_id": "DEP-CVE-001", "file_path": "pom.xml"}],
+        },
+    }
+
+    strict, strict_mode = select_with_fallback(units, batch, "dependency_agent")
+    empty, empty_mode = select_with_fallback([], batch, "dependency_agent")
+
+    assert [item["unit_id"] for item in strict] == ["ctx_pom"], strict
+    assert strict_mode == "strict", strict_mode
+    assert empty == [], empty
+    assert empty_mode == "empty", empty_mode
+
+
+def test_bound_review_recall_safety_defaults_can_be_explicitly_disabled() -> None:
+    limits_for = getattr(run_experts, "_bound_batch_limits")
+    retry_enabled = getattr(run_experts, "_coverage_retry_enabled")
+
+    defaults = limits_for({})
+    disabled = limits_for({"review_quality": {"include_free_review_after_bound_rules": False}})
+
+    assert defaults["include_free_review_after_bound_rules"] == 1, defaults
+    assert disabled["include_free_review_after_bound_rules"] == 0, disabled
+    assert retry_enabled({}) is True
+    assert retry_enabled({"review_quality": {"coverage_retry_enabled": False}}) is False
+
+
 def test_bound_rule_batch_accepts_semantic_dependency_required_by_checkpoint() -> None:
     units = [
         {
@@ -899,6 +987,9 @@ if __name__ == "__main__":
     test_skill_markdown_is_parsed_into_auditable_checkpoints()
     test_bound_rule_batch_scopes_context_units_by_matching_tool_observation()
     test_bound_rule_batch_context_scope_does_not_fall_back_when_no_unit_matches()
+    test_empty_strict_scope_uses_at_most_three_ranked_fallback_units()
+    test_context_fallback_keeps_strict_match_and_true_empty_state()
+    test_bound_review_recall_safety_defaults_can_be_explicitly_disabled()
     test_bound_rule_batch_accepts_semantic_dependency_required_by_checkpoint()
     test_bound_rule_batch_accepts_unit_with_rule_evidence_anchor()
     test_generic_capitalized_words_are_not_rule_evidence_anchors()

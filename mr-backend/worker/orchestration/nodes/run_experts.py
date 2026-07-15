@@ -95,10 +95,11 @@ def _chunks(values: list[Any], size: int) -> list[list[Any]]:
 
 def _bound_batch_limits(config: dict[str, Any] | None = None) -> dict[str, int]:
     quality = config.get("review_quality") if isinstance(config, dict) and isinstance(config.get("review_quality"), dict) else {}
+    include_free_review = quality.get("include_free_review_after_bound_rules") is not False
     return {
         "bound_rules_per_llm_call": _batch_size(quality.get("bound_rules_per_llm_call"), 4),
         "skill_checkpoints_per_llm_call": _batch_size(quality.get("skill_checkpoints_per_llm_call"), 4),
-        "include_free_review_after_bound_rules": 1 if quality.get("include_free_review_after_bound_rules") is True else 0,
+        "include_free_review_after_bound_rules": 1 if include_free_review else 0,
     }
 
 
@@ -292,6 +293,61 @@ def _context_units_for_batch(context_units: list[Any], batch: dict[str, Any], ag
     ]
 
 
+def _fallback_unit_rank(unit: Any, batch: dict[str, Any], agent_id: str, index: int) -> tuple[Any, ...]:
+    file_path = _unit_file_path(unit).replace("\\", "/").lower()
+    dependencies = _value(unit, "dependencies", []) or []
+    typed_dependencies = sum(
+        1
+        for dependency in dependencies
+        if str(_value(dependency, "confidence", "") or "") in {"typed", "syntax"}
+    )
+    affinity_markers = {
+        "dependency_agent": ("pom.xml", "build.gradle", "package.json", "lock", "requirements", "go.mod"),
+        "database_agent": (".sql", "/migration/", "/repository/", "/mapper/"),
+        "redis_agent": ("redis", "cache"),
+        "test_agent": ("/test/", "/tests/", "test.", "tests."),
+        "ddd_agent": ("/domain/", "/application/", "/repository/", "/infrastructure/"),
+        "security_agent": ("controller", "security", "auth", ".yml", ".yaml", ".properties"),
+        "performance_agent": ("service", "repository", "query", "client"),
+        "backend_agent": (".java", ".kt", ".go", ".py", ".ts"),
+        "coding_agent": (".java", ".kt", ".go", ".py", ".ts", ".js"),
+    }
+    affinity = sum(1 for marker in affinity_markers.get(agent_id, ()) if marker in file_path)
+    changed_symbols = len(_value(unit, "changed_symbol_ids", []) or [])
+    patch_text = str(_value(unit, "patch_text", "") or "")
+    source_text = str(_value(unit, "source_text", "") or "")
+    return (
+        -typed_dependencies,
+        -affinity,
+        -changed_symbols,
+        -int(bool(patch_text.strip())),
+        -min(len(patch_text), 4000),
+        -int(bool(source_text.strip())),
+        file_path,
+        index,
+    )
+
+
+def _context_units_with_fallback(
+    context_units: list[Any],
+    batch: dict[str, Any],
+    agent_id: str,
+    *,
+    limit: int = 3,
+) -> tuple[list[Any], str]:
+    strict = _context_units_for_batch(context_units, batch, agent_id)
+    if strict:
+        return strict, "strict"
+    if not context_units:
+        return [], "empty"
+    bounded_limit = max(1, min(int(limit or 3), 3, len(context_units)))
+    ranked = sorted(
+        enumerate(context_units),
+        key=lambda item: _fallback_unit_rank(item[1], batch, agent_id, item[0]),
+    )
+    return [unit for _index, unit in ranked[:bounded_limit]], "fallback"
+
+
 def _bound_rule_batches(
     agent_context: dict[str, Any],
     files: list[dict[str, Any]] | None = None,
@@ -463,7 +519,11 @@ def _coverage_retry_context_units(config: dict[str, Any], context_units: list[An
 
 def _coverage_retry_enabled(config: dict[str, Any]) -> bool:
     quality = config.get("review_quality") if isinstance(config.get("review_quality"), dict) else {}
-    return bool(quality.get("enable_bound_rule_coverage_retry") is True or quality.get("coverage_retry_enabled") is True)
+    if "coverage_retry_enabled" in quality:
+        return quality.get("coverage_retry_enabled") is not False
+    if "enable_bound_rule_coverage_retry" in quality:
+        return quality.get("enable_bound_rule_coverage_retry") is not False
+    return True
 
 
 def _skill_checkpoints(
@@ -1405,7 +1465,21 @@ def make_run_experts_node(
                     batch_skill_summary = skill_summary
                     if batch.get("skill_key"):
                         batch_skill_summary = load_skill_summary(str(batch["skill_key"]), files)
-                    batch_context_units = _context_units_for_batch(context_units, batch, agent_id)
+                    batch_context_units, context_selection_mode = _context_units_with_fallback(context_units, batch, agent_id)
+                    if context_selection_mode == "fallback":
+                        recorder.event(
+                            span,
+                            "context_units_fallback",
+                            f"{agent_id} 的 {batch['label']} 未命中严格上下文，保底选择 {len(batch_context_units)} 个 ContextUnit",
+                            {
+                                "batch_label": batch["label"],
+                                "agent_id": agent_id,
+                                "before": len(context_units),
+                                "after": len(batch_context_units),
+                                "selected_files": [_unit_file_path(unit) for unit in batch_context_units],
+                                "max_fallback_units": 3,
+                            },
+                        )
                     scoped_observations = _scope_tool_observations_for_batch(batch, batch_context_units)
                     batch_agent = {
                         **batch_agent,

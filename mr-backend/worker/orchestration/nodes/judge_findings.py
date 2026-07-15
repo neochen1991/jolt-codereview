@@ -2097,13 +2097,14 @@ def _prune_low_signal_final_findings(findings: list[dict[str, Any]]) -> tuple[li
     )
     for item in findings:
         rules = {str(rule) for rule in (item.get("covered_rules") or [])}
+        severity = str(item.get("severity") or "").lower()
         path = str(item.get("file_path") or "").replace("\\", "/").lower()
         text = _text_blob(item)
         reason = ""
         if _is_strong_tool_supported_finding(item):
             kept.append(item)
             continue
-        if any(rule.startswith("TEST-") for rule in rules):
+        if any(rule.startswith("TEST-") for rule in rules) and severity not in {"critical", "high"}:
             reason = "secondary_test_advisory"
         elif "DEP-SCOPE-005" in rules:
             reason = "secondary_dependency_scope_advisory"

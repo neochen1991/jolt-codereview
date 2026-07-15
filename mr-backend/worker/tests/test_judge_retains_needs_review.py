@@ -10,6 +10,7 @@ from orchestration.judging.evidence_score import apply_evidence_score_policy
 from orchestration.nodes.judge_findings import (
     _critic_rejected,
     _merge_finding_metadata,
+    _prune_low_signal_final_findings,
     build_quality_trace,
     dedupe_same_line_same_issue_findings,
     judge_candidate_findings,
@@ -363,6 +364,38 @@ def test_critic_rejected_still_allows_hard_drop() -> None:
     assert _critic_rejected({"quality_trace": trace}) is True
 
 
+def test_secondary_test_advisory_never_prunes_critical_or_high_findings() -> None:
+    findings = [
+        agent_finding(
+            dedupe_hash="test-critical",
+            agent_id="test_agent",
+            severity="critical",
+            covered_rules=["TEST-COVER-001"],
+            title="关键支付状态缺少并发回归测试",
+        ),
+        agent_finding(
+            dedupe_hash="test-high",
+            agent_id="test_agent",
+            severity="high",
+            covered_rules=["TEST-ASSERT-002"],
+            title="安全校验测试没有断言拒绝结果",
+        ),
+        agent_finding(
+            dedupe_hash="test-medium",
+            agent_id="test_agent",
+            severity="medium",
+            covered_rules=["TEST-COVER-001"],
+            title="普通边界测试覆盖建议",
+        ),
+    ]
+
+    kept, rejected = _prune_low_signal_final_findings(findings)
+
+    assert {item["dedupe_hash"] for item in kept} == {"test-critical", "test-high"}, (kept, rejected)
+    assert [item["dedupe_hash"] for item in rejected] == ["test-medium"], rejected
+    assert rejected[0]["rejected_reasons"] == ["secondary_test_advisory"], rejected
+
+
 if __name__ == "__main__":
     test_agent_only_complete_finding_is_retained_without_tool_support()
     test_partial_evidence_contract_is_retained_as_needs_review()
@@ -378,3 +411,4 @@ if __name__ == "__main__":
     test_unselected_structured_candidate_is_retained_for_review()
     test_low_evidence_score_downgrades_to_needs_review_instead_of_drop()
     test_critic_rejected_still_allows_hard_drop()
+    test_secondary_test_advisory_never_prunes_critical_or_high_findings()

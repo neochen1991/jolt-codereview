@@ -63,6 +63,7 @@
     "verify:prompt-suppression-hints": "python3 scripts/verify_prompt_suppression_hints.py",
     "verify:router-policy": "python3 scripts/verify_router_policy.py",
     "verify:worker-quality": "python3 mr-backend/worker/tests/test_verify_findings_soft_reject.py && python3 mr-backend/worker/tests/test_evidence_score.py && python3 mr-backend/worker/tests/test_candidate_store_reason_sanitizer.py && python3 mr-backend/worker/tests/test_skill_bound_review_contract.py && python3 mr-backend/worker/tests/test_judge_retains_needs_review.py && python3 mr-backend/worker/tests/test_judge_strong_tool_evidence.py",
+    "verify:live-review-recall": "python3 scripts/test_verify_live_review_recall.py",
     "verify:real-pr-seed-tool": "node scripts/verify-real-pr-seed-tool.mjs",
     "verify:real-findings-export": "node scripts/verify-real-findings-export.mjs",
     "verify:real-pr-dataset": "python3 scripts/test_audit_real_pr_dataset.py && python3 scripts/audit_real_pr_dataset.py",

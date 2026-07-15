@@ -178,6 +178,13 @@ def build_evidence_pack(
         and not matched_bound_evidence
         and not (tool_observations or [])
     )
+    has_direct_claim_evidence = bool(
+        str(finding.get("evidence") or "").strip()
+        or (tool_observations or [])
+        or evidence_path
+        or paths
+        or triggers
+    )
     high_severity_gaps: list[str] = []
     if severity in {"critical", "high"}:
         if not changed_location:
@@ -195,9 +202,12 @@ def build_evidence_pack(
     if counter_evidence:
         status: EvidenceStatus = "rejected_with_reason"
         reason_codes.extend(_contradiction_reason(item) for item in counter_evidence)
-    elif unsupported_bound_claim:
+    elif unsupported_bound_claim and not has_direct_claim_evidence:
         status = "rejected_with_reason"
-        reason_codes.append("bound_required_evidence_missing")
+        reason_codes.append("bound_required_evidence_absent")
+    elif unsupported_bound_claim:
+        status = "needs_review"
+        reason_codes.append("bound_required_evidence_incomplete")
     elif context_score <= 0.3 or not direct or unresolved_context:
         status = "unresolved_context"
         reason_codes.append("context_incomplete")

@@ -90,7 +90,7 @@ def test_high_severity_without_impact_path_cannot_be_confirmed() -> None:
     assert "impact_missing" in pack.reason_codes
 
 
-def test_bound_rule_with_no_required_evidence_and_no_tool_support_is_rejected() -> None:
+def test_bound_rule_with_direct_source_evidence_but_incomplete_required_evidence_needs_review() -> None:
     pack = build_evidence_pack(
         _finding(
             title="gRPC version upgrade compatibility suggestion",
@@ -110,8 +110,56 @@ def test_bound_rule_with_no_required_evidence_and_no_tool_support_is_rejected() 
         tool_observations=[],
         context_health={"status": "full"},
     )
+    assert pack.status == "needs_review"
+    assert "bound_required_evidence_incomplete" in pack.reason_codes
+
+
+def test_bound_rule_with_completely_absent_evidence_is_rejected() -> None:
+    pack = build_evidence_pack(
+        _finding(
+            file_path="",
+            line_start=0,
+            line_end=0,
+            evidence="",
+            trigger_condition="",
+            impact="",
+            context_hash="",
+            severity="medium",
+            covered_rules=["DEP-LICENSE-002"],
+            bound_evidence_contract={
+                "status": "weak",
+                "matched_required_evidence": [],
+                "missing_required_evidence": ["license conflict evidence"],
+            },
+        ),
+        semantic_paths=[],
+        tool_observations=[],
+        context_health={"status": "full"},
+    )
+
     assert pack.status == "rejected_with_reason"
-    assert "bound_required_evidence_missing" in pack.reason_codes
+    assert "bound_required_evidence_absent" in pack.reason_codes
+
+
+def test_high_bound_claim_with_direct_source_evidence_is_not_rejected() -> None:
+    pack = build_evidence_pack(
+        _finding(
+            severity="high",
+            covered_rules=["LLDEF-EXC-005"],
+            evidence="catch (Exception e) { e.printStackTrace(); return Collections.emptyList(); }",
+            bound_evidence_contract={
+                "status": "weak",
+                "matched_required_evidence": [],
+                "missing_required_evidence": ["caller-visible failure behavior"],
+            },
+        ),
+        semantic_paths=[],
+        tool_observations=[],
+        context_health={"status": "full"},
+    )
+
+    assert pack.status == "needs_review"
+    assert "bound_required_evidence_incomplete" in pack.reason_codes
 
 
 def test_cross_file_finding_without_evidence_path_needs_review() -> None:
@@ -165,7 +213,9 @@ if __name__ == "__main__":
     test_contradicting_guard_rejects_with_explicit_reason()
     test_missing_context_is_unresolved_not_silently_dropped()
     test_high_severity_without_impact_path_cannot_be_confirmed()
-    test_bound_rule_with_no_required_evidence_and_no_tool_support_is_rejected()
+    test_bound_rule_with_direct_source_evidence_but_incomplete_required_evidence_needs_review()
+    test_bound_rule_with_completely_absent_evidence_is_rejected()
+    test_high_bound_claim_with_direct_source_evidence_is_not_rejected()
     test_cross_file_finding_without_evidence_path_needs_review()
     test_cross_file_finding_with_evidence_path_is_confirmed()
     print("evidence pack tests passed")

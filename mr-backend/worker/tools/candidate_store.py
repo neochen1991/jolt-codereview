@@ -12,6 +12,8 @@ JUDGE_REASON_MESSAGES = {
     "bound_false_positive_pattern_match": "候选命中了 Skill 定义的误报排除模式。",
     "bound_skill_checkpoint_mismatch": "候选内容与当前 Skill Checkpoint 不一致。",
     "bound_rule_mismatch": "候选引用的规则与当前绑定规则不一致。",
+    "rule_attribution_mismatch": "候选证据有效，但模型返回的规则归属与当前批次不一致，已保留复核。",
+    "rule_attribution_missing": "候选证据有效，但模型未返回可确认的规则归属，已保留复核。",
     "critic_rejected": "Critic 复核未通过，候选证据或结论不足。",
     "evidence_contract_not_satisfied": "候选未满足 Checkpoint 定义的证据合同。",
     "deduped_lower_rank": "候选与更高优先级问题重复，已合并。",

@@ -570,7 +570,7 @@ def test_skill_scoped_prompt_requires_skill_rule_id_and_source_priority() -> Non
     assert "evidence_path" in parsed["task"], parsed["task"]
 
 
-def test_skill_checkpoint_rejects_lower_priority_rule_id_rewrite() -> None:
+def test_skill_checkpoint_marks_lower_priority_rule_id_rewrite_for_review() -> None:
     kept, rejected = _enforce_bound_batch_findings(
         {
             "label": "bound_skill:secure-review-skill:SEC-CMD-001",
@@ -603,12 +603,15 @@ def test_skill_checkpoint_rejects_lower_priority_rule_id_rewrite() -> None:
         ],
     )
 
-    assert kept == [], kept
-    assert len(rejected) == 1, rejected
-    assert rejected[0]["rejected_reasons"] == ["bound_skill_checkpoint_mismatch"], rejected
+    assert rejected == [], rejected
+    assert len(kept) == 1, kept
+    assert kept[0]["covered_rules"] == ["SEC-INJECT-003"], kept
+    assert kept[0]["bound_attribution_status"] == "mismatch", kept
+    assert kept[0]["expected_bound_ids"] == ["SEC-CMD-001"], kept
+    assert "rule_attribution_mismatch" in kept[0]["verification_flags"], kept
 
 
-def test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_scope() -> None:
+def test_skill_checkpoint_batch_attributes_unlabeled_findings_and_marks_off_scope() -> None:
     kept, rejected = _enforce_bound_batch_findings(
         {
             "label": "bound_skill:secure-review-skill:SEC-CMD-001",
@@ -643,7 +646,7 @@ def test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_sc
         ],
     )
 
-    assert len(kept) == 1, kept
+    assert len(kept) == 2, kept
     assert kept[0]["covered_rules"] == ["SEC-CMD-001"], kept
     assert kept[0]["rule_id"] == "SEC-CMD-001", kept
     assert kept[0]["skill_key"] == "secure-review-skill", kept
@@ -651,8 +654,10 @@ def test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_sc
     assert "bound_skill_checkpoint_attributed" in kept[0]["verification_flags"], kept
     assert kept[0]["bound_evidence_contract"]["status"] == "satisfied", kept
     assert kept[0]["bound_evidence_contract"]["missing_required_evidence"] == [], kept
-    assert len(rejected) == 1, rejected
-    assert rejected[0]["rejected_reasons"] == ["bound_skill_checkpoint_mismatch"], rejected
+    assert rejected == [], rejected
+    assert kept[1]["covered_rules"] == ["SEC-PATH-002"], kept
+    assert kept[1]["bound_attribution_status"] == "mismatch", kept
+    assert "rule_attribution_mismatch" in kept[1]["verification_flags"], kept
 
 
 def test_skill_checkpoint_batch_rejects_explicit_false_positive_pattern() -> None:
@@ -797,7 +802,7 @@ def test_skill_checkpoint_batch_flags_missing_required_evidence_without_dropping
     assert "bound_required_evidence_incomplete" in kept[0]["verification_flags"], kept
 
 
-def test_bound_rule_batch_filters_explicitly_mismatched_rule() -> None:
+def test_bound_rule_batch_marks_explicitly_mismatched_rule() -> None:
     kept, rejected = _enforce_bound_batch_findings(
         {
             "label": "bound_rule:JAVA-001",
@@ -810,11 +815,38 @@ def test_bound_rule_batch_filters_explicitly_mismatched_rule() -> None:
         ],
     )
 
-    assert [item["covered_rules"] for item in kept] == [["JAVA-001"], ["JAVA-001"]], kept
+    assert [item["covered_rules"] for item in kept] == [["JAVA-001"], ["JAVA-001"], ["JAVA-999"]], kept
     assert kept[1]["rule_id"] == "JAVA-001", kept
     assert "bound_rule_attributed" in kept[1]["verification_flags"], kept
-    assert len(rejected) == 1, rejected
-    assert rejected[0]["rejected_reasons"] == ["bound_rule_mismatch"], rejected
+    assert rejected == [], rejected
+    assert kept[2]["bound_attribution_status"] == "mismatch", kept
+    assert kept[2]["expected_bound_ids"] == ["JAVA-001"], kept
+    assert "rule_attribution_mismatch" in kept[2]["verification_flags"], kept
+
+
+def test_bound_rule_batch_marks_missing_attribution_in_multi_rule_batch() -> None:
+    kept, rejected = _enforce_bound_batch_findings(
+        {
+            "label": "bound_rule_batch:JAVA-001,JAVA-002",
+            "rule_ids": ["JAVA-001", "JAVA-002"],
+        },
+        [
+            {
+                "title": "MiniMax 发现了明确源码问题但未返回规则字段",
+                "problem_description": "返回值在异常分支被吞掉。",
+                "evidence": "catch (Exception e) { return Collections.emptyList(); }",
+                "file_path": "src/App.java",
+                "line_start": 42,
+            }
+        ],
+    )
+
+    assert rejected == [], rejected
+    assert len(kept) == 1, kept
+    assert kept[0]["covered_rules"] == [], kept
+    assert kept[0]["bound_attribution_status"] == "missing", kept
+    assert kept[0]["expected_bound_ids"] == ["JAVA-001", "JAVA-002"], kept
+    assert "rule_attribution_missing" in kept[0]["verification_flags"], kept
 
 
 def test_bound_skill_skip_marker_is_audited_without_becoming_finding() -> None:
@@ -875,7 +907,7 @@ def test_bound_skill_rejects_lower_priority_skip_marker_rewrite() -> None:
     assert rejected[0]["rejected_reasons"] == ["bound_skill_checkpoint_mismatch"], rejected
 
 
-def test_bound_skill_rejects_payload_with_lower_priority_skip_only() -> None:
+def test_bound_skill_marks_payload_with_lower_priority_skip_only() -> None:
     kept, rejected = _enforce_bound_batch_findings(
         {
             "label": "bound_skill:secure-review-skill:SEC-CMD-001",
@@ -896,9 +928,10 @@ def test_bound_skill_rejects_payload_with_lower_priority_skip_only() -> None:
         ],
     )
 
-    assert kept == [], kept
-    assert len(rejected) == 1, rejected
-    assert rejected[0]["rejected_reasons"] == ["bound_skill_checkpoint_mismatch"], rejected
+    assert rejected == [], rejected
+    assert len(kept) == 1, kept
+    assert kept[0]["bound_attribution_status"] == "mismatch", kept
+    assert "rule_attribution_mismatch" in kept[0]["verification_flags"], kept
 
 
 def test_bound_review_coverage_summary_tracks_hits_and_misses() -> None:
@@ -1000,15 +1033,16 @@ if __name__ == "__main__":
     test_bound_rules_can_be_loaded_in_one_llm_batch_with_individual_audit()
     test_skill_scoped_prompt_disables_expert_free_review()
     test_skill_scoped_prompt_requires_skill_rule_id_and_source_priority()
-    test_skill_checkpoint_rejects_lower_priority_rule_id_rewrite()
-    test_skill_checkpoint_batch_attributes_unlabeled_findings_and_filters_off_scope()
+    test_skill_checkpoint_marks_lower_priority_rule_id_rewrite_for_review()
+    test_skill_checkpoint_batch_attributes_unlabeled_findings_and_marks_off_scope()
     test_skill_checkpoint_batch_rejects_explicit_false_positive_pattern()
     test_skill_checkpoint_batch_rejects_markdown_section_false_positive_pattern()
     test_skill_checkpoint_false_positive_pattern_does_not_match_missing_expire_evidence()
     test_skill_checkpoint_batch_flags_missing_required_evidence_without_dropping()
-    test_bound_rule_batch_filters_explicitly_mismatched_rule()
+    test_bound_rule_batch_marks_explicitly_mismatched_rule()
+    test_bound_rule_batch_marks_missing_attribution_in_multi_rule_batch()
     test_bound_skill_skip_marker_is_audited_without_becoming_finding()
     test_bound_skill_rejects_lower_priority_skip_marker_rewrite()
-    test_bound_skill_rejects_payload_with_lower_priority_skip_only()
+    test_bound_skill_marks_payload_with_lower_priority_skip_only()
     test_bound_review_coverage_summary_tracks_hits_and_misses()
     test_coverage_retry_batch_focuses_prompt_on_missed_bound_rule()

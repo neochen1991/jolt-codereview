@@ -631,6 +631,25 @@ def _expected_batch_ids(batch: dict[str, Any]) -> list[str]:
     return _batch_rule_ids(batch) or _batch_checkpoint_ids(batch)
 
 
+def _mark_bound_attribution_issue(
+    finding: dict[str, Any],
+    *,
+    status: str,
+    expected_ids: list[str],
+    batch_label: str,
+    reason: str,
+) -> dict[str, Any]:
+    flag = "rule_attribution_missing" if status == "missing" else "rule_attribution_mismatch"
+    return {
+        **finding,
+        "review_batch_label": batch_label,
+        "bound_attribution_status": status,
+        "bound_attribution_reason": reason,
+        "expected_bound_ids": list(expected_ids),
+        "verification_flags": _unique_strings([*(_string_list(finding.get("verification_flags"))), flag]),
+    }
+
+
 def _enforce_bound_batch_findings(batch: dict[str, Any], items: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     expected_rule_ids = _batch_rule_ids(batch)
     expected_checkpoint_ids = _batch_checkpoint_ids(batch)
@@ -666,15 +685,42 @@ def _enforce_bound_batch_findings(batch: dict[str, Any], items: list[dict[str, A
             )
             continue
         if not covered_rules and skipped_rules and not matched_skipped:
-            rejected.append(_with_rejected_reason(finding, mismatch_reason))
+            if _has_finding_payload(finding):
+                kept.append(
+                    _mark_bound_attribution_issue(
+                        finding,
+                        status="mismatch",
+                        expected_ids=expected_ids,
+                        batch_label=str(batch.get("label") or ""),
+                        reason=mismatch_reason,
+                    )
+                )
+            else:
+                rejected.append(_with_rejected_reason(finding, mismatch_reason))
             continue
         if covered_rules and not matched_covered:
-            rejected.append(_with_rejected_reason(finding, mismatch_reason))
+            kept.append(
+                _mark_bound_attribution_issue(
+                    finding,
+                    status="mismatch",
+                    expected_ids=expected_ids,
+                    batch_label=str(batch.get("label") or ""),
+                    reason=mismatch_reason,
+                )
+            )
             continue
 
         if not covered_rules:
             if len(expected_ids) > 1:
-                rejected.append(_with_rejected_reason(finding, "bound_batch_missing_rule_attribution"))
+                kept.append(
+                    _mark_bound_attribution_issue(
+                        {**finding, "covered_rules": []},
+                        status="missing",
+                        expected_ids=expected_ids,
+                        batch_label=str(batch.get("label") or ""),
+                        reason="bound_batch_missing_rule_attribution",
+                    )
+                )
                 continue
             matched_covered = [expected_ids[0]]
             finding["verification_flags"] = _unique_strings([*(_string_list(finding.get("verification_flags"))), attribution_flag])

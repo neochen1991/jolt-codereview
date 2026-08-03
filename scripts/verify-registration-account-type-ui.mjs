@@ -8,6 +8,7 @@ const authView = read("frontend", "src", "frontend", "components", "AuthViews.ts
 const app = read("frontend", "src", "frontend", "App.tsx");
 const projectView = read("frontend", "src", "frontend", "components", "ProjectViews.tsx");
 const shared = read("frontend", "src", "frontend", "shared.ts");
+const styles = read("frontend", "src", "frontend", "styles.css");
 
 assert.match(authView, /accountType/);
 assert.match(authView, /value="user"/);
@@ -19,5 +20,9 @@ assert.match(shared, /export function canCreateProject\(user: User \| null\)/);
 assert.match(shared, /user\?\.global_role === "project_admin"/);
 assert.match(projectView, /canCreateProject\(user\)/);
 assert.doesNotMatch(projectView, /const canCreateProject = isRootUser\(user\)/);
+assert.match(styles, /\.auth-form select\s*\{[\s\S]*?min-height:\s*42px;/);
+assert.match(styles, /\.auth-form select\s*\{[\s\S]*?border-radius:\s*6px;/);
+assert.match(styles, /\.auth-form select\s*\{[\s\S]*?appearance:\s*none;/);
+assert.match(styles, /\.auth-form select:focus\s*\{[\s\S]*?border-color:\s*var\(--blue\);/);
 
 console.log(JSON.stringify({ ok: true, verified: "registration_account_type_ui" }, null, 2));

@@ -195,6 +195,29 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 0 12px;
 }
 
+.auth-form select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line-dark);
+  border-radius: 6px;
+  padding: 0 40px 0 12px;
+  background-color: #fff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%2352657e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
+  color: #1f2937;
+  font: inherit;
+  appearance: none;
+  cursor: pointer;
+}
+
+.auth-form select:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(9, 105, 255, 0.12);
+}
+
 .auth-form button[type="submit"] {
   min-height: 42px;
   border: 0;

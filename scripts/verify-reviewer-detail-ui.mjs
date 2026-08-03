@@ -34,12 +34,14 @@ assert.match(review, /onPublish/);
 // Finding cards must keep reviewer content readable when diagnostic badges are hidden.
 assert.match(review, /className="finding-row-header"/);
 assert.match(review, /className="finding-row-badges"/);
-assert.match(review, /className="finding-confidence"/);
 assert.match(review, /className="finding-row-action"/);
-assert.match(review, /<p className="finding-description">/);
+assert.match(review, /const \[descriptionExpanded, setDescriptionExpanded\] = useState\(false\)/);
+assert.match(review, /aria-expanded=\{descriptionExpanded\}/);
+assert.match(review, /descriptionExpanded \? "收起" : "展开全文"/);
+assert.match(review, /className=\{`finding-description \$\{descriptionExpanded \? "expanded" : ""\}`\}/);
 assert.match(styles, /\.finding-row-header\s*\{[\s\S]*?display:\s*flex;/);
 assert.match(styles, /\.finding-row-badges\s*\{[\s\S]*?flex-wrap:\s*wrap;/);
-assert.match(styles, /\.finding-description\s*\{[\s\S]*?white-space:\s*pre-wrap;/);
-assert.doesNotMatch(styles, /\.finding-main small\s*\{[\s\S]*?-webkit-line-clamp:/);
+assert.match(styles, /\.finding-description\s*\{[\s\S]*?-webkit-line-clamp:\s*3;/);
+assert.match(styles, /\.finding-description\.expanded\s*\{[\s\S]*?-webkit-line-clamp:\s*unset;/);
 
 console.log(JSON.stringify({ ok: true, verified: "reviewer_detail_ui" }, null, 2));

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   CheckCircle2,
@@ -1019,6 +1019,25 @@ export function FindingRow({
 }) {
   const source = findingSource(finding);
   const alreadyPublished = isAlreadyPublishedFinding(finding);
+  const description = alreadyPublished ? "该问题已提交过，本次不会重复提交。" : (finding.problem_description || finding.recommendation || "暂无问题描述");
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [descriptionOverflowing, setDescriptionOverflowing] = useState(false);
+  const descriptionRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const element = descriptionRef.current;
+    if (!element || descriptionExpanded) return;
+    const measureOverflow = () => setDescriptionOverflowing(element.scrollHeight > element.clientHeight + 1);
+    measureOverflow();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measureOverflow);
+    observer?.observe(element);
+    window.addEventListener("resize", measureOverflow);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measureOverflow);
+    };
+  }, [description, descriptionExpanded]);
+
   return (
     <article className={`finding-row ${alreadyPublished ? "already-published" : ""}`} onClick={onOpen} role="button" tabIndex={0} onKeyDown={(event) => {
       if (event.key === "Enter" || event.key === " ") {
@@ -1040,12 +1059,12 @@ export function FindingRow({
           >
             {publishStateLabel(finding.publish_state || "pending")}
           </span>
-          <span className="finding-confidence"><span>置信度</span><strong>{finding.confidence.toFixed(2)}</strong></span>
+          <span className="confidence">{finding.confidence.toFixed(2)}</span>
         </div>
         <button className="finding-row-action" type="button" onClick={(event) => {
           event.stopPropagation();
           onFalsePositive();
-        }}>{finding.lifecycle_state === "false_positive" ? "已标记误报" : "标记误报"}</button>
+        }}>{finding.lifecycle_state === "false_positive" ? "已误报" : "标误报"}</button>
       </div>
       <div className="finding-main">
         <div className="finding-location-line">
@@ -1053,9 +1072,22 @@ export function FindingRow({
           <span>{formatFindingLineRange(finding)}</span>
         </div>
         <strong>{finding.title}</strong>
-        <p className="finding-description">
-          {alreadyPublished ? "该问题已提交过，本次不会重复提交。" : (finding.problem_description || finding.recommendation || "暂无问题描述")}
+        <p ref={descriptionRef} className={`finding-description ${descriptionExpanded ? "expanded" : ""}`}>
+          {description}
         </p>
+        {descriptionOverflowing && (
+          <button
+            className="finding-description-toggle"
+            type="button"
+            aria-expanded={descriptionExpanded}
+            onClick={(event) => {
+              event.stopPropagation();
+              setDescriptionExpanded((expanded) => !expanded);
+            }}
+          >
+            {descriptionExpanded ? "收起" : "展开全文"}
+          </button>
+        )}
       </div>
     </article>
   );

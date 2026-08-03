@@ -459,6 +459,77 @@ def test_secondary_test_advisory_never_prunes_critical_or_high_findings() -> Non
     assert rejected[0]["rejected_reasons"] == ["secondary_test_advisory"], rejected
 
 
+def test_free_review_naming_and_ordinary_logging_are_not_publishable_defects() -> None:
+    naming = agent_finding(
+        dedupe_hash="naming-advisory",
+        agent_id="coding_agent",
+        severity="medium",
+        confidence=0.92,
+        rule_id="ALI-NAMING-001",
+        covered_rules=["ALI-NAMING-001"],
+        title="变量命名不符合规范",
+        problem_description="局部变量名称不符合驼峰风格。",
+        evidence="String Refund_ID = request.id();",
+    )
+    logging = agent_finding(
+        dedupe_hash="logging-advisory",
+        agent_id="coding_agent",
+        severity="medium",
+        confidence=0.92,
+        rule_id="ALI-LOG-001",
+        covered_rules=["ALI-LOG-001"],
+        title="使用 System.out 输出普通调试日志",
+        problem_description="普通调试输出未使用日志框架。",
+        evidence="System.out.println(\"refund started\");",
+        line_start=60,
+        line_end=60,
+    )
+
+    selected, _rejected = judge_candidate_findings([naming, logging], [], max_findings=20)
+
+    assert {item["severity"] for item in selected} == {"info"}, selected
+    assert not any(item["selected"] for item in selected), selected
+
+
+def test_sensitive_logging_is_not_downgraded_as_style() -> None:
+    sensitive = agent_finding(
+        dedupe_hash="sensitive-log",
+        severity="high",
+        confidence=0.92,
+        rule_id="SEC-SECRET-004",
+        covered_rules=["SEC-SECRET-004"],
+        title="日志输出访问令牌",
+        problem_description="新增日志会记录用户访问令牌。",
+        evidence="logger.info(\"token={}\", request.getToken());",
+    )
+
+    selected, _rejected = judge_candidate_findings([sensitive], [], max_findings=20)
+
+    assert selected[0]["severity"] == "high", selected
+    assert selected[0]["selected"] == 1, selected
+
+
+def test_explicit_bound_naming_rule_keeps_configured_severity() -> None:
+    bound = agent_finding(
+        dedupe_hash="bound-naming",
+        agent_id="coding_agent",
+        severity="medium",
+        confidence=0.92,
+        rule_id="ALI-NAMING-001",
+        bound_rule_id="ALI-NAMING-001",
+        covered_rules=["ALI-NAMING-001"],
+        review_batch_label="bound_rule:ALI-NAMING-001",
+        title="变量命名违反项目绑定规范",
+        problem_description="项目绑定规范明确要求该公共字段使用固定命名。",
+        evidence="public String Refund_ID;",
+    )
+
+    selected, _rejected = judge_candidate_findings([bound], [], max_findings=20)
+
+    assert selected[0]["severity"] == "medium", selected
+    assert selected[0]["selected"] == 1, selected
+
+
 if __name__ == "__main__":
     test_agent_only_complete_finding_is_retained_without_tool_support()
     test_minimax_source_grounded_unattributed_finding_is_retained_for_review()
@@ -478,3 +549,6 @@ if __name__ == "__main__":
     test_low_evidence_score_downgrades_to_needs_review_instead_of_drop()
     test_critic_rejected_still_allows_hard_drop()
     test_secondary_test_advisory_never_prunes_critical_or_high_findings()
+    test_free_review_naming_and_ordinary_logging_are_not_publishable_defects()
+    test_sensitive_logging_is_not_downgraded_as_style()
+    test_explicit_bound_naming_rule_keeps_configured_severity()

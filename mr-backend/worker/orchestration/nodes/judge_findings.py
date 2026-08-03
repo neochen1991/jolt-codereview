@@ -21,6 +21,7 @@ from tools.tool_normalizer import CATEGORY_PRIMARY_RULE, canonical_rule_id, line
 
 SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 SELECTABLE_SEVERITIES = {"critical", "high", "medium"}
+STYLE_ADVISORY_CATEGORIES = {"JAVA_NAMING", "SYSTEM_OUT_LOGGING"}
 OSS_TOOL_PROMOTION_THRESHOLDS = {
     "semgrep": 0.76,
     "pmd": 0.75,
@@ -1391,6 +1392,21 @@ def _category_for_priority(finding: dict[str, Any]) -> str:
     if category and category != "GENERAL":
         return category
     return normalized_rule_category(_primary_rule_key(item), item.get("title"))
+
+
+def _calibrate_advisory_severity(finding: dict[str, Any]) -> dict[str, Any]:
+    item = dict(finding)
+    if _has_bound_authoritative_rule(item):
+        return item
+    category = _category_for_priority(item)
+    broad_catch_only = category == "BROAD_EXCEPTION" and _business_subcategory(category, item) == "BROAD_EXCEPTION"
+    if category not in STYLE_ADVISORY_CATEGORIES and not broad_catch_only:
+        return item
+    severity = str(item.get("severity") or "info").lower()
+    if SEVERITY_RANK.get(severity, 0) > SEVERITY_RANK["info"]:
+        item["severity"] = "info"
+        item["judge_adjustment"] = f"advisory_severity_cap:{category.lower()}"
+    return item
 
 
 def _path_relevance_score(finding: dict[str, Any], category: str) -> int:
@@ -3071,7 +3087,7 @@ def apply_debate_verdicts(findings: list[dict[str, Any]], debate_results: list[d
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     for finding in findings:
-        item = dict(finding)
+        item = _calibrate_advisory_severity(finding)
         verdict = verdict_by_hash.get(str(item.get("dedupe_hash") or ""))
         if not verdict:
             accepted.append(item)

@@ -293,8 +293,8 @@
       },
       "id": "ALI-LOG-001",
       "is_bound_document_rule": false,
-      "promote_from_tool": true,
-      "severity_floor": "medium",
+      "promote_from_tool": false,
+      "severity_floor": "info",
       "signature_keys": [
         "covered_rules",
         "file_path",
@@ -347,8 +347,8 @@
       },
       "id": "ALI-NAMING-001",
       "is_bound_document_rule": false,
-      "promote_from_tool": true,
-      "severity_floor": "medium",
+      "promote_from_tool": false,
+      "severity_floor": "info",
       "signature_keys": [
         "covered_rules",
         "file_path",

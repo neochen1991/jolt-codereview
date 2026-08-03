@@ -810,11 +810,16 @@ def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) 
             primary["rule_id"] = canonical_bound_id
             if str(primary.get("review_batch_label") or "").startswith("bound_rule:"):
                 primary["bound_rule_id"] = canonical_bound_id
+        strict_bound_rule = bool(
+            primary.get("bound_rule_id")
+            or str(primary.get("review_batch_label") or "").startswith("bound_rule:")
+        )
         if (
             (primary.get("skill_key") and primary.get("checkpoint_id") and not primary.get("bound_rule_id"))
             or str(primary.get("review_batch_label") or "").startswith("bound_skill:")
         ):
             strict_bound_skill = True
+        if strict_bound_skill or strict_bound_rule:
             covered = set(primary_bound_covered)
             secondary_covered = {rule for rule in secondary_covered if rule in bound_ids}
     covered.update(secondary_covered)

@@ -300,6 +300,26 @@ def test_bound_skill_merge_does_not_add_lower_priority_skipped_rule() -> None:
     assert "SEC-INJECT-003" not in merged["skipped_rules"], merged
 
 
+def test_bound_markdown_merge_does_not_add_lower_priority_profile_rule() -> None:
+    primary = agent_finding(
+        covered_rules=["TEAM-AUTH-001"],
+        rule_id="TEAM-AUTH-001",
+        bound_rule_id="TEAM-AUTH-001",
+        review_batch_label="bound_rule:TEAM-AUTH-001",
+    )
+    secondary = agent_finding(
+        covered_rules=["PROFILE-AUTHZ-009"],
+        skipped_rules=["PROFILE-AUTHZ-009"],
+        rule_id="PROFILE-AUTHZ-009",
+    )
+
+    merged = _merge_finding_metadata(primary, secondary)
+
+    assert merged["covered_rules"] == ["TEAM-AUTH-001"], merged
+    assert merged["rule_id"] == "TEAM-AUTH-001", merged
+    assert merged["skipped_rules"] == [], merged
+
+
 def test_business_semantic_dedupe_merges_cross_layer_audit_findings() -> None:
     service = agent_finding(
         agent_id="refund_risk_skill_agent",
@@ -451,6 +471,7 @@ if __name__ == "__main__":
     test_bound_skill_merge_recovers_retry_label_with_colon_checkpoint()
     test_bound_skill_merge_restores_authoritative_id_when_current_rules_are_dirty()
     test_bound_skill_merge_does_not_add_lower_priority_skipped_rule()
+    test_bound_markdown_merge_does_not_add_lower_priority_profile_rule()
     test_business_semantic_dedupe_merges_cross_layer_audit_findings()
     test_same_root_cause_on_different_lines_is_not_deduped_lower_rank()
     test_unselected_structured_candidate_is_retained_for_review()

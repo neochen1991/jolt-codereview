@@ -237,9 +237,16 @@ def main() -> None:
 
     accepted = _dedupe_findings(accepted)
     _assert_priority_merge(accepted)
-    score = _score(accepted)
+    attributable = [
+        item
+        for item in accepted
+        if str(item.get("bound_attribution_status") or "") not in {"missing", "mismatch"}
+    ]
+    attribution_issues = [item for item in accepted if item not in attributable]
+    score = _score(attributable)
     coverage = _summarize_bound_review_coverage(coverage_records)
     rejected_reasons = sorted({reason for item in rejected for reason in (item.get("rejected_reasons") or [])})
+    attribution_reasons = sorted({str(item.get("bound_attribution_reason") or "") for item in attribution_issues if item.get("bound_attribution_reason")})
 
     failures: list[str] = []
     if score["precision"] < 1.0:
@@ -248,10 +255,10 @@ def main() -> None:
         failures.append(f"recall {score['recall']} < 1.0")
     if coverage.get("required_count") != 4 or coverage.get("resolved_count") != 4:
         failures.append(f"unexpected bound coverage summary: {coverage}")
-    if "bound_skill_checkpoint_mismatch" not in rejected_reasons:
-        failures.append(f"missing rewritten Skill ID rejection: {rejected_reasons}")
-    if "bound_rule_mismatch" not in rejected_reasons:
-        failures.append(f"missing rewritten bound rule ID rejection: {rejected_reasons}")
+    if "bound_skill_checkpoint_mismatch" not in attribution_reasons:
+        failures.append(f"missing rewritten Skill ID attribution marker: {attribution_reasons}")
+    if "bound_rule_mismatch" not in attribution_reasons:
+        failures.append(f"missing rewritten bound rule ID attribution marker: {attribution_reasons}")
     if "bound_false_positive_pattern_match" not in rejected_reasons:
         failures.append(f"missing Skill false-positive rejection: {rejected_reasons}")
 
@@ -259,7 +266,9 @@ def main() -> None:
         "ok": not failures,
         "verified": "complex_bound_rule_skill_review_quality",
         "gold_rule_ids": sorted(GOLD_RULE_IDS),
-        "accepted_rule_ids": sorted(_rule_id(item) for item in accepted),
+        "accepted_rule_ids": sorted(_rule_id(item) for item in attributable),
+        "retained_attribution_issue_rule_ids": sorted(_rule_id(item) for item in attribution_issues),
+        "attribution_reasons": attribution_reasons,
         "rejected_reasons": rejected_reasons,
         "precision": score["precision"],
         "recall": score["recall"],

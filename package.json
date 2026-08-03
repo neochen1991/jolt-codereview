@@ -49,6 +49,7 @@
     "verify:mr-queue-created-order": "node scripts/verify-mr-queue-created-order.mjs",
     "verify:common-llm-base-url": "node scripts/verify-common-llm-base-url.mjs",
     "verify:account-role-policy": "npm --prefix common-backend run build && node scripts/test-account-role-policy.mjs",
+    "verify:project-admin-registration": "node scripts/verify-project-admin-registration.mjs",
     "verify:runtime-cleanup": "node scripts/verify-runtime-cleanup.mjs",
     "verify:learned-examples": "python3 scripts/verify_learned_examples.py",
     "verify:llm-schema-cache": "python3 scripts/verify_llm_schema_cache.py",

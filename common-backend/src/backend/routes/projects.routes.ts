@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
 import type { BackendRouteContext } from "./context.js";
+import { canCreateProjectForGlobalRole } from "../services/AccountRolePolicy.js";
 import { compactLlmTestInput, testOpenAiCompatibleLlm, validateLlmBaseUrl } from "../services/LlmConnectivityService.js";
 
 const PROJECT_MEMBER_ROLES = new Set(["observer", "developer", "reviewer", "project_admin"]);
@@ -111,8 +112,10 @@ export function createProjectRoutes(ctx: BackendRouteContext): Route[] {
     route("POST", "/api/projects", ({ body, req }) => {
       const actorId = currentUserId(req);
       if (!actorId) return { statusCode: 401, error: "unauthorized", message: "login is required" };
-      const denied = ensureRoot(actorId);
-      if (denied) return denied;
+      const actor = projectRepository.findUserById(actorId) as { global_role?: string } | undefined;
+      if (!actor || !canCreateProjectForGlobalRole(actor.global_role)) {
+        return { statusCode: 403, error: "forbidden", message: "project_admin permission is required" };
+      }
       const input = body as Record<string, unknown>;
       const name = String(input.name || "").trim();
       if (!name) return badRequest("project name is required");

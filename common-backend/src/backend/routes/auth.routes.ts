@@ -1,5 +1,6 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
+import { registrationGlobalRole } from "../services/AccountRolePolicy.js";
 import type { BackendRouteContext } from "./context.js";
 
 type UserRow = {
@@ -98,6 +99,12 @@ export function createAuthRoutes(ctx: BackendRouteContext): Route[] {
       if (password.length < 6) return badRequest("password must be at least 6 chars");
       if (projectRepository.findActiveUserByUsername(username)) return badRequest("username already exists");
       const userCount = Number((get<{ count: number }>("SELECT COUNT(*) AS count FROM users")?.count) ?? 0);
+      let globalRole: string;
+      try {
+        globalRole = registrationGlobalRole(input.account_type, userCount);
+      } catch (error) {
+        return badRequest(error instanceof Error ? error.message : "account_type is invalid");
+      }
       const passwordDigest = hashPassword(password);
       const user = projectRepository.createUser({
         id: id("user"),
@@ -106,7 +113,7 @@ export function createAuthRoutes(ctx: BackendRouteContext): Route[] {
         email: email || null,
         passwordHash: passwordDigest.hash,
         passwordSalt: passwordDigest.salt,
-        globalRole: userCount === 0 ? "root" : "user"
+        globalRole
       }) as UserRow;
       auditLog({ userId: user.id, action: "auth.register", resourceType: "user", resourceId: user.id, summary: `${username} registered` });
       return { user: publicUser(user) };

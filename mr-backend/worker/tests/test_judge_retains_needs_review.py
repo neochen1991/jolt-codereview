@@ -586,6 +586,43 @@ def test_bound_finding_is_not_suppressed_by_safe_intent() -> None:
     assert "safe_intent_bound_rule_preserved" in kept[0]["verification_flags"], kept
 
 
+def test_distant_same_file_naming_advisories_are_aggregated() -> None:
+    first = agent_finding(
+        dedupe_hash="naming-one",
+        agent_id="coding_agent",
+        severity="info",
+        rule_id="ALI-NAMING-001",
+        covered_rules=["ALI-NAMING-001"],
+        file_path="src/main/java/com/acme/refund/RefundMapper.java",
+        line_start=12,
+        line_end=12,
+        title="局部变量 Refund_ID 不符合命名规范",
+        problem_description="局部变量应使用 lowerCamelCase。",
+        evidence="String Refund_ID = row.getId();",
+    )
+    second = agent_finding(
+        dedupe_hash="naming-two",
+        agent_id="coding_agent",
+        severity="info",
+        rule_id="ALI-NAMING-001",
+        covered_rules=["ALI-NAMING-001"],
+        file_path="src/main/java/com/acme/refund/RefundMapper.java",
+        line_start=84,
+        line_end=84,
+        title="变量 Merchant_CODE 未采用驼峰命名",
+        problem_description="变量命名不符合 lowerCamelCase。",
+        evidence="String Merchant_CODE = row.getMerchant();",
+    )
+
+    merged, rejected = dedupe_same_line_same_issue_findings([first, second])
+
+    assert len(merged) == 1, merged
+    assert rejected[0]["rejected_reasons"] == ["deduped_same_file_advisory"], rejected
+    semantic = merged[0]["quality_trace"]["semantic_dedupe"]
+    assert semantic["merged_count"] == 2, semantic
+    assert semantic["related_locations"][0]["line_start"] in {12, 84}, semantic
+
+
 if __name__ == "__main__":
     test_agent_only_complete_finding_is_retained_without_tool_support()
     test_minimax_source_grounded_unattributed_finding_is_retained_for_review()
@@ -612,3 +649,4 @@ if __name__ == "__main__":
     test_safe_intent_unknown_causality_is_non_publishable()
     test_mixed_intent_introduced_defect_remains_selectable()
     test_bound_finding_is_not_suppressed_by_safe_intent()
+    test_distant_same_file_naming_advisories_are_aggregated()

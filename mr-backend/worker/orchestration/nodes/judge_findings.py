@@ -741,6 +741,32 @@ def _same_business_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
     return bool(left_signature and left_signature == _business_issue_signature(right))
 
 
+def _same_file_advisory_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    if str(left.get("file_path") or "") != str(right.get("file_path") or ""):
+        return False
+    left_item = normalize_tool_finding(left)
+    right_item = normalize_tool_finding(right)
+    left_category = _category_for_priority(left_item)
+    right_category = _category_for_priority(right_item)
+    if left_category != right_category or left_category not in STYLE_ADVISORY_CATEGORIES:
+        return False
+    left_rule = _primary_finding_rule(left_item)
+    right_rule = _primary_finding_rule(right_item)
+    return bool(left_rule and left_rule == right_rule)
+
+
+def _semantic_aggregation_signature(finding: dict[str, Any]) -> str:
+    business = _business_issue_signature(finding)
+    if business:
+        return business
+    category = _category_for_priority(finding)
+    rule = _primary_finding_rule(finding)
+    file_path = str(finding.get("file_path") or "")
+    if category in STYLE_ADVISORY_CATEGORIES and rule and file_path:
+        return f"same_file_advisory|{category}|{rule}|{file_path}"
+    return ""
+
+
 def _business_location_rank(finding: dict[str, Any]) -> int:
     path = str(finding.get("file_path") or "").replace("\\", "/").lower()
     if "/domain/" in path:
@@ -775,13 +801,14 @@ def _location_summary(finding: dict[str, Any], *, reason: str) -> dict[str, Any]
 
 
 def _merge_semantic_dedupe_trace(primary: dict[str, Any], secondary: dict[str, Any]) -> None:
-    signature = _business_issue_signature(primary) or _business_issue_signature(secondary)
+    signature = _semantic_aggregation_signature(primary) or _semantic_aggregation_signature(secondary)
     if not signature:
         return
     trace = primary.get("quality_trace") if isinstance(primary.get("quality_trace"), dict) else {}
     semantic = trace.get("semantic_dedupe") if isinstance(trace.get("semantic_dedupe"), dict) else {}
     related = [item for item in (semantic.get("related_locations") or []) if isinstance(item, dict)]
-    secondary_location = _location_summary(secondary, reason="merged_business_issue")
+    reason = "merged_business_issue" if _same_business_issue(primary, secondary) else "merged_same_file_advisory"
+    secondary_location = _location_summary(secondary, reason=reason)
     if secondary_location["file_path"] and not any(
         item.get("file_path") == secondary_location["file_path"] and item.get("line_start") == secondary_location["line_start"]
         for item in related
@@ -862,7 +889,7 @@ def _merge_finding_metadata(primary: dict[str, Any], secondary: dict[str, Any]) 
             current = str(primary.get(field) or "").strip()
             if secondary_summary not in current:
                 primary[field] = f"{current}\n合并证据：{secondary_summary}".strip()[:1600]
-    if _same_business_issue(primary, secondary):
+    if _same_business_issue(primary, secondary) or _same_file_advisory_issue(primary, secondary):
         _merge_semantic_dedupe_trace(primary, secondary)
     return primary
 
@@ -987,7 +1014,12 @@ def _nearby_same_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
 
 
 def _duplicate_same_issue(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    return _same_business_issue(left, right) or _same_line_same_issue(left, right) or _nearby_same_issue(left, right)
+    return (
+        _same_business_issue(left, right)
+        or _same_file_advisory_issue(left, right)
+        or _same_line_same_issue(left, right)
+        or _nearby_same_issue(left, right)
+    )
 
 
 def dedupe_same_line_same_issue_findings(findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1001,7 +1033,14 @@ def dedupe_same_line_same_issue_findings(findings: list[dict[str, Any]]) -> tupl
             continue
         existing = merged[target_index]
         is_business_duplicate = _same_business_issue(existing, item)
-        rejected_reason = "deduped_same_business_issue" if is_business_duplicate else "deduped_same_line_same_issue"
+        is_file_advisory_duplicate = _same_file_advisory_issue(existing, item)
+        rejected_reason = (
+            "deduped_same_business_issue"
+            if is_business_duplicate
+            else "deduped_same_file_advisory"
+            if is_file_advisory_duplicate
+            else "deduped_same_line_same_issue"
+        )
         if is_business_duplicate:
             primary = _prefer_business_primary(existing, item)
             secondary = item if primary is existing else existing

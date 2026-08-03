@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -479,8 +480,19 @@ def _is_query_call(callee: str, snippet: str) -> bool:
 
 
 def _looks_like_repository_dependency(import_text: str) -> bool:
-    lowered = import_text.lower()
-    return any(marker in lowered for marker in ["repository", "mapper", "dao", "jparepository", "mybatis"])
+    qualified_name = re.sub(r"^\s*import\s+(?:static\s+)?", "", str(import_text or "").strip(), flags=re.IGNORECASE)
+    qualified_name = qualified_name.rstrip("; ")
+    if not qualified_name:
+        return False
+    segments = [segment for segment in qualified_name.split(".") if segment]
+    if not segments:
+        return False
+    package_segments = {segment.lower() for segment in segments[:-1]}
+    repository_packages = {"repository", "repositories", "mapper", "mappers", "dao", "persistence"}
+    if package_segments & repository_packages:
+        return True
+    imported_type = segments[-1]
+    return re.fullmatch(r"[A-Za-z_$][\w$]*(?:Repository|RepositoryImpl|Mapper|MapperImpl|Dao|DaoImpl|DAO|DAOImpl)", imported_type) is not None
 
 
 def _contains_map_string_object(value: str) -> bool:

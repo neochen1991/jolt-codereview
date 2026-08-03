@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from context.context_unit import ContextUnit, DependencyRef, SourceRange
+from context.change_intent import classify_change_intent
 from context.semantic_graph import SemanticGraph
 from diff.slicer import diff_hunks_by_file
 
@@ -211,6 +212,11 @@ def plan_context_units(
             content_hash = _sha256(source_text)
             hunk_ids = tuple(item[2] for item in group_hunks)
             patch_text = _patch_for_range(patch, hunk_start, hunk_end)
+            change_intent = classify_change_intent(
+                file_path,
+                patch_text,
+                status=str(_value(changed, "status", "modified")),
+            )
             semantic_nodes = [
                 node
                 for node in (semantic_graph.nodes if semantic_graph else ())
@@ -268,6 +274,7 @@ def plan_context_units(
                         "hunk_ids": hunk_ids,
                         "symbol_id": symbol_id,
                         "source_hash": content_hash,
+                        "change_intent": change_intent.to_dict(),
                         "checkpoints": sorted(skill_checkpoint_ids or []),
                         "context_queries": sorted(query_set),
                         "max_dependency_hops": bounded_hops,
@@ -293,6 +300,7 @@ def plan_context_units(
                     changed_symbol_ids=resolved_symbol_ids or ((symbol_id,) if matched_symbol else ()),
                     source_text=source_text,
                     patch_text=patch_text,
+                    change_intent=change_intent,
                     dependencies=tuple(dependencies),
                     skill_checkpoint_ids=tuple(sorted(skill_checkpoint_ids or [])),
                     token_estimate=max(1, (len(source_text) + len(patch_text)) // 4),

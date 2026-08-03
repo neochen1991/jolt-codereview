@@ -125,6 +125,22 @@ def test_missing_full_source_uses_audited_patch_fallback() -> None:
     assert "+new" in plan.units[0].source_text
 
 
+def test_context_unit_records_deterministic_change_intent() -> None:
+    changed = ChangedFile(
+        "src/main/java/com/acme/RefundService.java",
+        "@@ -10,1 +10,2 @@\n process(refund);\n+logger.info(\"refund processed {}\", refund.id());",
+    )
+
+    unit = plan_context_units(
+        [changed],
+        source_file_contents={changed.filename: "process(refund);\nlogger.info(\"refund processed {}\", refund.id());\n"},
+        related_context={},
+    ).units[0]
+
+    assert unit.change_intent.labels == ("logging_only",), unit
+    assert unit.to_prompt_item()["change_intent"]["semantic_delta"] == "behavior_preserving"
+
+
 def test_expert_llm_uses_context_unit_prompt() -> None:
     changed = ChangedFile("src/A.java", "@@ -1,1 +1,1 @@\n-old\n+new")
     unit = plan_context_units(
@@ -744,6 +760,7 @@ if __name__ == "__main__":
     test_distant_hunks_in_one_oversized_symbol_are_not_lost_by_center_crop()
     test_twenty_changed_files_have_complete_hunk_assignment()
     test_missing_full_source_uses_audited_patch_fallback()
+    test_context_unit_records_deterministic_change_intent()
     test_expert_llm_uses_context_unit_prompt()
     test_expert_batch_executes_every_context_unit()
     test_empty_scoped_context_does_not_fall_back_to_full_file_review()

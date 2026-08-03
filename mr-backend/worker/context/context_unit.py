@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from context.change_intent import ChangeIntent
+
 
 @dataclass(frozen=True)
 class SourceRange:
@@ -29,6 +31,7 @@ class ContextUnit:
     changed_symbol_ids: tuple[str, ...]
     source_text: str
     patch_text: str
+    change_intent: ChangeIntent = field(default_factory=ChangeIntent.unknown)
     dependencies: tuple[DependencyRef, ...] = field(default_factory=tuple)
     skill_checkpoint_ids: tuple[str, ...] = field(default_factory=tuple)
     token_estimate: int = 0
@@ -47,6 +50,7 @@ class ContextUnit:
             "changed_symbol_ids": list(self.changed_symbol_ids),
             "source_text": self.source_text,
             "patch_text": self.patch_text,
+            "change_intent": self.change_intent.to_dict(),
             "dependencies": [
                 {
                     "relation": item.relation,

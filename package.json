@@ -51,6 +51,8 @@
     "verify:account-role-policy": "npm --prefix common-backend run build && node scripts/test-account-role-policy.mjs",
     "verify:project-admin-registration": "node scripts/verify-project-admin-registration.mjs",
     "verify:registration-account-type-ui": "node scripts/verify-registration-account-type-ui.mjs",
+    "verify:review-visibility-policy": "npm --prefix mr-backend run build && node scripts/test-review-visibility-policy.mjs",
+    "verify:review-diagnostic-authorization": "npm run verify:review-visibility-policy && node scripts/verify-review-diagnostic-authorization.mjs",
     "verify:runtime-cleanup": "node scripts/verify-runtime-cleanup.mjs",
     "verify:learned-examples": "python3 scripts/verify_learned_examples.py",
     "verify:llm-schema-cache": "python3 scripts/verify_llm_schema_cache.py",

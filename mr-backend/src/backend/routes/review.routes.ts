@@ -3,6 +3,7 @@ import { badRequest, id, notFound, route, sha1, type Route } from "../http.js";
 import { formatMrReviewMarkdown, markdownFilename } from "../reviewMarkdown.js";
 import { evaluateMrSizePolicy, evaluateMrSizePolicyWithFiles, mrSizeBlockedMessage, type MrSizePolicyDecision } from "../services/MrSizePolicy.js";
 import { projectMrConcurrency } from "../services/QueuePolicy.js";
+import { reviewDetailVisibility } from "../services/ReviewVisibilityPolicy.js";
 import type { FindingRow } from "../types.js";
 import { CodeHubProvider } from "../vcs/CodeHubProvider.js";
 import { GithubProvider } from "../vcs/GithubProvider.js";
@@ -81,10 +82,16 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     return ensureProjectRead(projectId, req);
   }
 
-  function ensureRunRead(runId: string, req: { headers: Record<string, any> }) {
+  function ensureMrDiagnostics(mrId: string, req: { headers: Record<string, any> }) {
+    const projectId = projectIdForMr(mrId);
+    if (!projectId) return notFound();
+    return ensureProjectRole(projectId, currentUserId(req), "project_admin");
+  }
+
+  function ensureRunDiagnostics(runId: string, req: { headers: Record<string, any> }) {
     const projectId = projectIdForRun(runId);
     if (!projectId) return notFound();
-    return ensureProjectRead(projectId, req);
+    return ensureProjectRole(projectId, currentUserId(req), "project_admin");
   }
 
   function normalizeLegacyEvidenceReasonText(value: unknown) {
@@ -1209,6 +1216,9 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
     route("GET", "/api/mr-review/merge-requests/:mrId", ({ params, req, url }) => {
       const denied = ensureMrRead(params.mrId, req);
       if (denied) return denied;
+      const projectId = projectIdForMr(params.mrId);
+      const diagnosticsDenied = ensureProjectRole(projectId, currentUserId(req), "project_admin");
+      const diagnosticsVisible = reviewDetailVisibility(diagnosticsDenied ? "reviewer" : "project_admin", false) === "full";
       const logLimit = boundedQueryLimit(url, "log_limit", 240, 1000);
       const observationLimit = boundedQueryLimit(url, "observation_limit", 500, 2000);
       const artifactLimit = boundedQueryLimit(url, "artifact_limit", 80, 500);
@@ -1218,25 +1228,32 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       const jobLimit = boundedQueryLimit(url, "job_limit", 20, 200);
       const mr = mergeRequestRepository.findDetailById(params.mrId);
       if (!mr) return notFound();
-      const jobs = all(`
+      const jobs = diagnosticsVisible ? all(`
         SELECT *
         FROM review_jobs
         WHERE merge_request_id = $1 AND execution_kind = 'production_review'
         ORDER BY created_at DESC
         LIMIT $2
-      `, [params.mrId, jobLimit]);
-      const runs = all(`
+      `, [params.mrId, jobLimit]) : [];
+      const runs = diagnosticsVisible ? all(`
         SELECT rr.* FROM review_runs rr
         JOIN review_jobs rj ON rj.id = rr.review_job_id
         WHERE rj.merge_request_id = $1 AND rj.execution_kind = 'production_review'
         ORDER BY rr.started_at DESC
         LIMIT $2
-      `, [params.mrId, runLimit]);
-      const latestRun = runs[0] as { id: string } | undefined;
+      `, [params.mrId, runLimit]) : [];
+      const latestRun = (diagnosticsVisible ? runs[0] : get(`
+        SELECT rr.id
+        FROM review_runs rr
+        JOIN review_jobs rj ON rj.id = rr.review_job_id
+        WHERE rj.merge_request_id = $1 AND rj.execution_kind = 'production_review'
+        ORDER BY rr.started_at DESC
+        LIMIT 1
+      `, [params.mrId])) as { id: string } | undefined;
       const findings = latestRun
         ? all("SELECT * FROM review_findings WHERE review_run_id = $1 ORDER BY severity DESC, confidence DESC LIMIT $2", [latestRun.id, findingLimit])
         : [];
-      const toolObservations = latestRun
+      const toolObservations = diagnosticsVisible && latestRun
         ? all(`
             SELECT *
             FROM (
@@ -1249,7 +1266,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
             ORDER BY created_at
           `, [latestRun.id, observationLimit])
         : [];
-      const trace: Array<Record<string, any>> = latestRun
+      const trace: Array<Record<string, any>> = diagnosticsVisible && latestRun
         ? all<Record<string, any>>(`
             SELECT *
             FROM (
@@ -1263,7 +1280,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
             ORDER BY created_at, span_key
           `, [latestRun.id, logLimit]).map(normalizeLegacyEvidenceTraceRow)
         : [];
-      const sessionLogs = latestRun
+      const sessionLogs = diagnosticsVisible && latestRun
         ? {
             messages: all(`
               SELECT *
@@ -1329,22 +1346,26 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
         : { messages: [], tool_calls: [], llm_calls: [], mcp_calls: [], skill_calls: [], artifacts: [] };
       return {
         mr,
-        jobs,
-        runs,
+        diagnostics_visible: diagnosticsVisible,
+        has_review_run: Boolean(latestRun),
+        jobs: diagnosticsVisible ? jobs : [],
+        runs: diagnosticsVisible ? runs : [],
         findings,
-        limits: {
+        limits: diagnosticsVisible ? {
           jobs: jobLimit,
           runs: runLimit,
           findings: findingLimit,
           logs: logLimit,
           observations: observationLimit,
           artifacts: artifactLimit
-        },
-        tool_observations: toolObservations,
-        trace,
-        session_logs: sessionLogs,
-        compare: compareRunsForMr(params.mrId, compareLimit),
-        quality: reviewQualityForRun(latestRun as Record<string, any> | undefined)
+        } : { findings: findingLimit },
+        tool_observations: diagnosticsVisible ? toolObservations : [],
+        trace: diagnosticsVisible ? trace : [],
+        session_logs: diagnosticsVisible
+          ? sessionLogs
+          : { messages: [], tool_calls: [], llm_calls: [], mcp_calls: [], skill_calls: [], artifacts: [] },
+        compare: diagnosticsVisible ? compareRunsForMr(params.mrId, compareLimit) : {},
+        quality: diagnosticsVisible ? reviewQualityForRun(latestRun as Record<string, any> | undefined) : {}
       };
     }),
     route("DELETE", "/api/mr-review/merge-requests/:mrId", ({ params, req }) => {
@@ -1373,11 +1394,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       return { ...result, ok: true, mr_id: params.mrId };
     }),
     route("GET", "/api/mr-review/merge-requests/:mrId/logs", ({ params, req, url }) => {
-      const mr = mergeRequestRepository.findDetailById(params.mrId) as any;
-      if (!mr) return notFound();
-      const repo = repositoryRepository.findProjectByRepositoryId(mr.repository_id) as { project_id: string } | undefined;
-      if (!repo) return notFound();
-      const denied = ensureProjectRole(repo.project_id, currentUserId(req), "developer");
+      const denied = ensureMrDiagnostics(params.mrId, req);
       if (denied) return denied;
       return unifiedReviewLogs(params.mrId, url.searchParams.get("run_id"));
     }),
@@ -1606,7 +1623,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       return updated;
     }),
     route("GET", "/api/mr-review/review-runs/:runId", ({ params, req }) => {
-      const denied = ensureRunRead(params.runId, req);
+      const denied = ensureRunDiagnostics(params.runId, req);
       if (denied) return denied;
       const run = get<Record<string, any>>("SELECT * FROM review_runs WHERE id = $1", [params.runId]);
       if (!run) return notFound();
@@ -1618,7 +1635,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       };
     }),
     route("GET", "/api/mr-review/review-runs/:runId/trace", ({ params, req, url }) => {
-      const denied = ensureRunRead(params.runId, req);
+      const denied = ensureRunDiagnostics(params.runId, req);
       if (denied) return denied;
       const limit = boundedQueryLimit(url, "limit", 240, 1000);
       const offset = boundedQueryOffset(url);
@@ -1639,7 +1656,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       };
     }),
     route("GET", "/api/mr-review/review-runs/:runId/session-logs", ({ params, req, url }) => {
-      const denied = ensureRunRead(params.runId, req);
+      const denied = ensureRunDiagnostics(params.runId, req);
       if (denied) return denied;
       const limit = boundedQueryLimit(url, "limit", 240, 1000);
       const offset = boundedQueryOffset(url);
@@ -1721,9 +1738,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       return { spans, events, messages, llm_calls: llmCalls, tool_calls: toolCalls, mcp_calls: mcpCalls, skill_calls: normalizeSkillCalls(events), page: { limit, offset, type } };
     }),
     route("GET", "/api/mr-review/review-runs/:runId/skill-trace", ({ params, req, url }) => {
-      const projectId = projectIdForRun(params.runId);
-      if (!projectId) return notFound();
-      const denied = ensureProjectRole(projectId, currentUserId(req), "project_admin");
+      const denied = ensureRunDiagnostics(params.runId, req);
       if (denied) return denied;
       const limit = boundedQueryLimit(url, "limit", 500, 1000);
       const offset = boundedQueryOffset(url);
@@ -1787,7 +1802,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       return { ...buildSkillTracePayload(run, events, llmCalls), judge_decisions: judgeDecisions, page: { limit, offset } };
     }),
     route("GET", "/api/mr-review/review-runs/:runId/artifacts", ({ params, req, url }) => {
-      const denied = ensureRunRead(params.runId, req);
+      const denied = ensureRunDiagnostics(params.runId, req);
       if (denied) return denied;
       const limit = boundedQueryLimit(url, "limit", 100, 1000);
       const offset = boundedQueryOffset(url);
@@ -1807,7 +1822,7 @@ export function createReviewRoutes(ctx: BackendRouteContext): Route[] {
       };
     }),
     route("GET", "/api/mr-review/merge-requests/:mrId/review-runs/compare", ({ params, req, url }) => {
-      const denied = ensureMrRead(params.mrId, req);
+      const denied = ensureMrDiagnostics(params.mrId, req);
       if (denied) return denied;
       return compareRunsForMr(params.mrId, boundedQueryLimit(url, "limit", 200, 1000));
     }),

@@ -1038,6 +1038,41 @@ export function FindingRow({
     };
   }, [description, descriptionExpanded]);
 
+  if (!showDiagnostics) {
+    return (
+      <article className={`finding-row reviewer ${alreadyPublished ? "already-published" : ""}`} onClick={onOpen} role="button" tabIndex={0} onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}>
+        <label onClick={(event) => event.stopPropagation()}>
+          <input type="checkbox" checked={Boolean(finding.selected)} onChange={onToggle} aria-label={`选择问题：${finding.title}`} />
+          <SeverityBadge severity={finding.severity} />
+        </label>
+        <span
+          className={`publish-state-badge ${finding.publish_state || "pending"}`}
+          title={alreadyPublished ? "该问题已提交过，再次提交时会自动跳过" : publishStateLabel(finding.publish_state || "pending")}
+        >
+          {publishStateLabel(finding.publish_state || "pending")}
+        </span>
+        <span className="confidence">{finding.confidence.toFixed(2)}</span>
+        <div className="finding-main">
+          <div className="finding-location-line">
+            <a title={finding.file_path}>{finding.file_path || "未定位文件"}</a>
+            <span>{formatFindingLineRange(finding)}</span>
+          </div>
+          <strong>{finding.title}</strong>
+          <small className="finding-description">{description}</small>
+        </div>
+        <button type="button" onClick={(event) => {
+          event.stopPropagation();
+          onFalsePositive();
+        }}>{finding.lifecycle_state === "false_positive" ? "已误报" : "标误报"}</button>
+      </article>
+    );
+  }
+
   return (
     <article className={`finding-row ${alreadyPublished ? "already-published" : ""}`} onClick={onOpen} role="button" tabIndex={0} onKeyDown={(event) => {
       if (event.key === "Enter" || event.key === " ") {

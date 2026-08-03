@@ -4572,6 +4572,54 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
 }
 
+.finding-row.reviewer {
+  min-height: 84px;
+  grid-template-columns: 78px 86px 48px minmax(0, 1fr) 66px;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 0;
+  padding: 10px 12px;
+}
+
+.finding-row.reviewer .finding-main {
+  gap: 4px;
+  padding-left: 0;
+}
+
+.finding-row.reviewer .finding-location-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  flex-wrap: nowrap;
+}
+
+.finding-row.reviewer .finding-location-line a,
+.finding-row.reviewer .finding-main strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.finding-row.reviewer .finding-description {
+  white-space: normal;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.finding-row.reviewer > button {
+  height: 30px;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 5px;
+  color: #46566e;
+}
+
+.finding-row.reviewer > button:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
 .finding-row.already-published {
   border-color: #ffd998;
   background: #fffbf5;

@@ -35,6 +35,9 @@ assert.match(review, /onPublish/);
 assert.match(review, /className="finding-row-header"/);
 assert.match(review, /className="finding-row-badges"/);
 assert.match(review, /className="finding-row-action"/);
+assert.match(review, /if \(!showDiagnostics\) \{[\s\S]*?className=\{`finding-row reviewer/);
+assert.match(review, /className=\{`finding-row reviewer[\s\S]*?<small className="finding-description">/);
+assert.match(review, /className=\{`finding-row reviewer[\s\S]*?finding\.lifecycle_state === "false_positive" \? "已误报" : "标误报"/);
 assert.match(review, /const \[descriptionExpanded, setDescriptionExpanded\] = useState\(false\)/);
 assert.match(review, /aria-expanded=\{descriptionExpanded\}/);
 assert.match(review, /descriptionExpanded \? "收起" : "展开全文"/);
@@ -43,5 +46,6 @@ assert.match(styles, /\.finding-row-header\s*\{[\s\S]*?display:\s*flex;/);
 assert.match(styles, /\.finding-row-badges\s*\{[\s\S]*?flex-wrap:\s*wrap;/);
 assert.match(styles, /\.finding-description\s*\{[\s\S]*?-webkit-line-clamp:\s*3;/);
 assert.match(styles, /\.finding-description\.expanded\s*\{[\s\S]*?-webkit-line-clamp:\s*unset;/);
+assert.match(styles, /\.finding-row\.reviewer\s*\{[\s\S]*?grid-template-columns:\s*78px 86px 48px minmax\(0, 1fr\) 66px;/);
 
 console.log(JSON.stringify({ ok: true, verified: "reviewer_detail_ui" }, null, 2));

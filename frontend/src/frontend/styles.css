@@ -3636,7 +3636,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   height: 100%;
   padding: 16px 20px;
   display: grid;
-  grid-template-columns: minmax(572px, 1.02fr) minmax(560px, 0.98fr);
+  grid-template-columns: minmax(572px, 0.94fr) minmax(640px, 1.06fr);
   gap: 16px;
   overflow: hidden;
 }
@@ -4559,14 +4559,14 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .finding-row {
   min-width: 0;
-  min-height: 84px;
+  min-height: 132px;
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: 8px;
   display: grid;
-  grid-template-columns: 78px 112px 94px 86px 48px minmax(0, 1fr) 66px;
-  align-items: center;
-  column-gap: 8px;
-  padding: 10px 12px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 14px 16px 16px;
   background: #fff;
   cursor: pointer;
   transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
@@ -4585,10 +4585,19 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   outline: none;
 }
 
+.finding-row-header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .finding-row label {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 0 0 auto;
 }
 
 .finding-row input {
@@ -4629,9 +4638,27 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   white-space: nowrap;
 }
 
-.confidence {
+.finding-row-badges {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.finding-confidence {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #6b7890;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.finding-confidence strong {
   color: #1f2937;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .finding-source-tag {
@@ -4696,24 +4723,26 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .finding-main {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 7px;
+  padding-left: 26px;
 }
 
 .finding-location-line {
   min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
 
 .finding-location-line a {
+  flex: 1 1 260px;
+  min-width: 0;
   color: var(--blue);
   text-decoration: none;
   font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .finding-location-line span {
@@ -4735,33 +4764,32 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .finding-main strong {
   font-size: 15px;
   font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.finding-main small {
-  color: #6b7890;
+  line-height: 1.5;
   white-space: normal;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .finding-description {
+  margin: 0;
   color: #4f6078;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.finding-row button {
-  height: 30px;
+.finding-row-action {
+  min-height: 30px;
+  margin-left: auto;
+  padding: 0 10px;
   border: 1px solid var(--line);
   background: #fff;
   border-radius: 5px;
   color: #46566e;
+  white-space: nowrap;
 }
 
-.finding-row button:hover {
+.finding-row-action:hover {
   border-color: var(--blue);
   color: var(--blue);
 }
@@ -6571,13 +6599,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   }
 
   .finding-row {
-    grid-template-columns: 62px 88px 82px 76px 38px minmax(0, 1fr) 54px;
-    column-gap: 6px;
     padding: 10px;
   }
 
   .agent-pill,
-  .finding-row button {
+  .finding-row-action {
     font-size: 12px;
   }
 }
@@ -7035,13 +7061,21 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   }
 
   .finding-row {
-    grid-template-columns: 1fr;
     row-gap: 8px;
     align-items: start;
   }
 
-  .finding-row label {
-    justify-content: space-between;
+  .finding-row-header {
+    align-items: flex-start;
+  }
+
+  .finding-row-action {
+    flex: 1 1 100%;
+    margin-left: 26px;
+  }
+
+  .finding-main {
+    padding-left: 0;
   }
 
   .modal-backdrop {

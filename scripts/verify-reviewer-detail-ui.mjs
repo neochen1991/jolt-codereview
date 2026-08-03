@@ -7,6 +7,7 @@ const read = (...parts) => readFileSync(path.join(root, ...parts), "utf8");
 const shared = read("frontend", "src", "frontend", "shared.ts");
 const app = read("frontend", "src", "frontend", "App.tsx");
 const review = read("frontend", "src", "frontend", "components", "ReviewViews.tsx");
+const styles = read("frontend", "src", "frontend", "styles.css");
 
 assert.match(shared, /diagnostics_visible\?: boolean/);
 assert.match(shared, /has_review_run\?: boolean/);
@@ -29,5 +30,16 @@ assert.match(review, /onFalsePositive=\{\(\) => onFalsePositive\(finding\)\}/);
 assert.match(review, /onExportMarkdown/);
 assert.match(review, /onRerun/);
 assert.match(review, /onPublish/);
+
+// Finding cards must keep reviewer content readable when diagnostic badges are hidden.
+assert.match(review, /className="finding-row-header"/);
+assert.match(review, /className="finding-row-badges"/);
+assert.match(review, /className="finding-confidence"/);
+assert.match(review, /className="finding-row-action"/);
+assert.match(review, /<p className="finding-description">/);
+assert.match(styles, /\.finding-row-header\s*\{[\s\S]*?display:\s*flex;/);
+assert.match(styles, /\.finding-row-badges\s*\{[\s\S]*?flex-wrap:\s*wrap;/);
+assert.match(styles, /\.finding-description\s*\{[\s\S]*?white-space:\s*pre-wrap;/);
+assert.doesNotMatch(styles, /\.finding-main small\s*\{[\s\S]*?-webkit-line-clamp:/);
 
 console.log(JSON.stringify({ ok: true, verified: "reviewer_detail_ui" }, null, 2));

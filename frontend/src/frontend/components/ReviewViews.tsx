@@ -1026,33 +1026,37 @@ export function FindingRow({
         onOpen();
       }
     }}>
-      <label onClick={(event) => event.stopPropagation()}>
-        <input type="checkbox" checked={Boolean(finding.selected)} onChange={onToggle} />
-        <SeverityBadge severity={finding.severity} />
-      </label>
-      {showDiagnostics && <span className="agent-pill">{agentLabel(finding.agent_id)}</span>}
-      {showDiagnostics && <span className={`finding-source-tag ${source.type}`} title={source.detail}>{source.label}</span>}
-      <span
-        className={`publish-state-badge ${finding.publish_state || "pending"}`}
-        title={alreadyPublished ? "该问题已提交过，再次提交时会自动跳过" : publishStateLabel(finding.publish_state || "pending")}
-      >
-        {publishStateLabel(finding.publish_state || "pending")}
-      </span>
-      <span className="confidence">{finding.confidence.toFixed(2)}</span>
+      <div className="finding-row-header">
+        <label onClick={(event) => event.stopPropagation()}>
+          <input type="checkbox" checked={Boolean(finding.selected)} onChange={onToggle} aria-label={`选择问题：${finding.title}`} />
+          <SeverityBadge severity={finding.severity} />
+        </label>
+        <div className="finding-row-badges">
+          {showDiagnostics && <span className="agent-pill">{agentLabel(finding.agent_id)}</span>}
+          {showDiagnostics && <span className={`finding-source-tag ${source.type}`} title={source.detail}>{source.label}</span>}
+          <span
+            className={`publish-state-badge ${finding.publish_state || "pending"}`}
+            title={alreadyPublished ? "该问题已提交过，再次提交时会自动跳过" : publishStateLabel(finding.publish_state || "pending")}
+          >
+            {publishStateLabel(finding.publish_state || "pending")}
+          </span>
+          <span className="finding-confidence"><span>置信度</span><strong>{finding.confidence.toFixed(2)}</strong></span>
+        </div>
+        <button className="finding-row-action" type="button" onClick={(event) => {
+          event.stopPropagation();
+          onFalsePositive();
+        }}>{finding.lifecycle_state === "false_positive" ? "已标记误报" : "标记误报"}</button>
+      </div>
       <div className="finding-main">
         <div className="finding-location-line">
           <a title={finding.file_path}>{finding.file_path || "未定位文件"}</a>
           <span>{formatFindingLineRange(finding)}</span>
         </div>
         <strong>{finding.title}</strong>
-        <small className="finding-description">
+        <p className="finding-description">
           {alreadyPublished ? "该问题已提交过，本次不会重复提交。" : (finding.problem_description || finding.recommendation || "暂无问题描述")}
-        </small>
+        </p>
       </div>
-      <button type="button" onClick={(event) => {
-        event.stopPropagation();
-        onFalsePositive();
-      }}>{finding.lifecycle_state === "false_positive" ? "已误报" : "标误报"}</button>
     </article>
   );
 }

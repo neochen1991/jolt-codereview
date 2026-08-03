@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / "worker"))
 from orchestration.judging.evidence_score import apply_evidence_score_policy
 from orchestration.nodes.judge_findings import (
     _critic_rejected,
+    calibrate_findings_with_change_intent,
     _merge_finding_metadata,
     _prune_low_signal_final_findings,
     build_quality_trace,
@@ -530,6 +531,61 @@ def test_explicit_bound_naming_rule_keeps_configured_severity() -> None:
     assert selected[0]["selected"] == 1, selected
 
 
+def test_safe_intent_unchanged_free_review_finding_is_rejected() -> None:
+    finding = agent_finding(
+        context_unit_id="unit-log",
+        causal_delta="unchanged",
+        covered_rules=[],
+        rule_id="",
+        title="旧代码存在宽泛异常捕获",
+        problem_description="问题位于日志增强附近，但没有被本次变更引入。",
+    )
+    units = [{"unit_id": "unit-log", "change_intent": {"labels": ["logging_only"], "semantic_delta": "behavior_preserving"}}]
+
+    kept, rejected = calibrate_findings_with_change_intent([finding], units)
+
+    assert kept == [], kept
+    assert rejected[0]["rejected_reasons"] == ["safe_intent_unchanged_by_diff"], rejected
+
+
+def test_safe_intent_unknown_causality_is_non_publishable() -> None:
+    finding = agent_finding(context_unit_id="unit-refactor", causal_delta="unknown", covered_rules=[], rule_id="")
+    units = [{"unit_id": "unit-refactor", "change_intent": {"labels": ["rename_or_move"], "semantic_delta": "behavior_preserving"}}]
+
+    kept, rejected = calibrate_findings_with_change_intent([finding], units)
+
+    assert rejected == [], rejected
+    assert kept[0]["severity"] == "info", kept
+    assert kept[0]["selected"] == 0, kept
+    assert "safe_intent_causality_unproven" in kept[0]["verification_flags"], kept
+
+
+def test_mixed_intent_introduced_defect_remains_selectable() -> None:
+    finding = agent_finding(context_unit_id="unit-mixed", causal_delta="introduced")
+    units = [{"unit_id": "unit-mixed", "change_intent": {"labels": ["mixed"], "semantic_delta": "unknown"}}]
+
+    kept, rejected = calibrate_findings_with_change_intent([finding], units)
+
+    assert rejected == [], rejected
+    assert kept[0]["severity"] == "medium", kept
+
+
+def test_bound_finding_is_not_suppressed_by_safe_intent() -> None:
+    finding = agent_finding(
+        context_unit_id="unit-log",
+        causal_delta="unchanged",
+        bound_rule_id="SEC-AUTHZ-002",
+        review_batch_label="bound_rule:SEC-AUTHZ-002",
+    )
+    units = [{"unit_id": "unit-log", "change_intent": {"labels": ["logging_only"], "semantic_delta": "behavior_preserving"}}]
+
+    kept, rejected = calibrate_findings_with_change_intent([finding], units)
+
+    assert rejected == [], rejected
+    assert kept[0]["severity"] == "medium", kept
+    assert "safe_intent_bound_rule_preserved" in kept[0]["verification_flags"], kept
+
+
 if __name__ == "__main__":
     test_agent_only_complete_finding_is_retained_without_tool_support()
     test_minimax_source_grounded_unattributed_finding_is_retained_for_review()
@@ -552,3 +608,7 @@ if __name__ == "__main__":
     test_free_review_naming_and_ordinary_logging_are_not_publishable_defects()
     test_sensitive_logging_is_not_downgraded_as_style()
     test_explicit_bound_naming_rule_keeps_configured_severity()
+    test_safe_intent_unchanged_free_review_finding_is_rejected()
+    test_safe_intent_unknown_causality_is_non_publishable()
+    test_mixed_intent_introduced_defect_remains_selectable()
+    test_bound_finding_is_not_suppressed_by_safe_intent()

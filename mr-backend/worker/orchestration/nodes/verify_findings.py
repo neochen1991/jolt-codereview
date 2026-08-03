@@ -418,6 +418,68 @@ def _evidence_matches_source(evidence: str, source_snippet: str) -> dict[str, An
     return {"matched": score >= 0.5, "score": round(score, 4)}
 
 
+def _catch_blocks(source: str) -> list[tuple[str, str]]:
+    """Return (caught variable, body) pairs without trusting generated prose."""
+    blocks: list[tuple[str, str]] = []
+    header = re.compile(r"catch\s*\(\s*[^)]*?\b([A-Za-z_$][\w$]*)\s*\)\s*\{")
+    for match in header.finditer(source):
+        depth = 1
+        index = match.end()
+        while index < len(source) and depth:
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+            index += 1
+        if depth == 0:
+            blocks.append((match.group(1), source[match.end() : index - 1]))
+    return blocks
+
+
+def _catch_body_preserves_failure(variable: str, body: str) -> bool:
+    escaped = re.escape(variable)
+    direct_rethrow = re.search(rf"\bthrow\s+{escaped}\s*;", body) is not None
+    wrapped_with_cause = re.search(rf"\bthrow\s+new\s+[\w$.<>]+\s*\([^;]*\b{escaped}\b[^;]*\)\s*;", body, re.DOTALL) is not None
+    restores_interrupt = re.search(r"Thread\s*\.\s*currentThread\s*\(\s*\)\s*\.\s*interrupt\s*\(\s*\)", body) is not None
+    return direct_rethrow or wrapped_with_cause or restores_interrupt
+
+
+def _finding_dereference_variables(finding: dict[str, Any]) -> list[str]:
+    candidate_text = " ".join(
+        str(part or "")
+        for part in (finding.get("evidence"), finding.get("title"), finding.get("problem_description"))
+    )
+    ignored = {"objects", "collections", "optional", "stream", "system", "thread"}
+    return list(
+        dict.fromkeys(
+            variable
+            for variable in re.findall(r"\b([a-z_$][\w$]*)\s*\.", candidate_text, re.IGNORECASE)
+            if variable.lower() not in ignored
+        )
+    )
+
+
+def _source_has_exiting_null_guard(source: str, variable: str) -> bool:
+    escaped = re.escape(variable)
+    dereference = re.search(rf"\b{escaped}\s*\.", source)
+    if dereference is None:
+        return False
+    prefix = source[: dereference.start()]
+    require_non_null = re.search(rf"\b(?:Objects\s*\.\s*)?requireNonNull\s*\(\s*{escaped}\b", prefix)
+    if require_non_null is not None:
+        return True
+    null_condition = rf"(?:{escaped}\s*==\s*null|null\s*==\s*{escaped})"
+    braced_guards = re.finditer(rf"if\s*\(\s*{null_condition}\s*\)\s*\{{([^{{}}]*)\}}", prefix, re.DOTALL)
+    if any(re.search(r"\b(?:return|throw|continue|break)\b", match.group(1)) for match in braced_guards):
+        return True
+    single_statement_guard = re.search(
+        rf"if\s*\(\s*{null_condition}\s*\)\s*(?:return\b[^;]*;|throw\b[^;]*;|continue\s*;|break\s*;)",
+        prefix,
+        re.DOTALL,
+    )
+    return single_statement_guard is not None
+
+
 def _source_contradiction_reasons(finding: dict[str, Any], source_snippet: str) -> list[str]:
     text = " ".join(
         str(part or "")
@@ -463,6 +525,33 @@ def _source_contradiction_reasons(finding: dict[str, Any], source_snippet: str) 
     )
     if mentions_no_try_with_resources and re.search(r"try\s*\([^)]*(InputStream|OutputStream|Connection|Statement|ResultSet|Reader|Writer)", source):
         reasons.append("source_has_try_with_resources")
+
+    claims_swallowed_failure = any(
+        marker in text
+        for marker in (
+            "吞",
+            "静默",
+            "swallow",
+            "没有把失败传播",
+            "未传播",
+            "没有恢复线程中断",
+            "未恢复线程中断",
+            "interrupt status",
+        )
+    )
+    catch_blocks = _catch_blocks(source)
+    if claims_swallowed_failure and len(catch_blocks) == 1:
+        variable, body = catch_blocks[0]
+        if _catch_body_preserves_failure(variable, body):
+            reasons.append("source_preserves_caught_exception")
+
+    claims_unguarded_dereference = any(
+        marker in text for marker in ("可能为空", "空指针", "null dereference", "未判空", "没有判空", "未校验", "解引用")
+    )
+    if claims_unguarded_dereference and any(
+        _source_has_exiting_null_guard(source, variable) for variable in _finding_dereference_variables(finding)
+    ):
+        reasons.append("source_has_null_guard")
 
     return reasons
 

@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / "worker"))
 
 from diff.slicer import source_snippet_loader_for_files
 from orchestration.nodes.verify_findings import _evidence_matches_source, _token_jaccard, verify_candidate_findings
+from static.heuristics import static_findings
 
 
 class VerifyFindingsSoftRejectTest(unittest.TestCase):
@@ -302,6 +303,140 @@ class VerifyFindingsSoftRejectTest(unittest.TestCase):
         accepted, rejected = self.verify(finding, source)
         self.assertEqual(accepted, [])
         self.assertIn("source_has_empty_guard_for_first_element", rejected[0]["rejected_reasons"])
+
+    def test_swallowed_exception_claim_rejected_when_catch_rethrows_with_cause(self):
+        finding = {
+            **self.base_finding("catch (Exception e)", confidence=0.9),
+            "agent_id": "coding_agent",
+            "severity": "medium",
+            "title": "异常被吞掉后继续执行",
+            "problem_description": "catch Exception 没有把失败传播给调用方。",
+            "covered_rules": ["CODE-EXC-003"],
+        }
+        source = """
+        try {
+            gateway.refund(order);
+        } catch (Exception e) {
+            throw new RefundFailedException("refund failed", e);
+        }
+        """
+
+        accepted, rejected = self.verify(finding, source)
+
+        self.assertEqual(accepted, [])
+        self.assertIn("source_preserves_caught_exception", rejected[0]["rejected_reasons"])
+
+    def test_swallowed_exception_claim_rejected_when_interrupt_is_restored(self):
+        finding = {
+            **self.base_finding("catch (InterruptedException e)", confidence=0.9),
+            "agent_id": "coding_agent",
+            "severity": "medium",
+            "title": "中断异常被吞掉",
+            "problem_description": "捕获中断后没有恢复线程中断状态。",
+            "covered_rules": ["CODE-EXC-003"],
+        }
+        source = """
+        try {
+            queue.take();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ProcessingInterruptedException(e);
+        }
+        """
+
+        accepted, rejected = self.verify(finding, source)
+
+        self.assertEqual(accepted, [])
+        self.assertIn("source_preserves_caught_exception", rejected[0]["rejected_reasons"])
+
+    def test_true_log_and_neutral_return_swallow_is_not_contradicted(self):
+        finding = {
+            **self.base_finding("catch (Exception e) { logger.warn(...); return Collections.emptyList(); }", confidence=0.9),
+            "agent_id": "coding_agent",
+            "severity": "medium",
+            "title": "查询异常被吞掉并返回空集合",
+            "problem_description": "调用失败被伪装成没有数据。",
+            "covered_rules": ["CODE-EXC-003"],
+        }
+        source = """
+        try {
+            return repository.loadRecent();
+        } catch (Exception e) {
+            logger.warn("load failed", e);
+            return Collections.emptyList();
+        }
+        """
+
+        accepted, rejected = self.verify(finding, source)
+
+        self.assertEqual(rejected, [])
+        self.assertEqual(len(accepted), 1)
+
+    def test_broad_catch_heuristic_does_not_claim_swallowing_without_body_evidence(self):
+        class ChangedFile:
+            filename = "src/RefundService.java"
+            patch = "@@ -10,0 +11,1 @@\n+} catch (Exception e) {"
+            additions = 1
+
+        findings = static_findings("coding_agent", [ChangedFile()], "head")
+        broad = next(item for item in findings if item["title"] == "Java 异常捕获过宽")
+
+        self.assertNotIn("吞", broad["problem_description"])
+
+    def test_null_dereference_claim_rejected_when_early_return_guard_exists(self):
+        finding = {
+            **self.base_finding("request.getId()", confidence=0.9),
+            "agent_id": "coding_agent",
+            "severity": "medium",
+            "title": "request 可能为空导致空指针",
+            "problem_description": "调用 request.getId() 前没有判空。",
+            "covered_rules": ["CODE-NULL-001"],
+        }
+        source = """
+        if (request == null) {
+            return;
+        }
+        repository.load(request.getId());
+        """
+
+        accepted, rejected = self.verify(finding, source)
+
+        self.assertEqual(accepted, [])
+        self.assertIn("source_has_null_guard", rejected[0]["rejected_reasons"])
+
+    def test_null_dereference_claim_rejected_when_require_non_null_exists(self):
+        finding = {
+            **self.base_finding("request.getId()", confidence=0.9),
+            "agent_id": "coding_agent",
+            "severity": "medium",
+            "title": "request 可能为空导致空指针",
+            "problem_description": "request 未校验就被解引用。",
+            "covered_rules": ["CODE-NULL-001"],
+        }
+        source = """
+        Objects.requireNonNull(request, "request");
+        repository.load(request.getId());
+        """
+
+        accepted, rejected = self.verify(finding, source)
+
+        self.assertEqual(accepted, [])
+        self.assertIn("source_has_null_guard", rejected[0]["rejected_reasons"])
+
+    def test_genuine_unguarded_null_dereference_is_not_contradicted(self):
+        finding = {
+            **self.base_finding("request.getId()", confidence=0.9),
+            "agent_id": "coding_agent",
+            "severity": "medium",
+            "title": "request 可能为空导致空指针",
+            "problem_description": "request 未校验就被解引用。",
+            "covered_rules": ["CODE-NULL-001"],
+        }
+
+        accepted, rejected = self.verify(finding, "repository.load(request.getId());")
+
+        self.assertEqual(rejected, [])
+        self.assertEqual(len(accepted), 1)
 
 
 if __name__ == "__main__":

@@ -3701,6 +3701,72 @@ def _mark_promoted_rejection_sources(
         )
 
 
+def _context_unit_intents(context_units: list[Any]) -> dict[str, dict[str, Any]]:
+    intents: dict[str, dict[str, Any]] = {}
+    for unit in context_units:
+        if isinstance(unit, dict):
+            unit_id = str(unit.get("unit_id") or "")
+            intent = unit.get("change_intent")
+        else:
+            unit_id = str(getattr(unit, "unit_id", "") or "")
+            intent = getattr(unit, "change_intent", None)
+        if not unit_id or intent is None:
+            continue
+        if isinstance(intent, dict):
+            payload = dict(intent)
+        elif hasattr(intent, "to_dict"):
+            payload = dict(intent.to_dict())
+        else:
+            continue
+        intents[unit_id] = payload
+    return intents
+
+
+def calibrate_findings_with_change_intent(
+    findings: list[dict[str, Any]],
+    context_units: list[Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Raise proof requirements for free review on deterministic safe-intent units."""
+    intents = _context_unit_intents(context_units)
+    kept: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for finding in findings:
+        item = dict(finding)
+        intent = intents.get(str(item.get("context_unit_id") or ""))
+        if not intent or str(intent.get("semantic_delta") or "") != "behavior_preserving":
+            kept.append(item)
+            continue
+        item["change_intent"] = intent
+        flags = list(item.get("verification_flags") or [])
+        if _has_bound_authoritative_rule(item):
+            if "safe_intent_bound_rule_preserved" not in flags:
+                flags.append("safe_intent_bound_rule_preserved")
+            item["verification_flags"] = flags
+            kept.append(item)
+            continue
+        if _has_exact_promoted_tool_rule(item):
+            if "safe_intent_strong_tool_evidence" not in flags:
+                flags.append("safe_intent_strong_tool_evidence")
+            item["verification_flags"] = flags
+            kept.append(item)
+            continue
+        causal_delta = str(item.get("causal_delta") or "unknown").strip().lower()
+        if causal_delta in {"unchanged", "mitigated"}:
+            rejected.append({**item, "rejected_reasons": ["safe_intent_unchanged_by_diff"]})
+            continue
+        if causal_delta in {"introduced", "worsened"} and str(item.get("evidence") or "").strip():
+            kept.append(item)
+            continue
+        if "safe_intent_causality_unproven" not in flags:
+            flags.append("safe_intent_causality_unproven")
+        item["verification_flags"] = flags
+        item["severity"] = "info"
+        item["selected"] = 0
+        item["judge_adjustment"] = "safe_intent_causality_unproven"
+        kept.append(item)
+    return kept, rejected
+
+
 def judge_candidate_findings(
     findings: list[dict[str, Any]],
     conflicts: list[dict[str, Any]],
@@ -3899,6 +3965,11 @@ def make_judge_findings_node(
         )
         final_findings, diff_anchor_rejections = filter_to_diff_introduced_findings(final_findings, state.get("files") or [])
         judge_rejections.extend(diff_anchor_rejections)
+        final_findings, intent_rejections = calibrate_findings_with_change_intent(
+            final_findings,
+            state.get("context_units") or [],
+        )
+        judge_rejections.extend(intent_rejections)
         history = load_rule_precision_history(conn, project_id)
         final_findings, calibration_rejections = calibrate_findings_with_history(final_findings, history)
         judge_rejections.extend(calibration_rejections)

@@ -66,7 +66,7 @@ def static_findings(agent_id: str, files: list[Any], head_sha: str) -> list[dict
                 if "except:" in lowered or "catch (error)" in lowered:
                     findings.append(make_finding(agent_id, "medium", changed, line_no, "异常处理过宽", "新增异常处理可能吞掉关键信息，影响排障和业务一致性。", "限定异常类型，记录必要上下文，并保留失败路径。", text, head_sha))
                 if "catch (exception" in lowered or "catch (throwable" in lowered:
-                    findings.append(make_finding(agent_id, "medium", changed, line_no, "Java 异常捕获过宽", "新增 Java 代码捕获 Exception/Throwable，容易吞掉关键失败并破坏事务或审计语义。", "捕获明确异常类型，记录上下文并保留失败传播或补偿逻辑。", text, head_sha))
+                    findings.append(make_finding(agent_id, "medium", changed, line_no, "Java 异常捕获过宽", "新增 Java 代码捕获 Exception/Throwable，捕获范围较宽，需要结合 catch 体确认失败传播、补偿和审计语义。", "捕获明确异常类型，记录上下文并保留失败传播或补偿逻辑。", text, head_sha))
                 if " as any" in lowered or ": any" in lowered:
                     findings.append(make_finding(agent_id, "low", changed, line_no, "新增宽泛 any 类型", "新增代码使用 any 逃避类型约束，可能掩盖边界和兼容性问题。", "收窄类型定义，或在边界处显式解析和校验外部数据。", text, head_sha))
             elif agent_id == "performance_agent":

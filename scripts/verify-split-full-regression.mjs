@@ -16,6 +16,7 @@ if (isWin) {
 }
 
 const keepTmp = process.env.KEEP_SPLIT_REGRESSION_TMP === "1";
+const keepServices = process.env.KEEP_SPLIT_REGRESSION_SERVICES === "1";
 const skipInstall = process.env.SPLIT_REGRESSION_SKIP_INSTALL === "1";
 const tmpRoot = await mkdtemp(path.join(tmpdir(), "jolt-split-regression-"));
 const pgData = path.join(tmpRoot, "pgdata");
@@ -578,8 +579,13 @@ async function main() {
   await http(`/api/full-review/jobs/${fullJob.id}/cancel`, { method: "POST", headers: auth, body: "{}" });
 
   const fixture = await seedReviewFixture(mrDir);
-  run(npmCommand, ["run", "worker:once"], { cwd: mrDir, env: serviceEnv, stdio: "inherit" });
-  const job = await queryOne("SELECT status, attempt FROM review_jobs WHERE id = $1", [fixture.jobId]);
+  const job = await waitFor("fixture review job", async () => {
+    const row = await queryOne("SELECT status, attempt FROM review_jobs WHERE id = $1", [fixture.jobId]);
+    if (!row || ["queued", "fetching", "pre_scanning", "reviewing", "judging", "running"].includes(String(row.status))) {
+      throw new Error(`fixture review job is still active: ${JSON.stringify(row)}`);
+    }
+    return row;
+  }, 1200);
   if (!job || ["failed", "dead_letter"].includes(job.status)) {
     throw new Error(`review worker failed for fixture job: ${JSON.stringify(job)}`);
   }
@@ -656,6 +662,11 @@ async function main() {
     tmpRoot,
     ports: { pg: pgPort, common: commonPort, mr: mrPort, frontend: frontendPort },
     services: { common: commonHealth.service, mr: mrHealth.service },
+    accounts: {
+      root: { username: "local-admin", password: "admin123" },
+      project_admin: { username: projectAdminUsername, password: "projectadmin123" },
+      reviewer: { username: reviewerUsername, password: "reviewer123" }
+    },
     project: { id: projectId, repository_id: repo.id, full_review_job_id: fullJob.id },
     fixture: {
       mr_id: fixture.mrId,
@@ -671,6 +682,13 @@ async function main() {
     }
   };
   console.log(JSON.stringify(result, null, 2));
+  if (keepServices) {
+    console.log("Services kept running for browser verification; send SIGINT to stop and clean up.");
+    await new Promise((resolve) => {
+      process.once("SIGINT", resolve);
+      process.once("SIGTERM", resolve);
+    });
+  }
 }
 
 try {

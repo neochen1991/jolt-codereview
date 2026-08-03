@@ -597,6 +597,7 @@ export function DetailPanel({
               <FindingRow
                 key={finding.id}
                 finding={finding}
+                showDiagnostics={showDiagnostics}
                 onToggle={() => onToggleFinding(finding)}
                 onFalsePositive={() => onFalsePositive(finding)}
                 onOpen={() => setActiveFinding(finding)}
@@ -651,6 +652,7 @@ export function DetailPanel({
           finding={activeFinding}
           mr={detail.mr}
           projectId={projectId}
+          showDiagnostics={showDiagnostics}
           onClose={() => setActiveFinding(null)}
         />
       )}
@@ -1004,11 +1006,13 @@ export function MetricCard({ icon, value, label, sub, danger }: { icon: React.Re
 
 export function FindingRow({
   finding,
+  showDiagnostics,
   onToggle,
   onFalsePositive,
   onOpen
 }: {
   finding: Finding;
+  showDiagnostics: boolean;
   onToggle: () => void;
   onFalsePositive: () => void;
   onOpen: () => void;
@@ -1026,8 +1030,8 @@ export function FindingRow({
         <input type="checkbox" checked={Boolean(finding.selected)} onChange={onToggle} />
         <SeverityBadge severity={finding.severity} />
       </label>
-      <span className="agent-pill">{agentLabel(finding.agent_id)}</span>
-      <span className={`finding-source-tag ${source.type}`} title={source.detail}>{source.label}</span>
+      {showDiagnostics && <span className="agent-pill">{agentLabel(finding.agent_id)}</span>}
+      {showDiagnostics && <span className={`finding-source-tag ${source.type}`} title={source.detail}>{source.label}</span>}
       <span
         className={`publish-state-badge ${finding.publish_state || "pending"}`}
         title={alreadyPublished ? "该问题已提交过，再次提交时会自动跳过" : publishStateLabel(finding.publish_state || "pending")}
@@ -1061,11 +1065,13 @@ export function FindingDetailModal({
   finding,
   mr,
   projectId,
+  showDiagnostics,
   onClose
 }: {
   finding: Finding;
   mr: MergeRequest;
   projectId: string;
+  showDiagnostics: boolean;
   onClose: () => void;
 }) {
   const [sourceCode, setSourceCode] = useState("");
@@ -1153,6 +1159,11 @@ export function FindingDetailModal({
         setRuleDetails([]);
         return;
       }
+      if (!showDiagnostics) {
+        setRuleDetails(ruleIds.map((rule) => ({ rule_id: rule, title: rule })));
+        setRuleDetailsLoading(false);
+        return;
+      }
       setRuleDetailsLoading(true);
       try {
         const result = await api<{ items: RuleDetail[] }>(
@@ -1169,7 +1180,7 @@ export function FindingDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [projectId, ruleKey]);
+  }, [projectId, ruleKey, showDiagnostics]);
   const problemLines = sourceCode
     ? sourceCodeWindow(sourceCode, finding.line_start || 1, finding.line_end || finding.line_start || 1)
     : sourcePatch
@@ -1197,8 +1208,8 @@ export function FindingDetailModal({
           <div className="finding-modal-title">
             <div className="finding-modal-kicker">
               <SeverityBadge severity={finding.severity} />
-              <span className={`finding-source-tag ${source.type}`}>{source.label}</span>
-              <span>{agentLabel(finding.agent_id)}</span>
+              {showDiagnostics && <span className={`finding-source-tag ${source.type}`}>{source.label}</span>}
+              {showDiagnostics && <span>{agentLabel(finding.agent_id)}</span>}
               <span>置信度 {finding.confidence.toFixed(2)}</span>
               {finding.publish_state && (
                 <span className={`publish-state-badge ${finding.publish_state}`}>
@@ -1269,13 +1280,14 @@ export function FindingDetailModal({
           </div>
         </details>
 
-        <details className="finding-collapsible-card">
-          <summary>
-            <span>质量追溯</span>
-            <em>{evidenceCount} 条证据</em>
-          </summary>
-          <div className="finding-detail-section finding-trace-section">
-            <dl className="trace-list">
+        {showDiagnostics && (
+          <details className="finding-collapsible-card">
+            <summary>
+              <span>质量追溯</span>
+              <em>{evidenceCount} 条证据</em>
+            </summary>
+            <div className="finding-detail-section finding-trace-section">
+              <dl className="trace-list">
               <div>
                 <dt>专家</dt>
                 <dd>{agentLabel(String(qualityTrace.agent_id || finding.agent_id))}</dd>
@@ -1312,16 +1324,18 @@ export function FindingDetailModal({
                 <dt>去重指纹</dt>
                 <dd>{String(qualityTrace.dedupe_hash || finding.id)}</dd>
               </div>
-            </dl>
-          </div>
-        </details>
+              </dl>
+            </div>
+          </details>
+        )}
 
-        <details className="finding-collapsible-card">
-          <summary>
-            <span>工具证据</span>
-            <em>{sourceObservations.length || 0} 条</em>
-          </summary>
-          <div className="finding-detail-section">
+        {showDiagnostics && (
+          <details className="finding-collapsible-card">
+            <summary>
+              <span>工具证据</span>
+              <em>{sourceObservations.length || 0} 条</em>
+            </summary>
+            <div className="finding-detail-section">
             {sourceObservations.length ? (
               <div className="tool-evidence-list">
                 {sourceObservations.map((item, index) => (
@@ -1355,8 +1369,9 @@ export function FindingDetailModal({
               <small>该问题由专家直接提出，当前未匹配到静态工具证据。</small>
             )}
             {toolProvenance.length > sourceObservations.length && <small>同时记录了 {toolProvenance.length} 条 provenance 元数据。</small>}
-          </div>
-        </details>
+            </div>
+          </details>
+        )}
       </section>
     </div>
   );

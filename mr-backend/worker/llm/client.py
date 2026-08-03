@@ -300,6 +300,7 @@ def review_findings_response_format() -> dict[str, Any]:
             "problem_description": {"type": "string"},
             "trigger_condition": {"type": "string"},
             "impact": {"type": "string"},
+            "causal_delta": {"type": "string"},
             "semantic_evidence": {
                 "type": "array",
                 "items": {
@@ -551,6 +552,7 @@ def parse_llm_findings(agent_id: str, content: str, files: list[Any], max_findin
                 "problem_description": str(item.get("problem_description") or title),
                 "trigger_condition": str(item.get("trigger_condition") or "").strip()[:1000],
                 "impact": str(item.get("impact") or "").strip()[:1000],
+                "causal_delta": str(item.get("causal_delta") or "unknown").strip().lower()[:40],
                 "semantic_evidence": [
                     {
                         "symbol_id": str(ref.get("symbol_id") or "")[:300],

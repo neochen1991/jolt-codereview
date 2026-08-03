@@ -657,6 +657,33 @@ def test_context_prompt_has_stable_complete_skill_prefix_and_dynamic_batch_body(
     assert safety_a["stable_prefix_hash"] == safety_b["stable_prefix_hash"]
 
 
+def test_intent_prompt_requires_causality_without_skipping_bound_rules() -> None:
+    changed = ChangedFile(
+        "src/main/java/com/acme/RefundService.java",
+        "@@ -10,1 +10,2 @@\n process(refund);\n+logger.info(\"refund processed {}\", refund.id());",
+    )
+    unit = plan_context_units(
+        [changed],
+        source_file_contents={changed.filename: "process(refund);\nlogger.info(\"refund processed {}\", refund.id());\n"},
+        related_context={},
+        skill_checkpoint_ids=["REFUND-AUDIT-001"],
+    ).units[0]
+    agent = {
+        **_agent(),
+        "bound_rules": [{"rule_id": "REFUND-AUDIT-001", "required_evidence": "missing audit write"}],
+        "bound_rule_batch": {"rule_ids": ["REFUND-AUDIT-001"]},
+    }
+
+    prompt, _ = build_context_units_prompt(agent, [unit], "# COMPLETE SKILL")
+    payload = json.loads(prompt)
+
+    assert payload["structured_diff"]["items"][0]["change_intent"]["labels"] == ["logging_only"]
+    assert "causal_delta" in payload["task"]
+    assert "introduced" in payload["task"] and "worsened" in payload["task"]
+    assert "不能跳过 Skill" in payload["task"]
+    assert "REFUND-AUDIT-001" in prompt
+
+
 def test_input_composition_reports_all_prompt_token_categories() -> None:
     compose = getattr(llm_client, "input_composition_for_prompt", None)
     assert callable(compose), "expert client must expose deterministic input composition"
@@ -772,6 +799,7 @@ if __name__ == "__main__":
     test_context_unit_prompt_scopes_related_context_to_current_change_graph()
     test_context_unit_prompt_limits_dependency_source_payload()
     test_context_prompt_has_stable_complete_skill_prefix_and_dynamic_batch_body()
+    test_intent_prompt_requires_causality_without_skipping_bound_rules()
     test_input_composition_reports_all_prompt_token_categories()
     test_expert_llm_logs_input_composition_when_provider_is_unavailable()
     print("context planner tests passed")

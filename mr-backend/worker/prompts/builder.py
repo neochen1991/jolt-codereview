@@ -361,7 +361,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
         "static_tool_scan_findings": static_tool_scan_findings,
         "task": (
             "请只找高置信代码问题，输出 JSON 数组。字段：severity, confidence, file_path, "
-            "line_start, line_end, title, problem_description, trigger_condition, impact, semantic_evidence, evidence_path, recommendation, suggested_code, evidence, covered_rules, skipped_rules。"
+            "line_start, line_end, title, problem_description, trigger_condition, impact, causal_delta, semantic_evidence, evidence_path, recommendation, suggested_code, evidence, covered_rules, skipped_rules。"
             "除 file_path、rule_id、类名、方法名、代码片段和必要技术专有名词外，"
             "title、problem_description、recommendation、evidence 必须使用中文回答。"
             f"每个专家最多输出 {max_agent_findings} 个最高置信 finding，必须保证 JSON 数组完整闭合；"
@@ -498,6 +498,11 @@ def build_context_units_prompt(agent: dict[str, Any], context_units: list[Any], 
         + " 当前输入是实际执行的 ContextUnit 批次；必须完整检查 structured_diff.items 中每个 item 的所有 hunk_ids，"
         + "并使用 source_text 理解符号上下文，不能只检查 patch_text 的开头。"
         + "如果输出 finding，尽量填写对应的 context_unit_id；不能确定时必须确保 file_path/line_start 能唯一落到某个 ContextUnit。"
+        + "每个 finding 必须填写 causal_delta=introduced|worsened|unchanged|mitigated|unknown；"
+        + "对于 change_intent.semantic_delta=behavior_preserving 的自由检视，只有真实源码证据证明 introduced 或 worsened 才能输出正式缺陷，"
+        + "不能把上下文中的既有问题重新锚定到日志、注释、重命名或移动行。"
+        + "change_intent 不能跳过 Skill、绑定 Markdown 规范或其 checkpoint；这些规则仍须逐条检查并按原始 required_evidence、反例和 skip 条件裁决。"
+        + "unknown 或 mixed 意图按普通检视处理，不得推断为安全变更。"
         + "不要引用 input_budget_policy 之外未出现在本次 prompt 的源码、patch 或全量符号索引。"
     )
     return json.dumps(payload, ensure_ascii=False), {

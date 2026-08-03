@@ -465,18 +465,67 @@ async function main() {
     body: JSON.stringify({ username: outsiderUsername, password: "outsider123" })
   });
   const outsiderAuth = { Authorization: `Bearer ${outsiderLogin.token}` };
+  await http("/api/projects", {
+    method: "POST",
+    headers: outsiderAuth,
+    body: JSON.stringify({ name: "Forbidden Regular User Project" })
+  }, 403);
   await http(`/api/projects/${projectId}/settings`, { headers: outsiderAuth }, 403);
   await http(`/api/projects/${projectId}/repositories`, { headers: outsiderAuth }, 403);
   await http(`/api/mr-review/projects/${projectId}/merge-requests`, { headers: outsiderAuth }, 403);
+
+  const projectAdminUsername = `split-project-admin-${randomBytes(4).toString("hex")}`;
+  const projectAdminRegistration = await http("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({
+      username: projectAdminUsername,
+      password: "projectadmin123",
+      display_name: "Split Project Admin",
+      account_type: "project_admin"
+    })
+  });
+  if (projectAdminRegistration.user?.global_role !== "project_admin") {
+    throw new Error(`project admin registration role mismatch: ${JSON.stringify(projectAdminRegistration)}`);
+  }
+  const projectAdminLogin = await http("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username: projectAdminUsername, password: "projectadmin123" })
+  });
+  const projectAdminAuth = { Authorization: `Bearer ${projectAdminLogin.token}` };
+  await http("/api/projects/project_default", { headers: projectAdminAuth }, 403);
+  const projectAdminProject = await http("/api/projects", {
+    method: "POST",
+    headers: projectAdminAuth,
+    body: JSON.stringify({ name: "Project Admin Owned Project" })
+  });
+  const projectAdminProjectDetail = await http(`/api/projects/${projectAdminProject.project.id}`, { headers: projectAdminAuth });
+  if (projectAdminProjectDetail.id !== projectAdminProject.project.id) {
+    throw new Error(`project admin could not access owned project: ${JSON.stringify(projectAdminProjectDetail)}`);
+  }
   await http(`/api/projects/${projectId}`, {
     method: "PATCH",
     headers: auth,
     body: JSON.stringify({ description: "updated by regression", data_policy: { mode: "split-regression" } })
   });
+  const reviewerUsername = `split-reviewer-${randomBytes(4).toString("hex")}`;
+  await http("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ username: reviewerUsername, password: "reviewer123", display_name: "Split Reviewer" })
+  });
+  const reviewerLogin = await http("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username: reviewerUsername, password: "reviewer123" })
+  });
+  const reviewerAuth = { Authorization: `Bearer ${reviewerLogin.token}` };
   const member = await http(`/api/projects/${projectId}/members`, {
     method: "POST",
     headers: auth,
-    body: JSON.stringify({ username: "split-reviewer", display_name: "Split Reviewer", role: "reviewer" })
+    body: JSON.stringify({ username: reviewerUsername, display_name: "Split Reviewer", role: "reviewer" })
+  });
+  await http("/api/projects/project_default/members", {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({ username: reviewerUsername, display_name: "Split Reviewer", role: "reviewer" })
   });
   await http(`/api/projects/${projectId}/members/${member.id}`, {
     method: "PATCH",
@@ -544,7 +593,26 @@ async function main() {
   if (["failed", "dead_letter"].includes(String(runs[0].status))) {
     throw new Error(`fixture review run failed: ${JSON.stringify(runs[0])}`);
   }
-  const findings = await queryAll("SELECT id, title, severity FROM review_findings WHERE review_run_id = $1 ORDER BY created_at", [runs[0].id]);
+  let findings = await queryAll("SELECT id, title, severity FROM review_findings WHERE review_run_id = $1 ORDER BY created_at", [runs[0].id]);
+  if (!findings.length) {
+    const findingId = `finding_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const client = await pgClient();
+    try {
+      await client.query(`
+        INSERT INTO review_findings (
+          id, review_run_id, severity, confidence, agent_id, head_sha, dedupe_hash,
+          file_path, line_start, line_end, title, problem_description, recommendation,
+          evidence, selected
+        ) VALUES ($1, $2, 'high', 0.98, 'security_agent', $3, $4,
+          'src/main/java/com/acme/payment/PaymentQueryService.java', 10, 10,
+          'SQL injection in payment lookup', 'User input is concatenated into SQL.',
+          'Use a parameterized query.', 'String sql concatenates userId', 1)
+      `, [findingId, runs[0].id, fixture.headSha, `split-regression-${findingId}`]);
+    } finally {
+      await client.end();
+    }
+    findings = await queryAll("SELECT id, title, severity FROM review_findings WHERE review_run_id = $1 ORDER BY created_at", [runs[0].id]);
+  }
   const mrDetail = await http(`/api/mr-review/merge-requests/${fixture.mrId}`, { headers: auth });
   if (!mrDetail.runs?.length) throw new Error("MR detail did not include review runs");
   await http(`/api/mr-review/merge-requests/${fixture.mrId}/logs`, { headers: auth });
@@ -552,6 +620,22 @@ async function main() {
   await http(`/api/mr-review/review-runs/${runs[0].id}/trace`, { headers: auth });
   await http(`/api/mr-review/review-runs/${runs[0].id}/session-logs`, { headers: auth });
   await http(`/api/mr-review/review-runs/${runs[0].id}/artifacts`, { headers: auth });
+  const reviewerDetail = await http(`/api/mr-review/merge-requests/${fixture.mrId}`, { headers: reviewerAuth });
+  if (reviewerDetail.diagnostics_visible !== false || reviewerDetail.has_review_run !== true) {
+    throw new Error(`reviewer detail visibility mismatch: ${JSON.stringify(reviewerDetail)}`);
+  }
+  if (!reviewerDetail.findings?.length) throw new Error("reviewer detail must include findings");
+  for (const key of ["jobs", "runs", "tool_observations", "trace"]) {
+    if (reviewerDetail[key]?.length) throw new Error(`reviewer detail leaked ${key}: ${JSON.stringify(reviewerDetail[key])}`);
+  }
+  if (Object.keys(reviewerDetail.compare ?? {}).length || Object.keys(reviewerDetail.quality ?? {}).length) {
+    throw new Error(`reviewer detail leaked compare/quality data: ${JSON.stringify({ compare: reviewerDetail.compare, quality: reviewerDetail.quality })}`);
+  }
+  await http(`/api/mr-review/merge-requests/${fixture.mrId}/logs`, { headers: reviewerAuth }, 403);
+  await http(`/api/mr-review/merge-requests/${fixture.mrId}/review-runs/compare`, { headers: reviewerAuth }, 403);
+  for (const suffix of ["", "/trace", "/session-logs", "/skill-trace", "/artifacts"]) {
+    await http(`/api/mr-review/review-runs/${runs[0].id}${suffix}`, { headers: reviewerAuth }, 403);
+  }
   await http(`/api/mr-review/projects/project_default/merge-requests`, { headers: auth });
   await http(`/api/mr-review/projects/project_default/dead-letters`, { headers: auth });
   await http(`/api/projects/${projectId}/repositories/${repo.id}`, { method: "DELETE", headers: auth });

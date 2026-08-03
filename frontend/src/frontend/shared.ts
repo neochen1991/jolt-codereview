@@ -194,6 +194,8 @@ export type RuleDetail = {
 
 export type Detail = {
   mr: MergeRequest & { external_repo_id: string };
+  diagnostics_visible?: boolean;
+  has_review_run?: boolean;
   jobs: Array<Record<string, unknown>>;
   runs: Array<Record<string, unknown>>;
   findings: Finding[];

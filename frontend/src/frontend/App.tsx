@@ -980,6 +980,7 @@ export function App() {
                 onExportMarkdown={exportMarkdown}
                 onPublish={() => publish(false)}
                 projectId={activeProjectId}
+                canViewDiagnostics={canManageProject}
               />
             </section>
           </div>

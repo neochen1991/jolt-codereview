@@ -53,6 +53,7 @@
     "verify:registration-account-type-ui": "node scripts/verify-registration-account-type-ui.mjs",
     "verify:review-visibility-policy": "npm --prefix mr-backend run build && node scripts/test-review-visibility-policy.mjs",
     "verify:review-diagnostic-authorization": "npm run verify:review-visibility-policy && node scripts/verify-review-diagnostic-authorization.mjs",
+    "verify:reviewer-detail-ui": "node scripts/verify-reviewer-detail-ui.mjs",
     "verify:runtime-cleanup": "node scripts/verify-runtime-cleanup.mjs",
     "verify:learned-examples": "python3 scripts/verify_learned_examples.py",
     "verify:llm-schema-cache": "python3 scripts/verify_llm_schema_cache.py",

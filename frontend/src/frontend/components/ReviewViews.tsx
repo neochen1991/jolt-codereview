@@ -497,7 +497,8 @@ export function DetailPanel({
   onBulkFalsePositive,
   onExportMarkdown,
   onPublish,
-  projectId
+  projectId,
+  canViewDiagnostics
 }: {
   detail: Detail | null;
   busy: boolean;
@@ -509,17 +510,23 @@ export function DetailPanel({
   onExportMarkdown: () => void;
   onPublish: () => void;
   projectId: string;
+  canViewDiagnostics: boolean;
 }) {
   const [tab, setTab] = useState<"findings" | "process" | "tools">("findings");
   const [activeFinding, setActiveFinding] = useState<Finding | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   const activeStatus = detail ? effectiveReviewStatus(detail) : "";
+  const showDiagnostics = Boolean(detail && canViewDiagnostics && detail.diagnostics_visible !== false);
   useEffect(() => {
     if (!ACTIVE_REVIEW_STATUSES.includes(activeStatus)) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [activeStatus]);
+
+  useEffect(() => {
+    if (!showDiagnostics && tab !== "findings") setTab("findings");
+  }, [showDiagnostics, tab]);
 
   if (!detail) {
     return (
@@ -531,7 +538,7 @@ export function DetailPanel({
     );
   }
 
-  const hasRun = detail.runs.length > 0;
+  const hasRun = detail.has_review_run ?? detail.runs.length > 0;
   const selectedCount = detail.findings.filter((finding) => finding.selected).length;
   const selectedAlreadyPublishedCount = detail.findings.filter((finding) => finding.selected && isAlreadyPublishedFinding(finding)).length;
   const allSelected = detail.findings.length > 0 && selectedCount === detail.findings.length;
@@ -561,26 +568,28 @@ export function DetailPanel({
           </p>
         </div>
 
-        <ReviewProgressPanel detail={detail} status={currentStatus} />
+        <ReviewProgressPanel detail={detail} status={currentStatus} showDiagnostics={showDiagnostics} />
 
         <div className="metric-row">
           <MetricCard icon={<Code2 />} value={detail.findings.length} label="个问题" sub="待确认问题" />
           <MetricCard icon={<ShieldCheck />} value={highCount} label="高危" sub="高危问题" danger />
-          <MetricCard icon={<Users />} value={agentCount} label="个 Agent" sub="参与检视" />
+          {showDiagnostics && <MetricCard icon={<Users />} value={agentCount} label="个 Agent" sub="参与检视" />}
           <MetricCard icon={<Clock3 />} value={duration} label="" sub="检视耗时" />
         </div>
 
-        <div className="detail-tabs">
-          {[
-            ["findings", "检视问题"],
-            ["process", "检视过程"],
-            ["tools", `工具结果 (${detail.tool_observations?.length || 0})`]
-          ].map(([key, label]) => (
-            <button key={key} type="button" className={tab === key ? "active" : ""} onClick={() => setTab(key as typeof tab)}>
-              {label}
-            </button>
-          ))}
-        </div>
+        {showDiagnostics && (
+          <div className="detail-tabs">
+            {[
+              ["findings", "检视问题"],
+              ["process", "检视过程"],
+              ["tools", `工具结果 (${detail.tool_observations?.length || 0})`]
+            ].map(([key, label]) => (
+              <button key={key} type="button" className={tab === key ? "active" : ""} onClick={() => setTab(key as typeof tab)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {tab === "findings" && (
           <div className="findings-list">
@@ -593,8 +602,8 @@ export function DetailPanel({
                 onOpen={() => setActiveFinding(finding)}
               />
             ))}
-            {hasRun && <CoverageCard run={detail.runs[0]} />}
-            {hasRun && <ReviewQualityCard quality={detail.quality} />}
+            {showDiagnostics && hasRun && <CoverageCard run={detail.runs[0]} />}
+            {showDiagnostics && hasRun && <ReviewQualityCard quality={detail.quality} />}
             {!detail.findings.length && !hasRun && (
               <div className="empty-finding pending">
                 <Loader2 className="spin" size={22} />
@@ -605,8 +614,8 @@ export function DetailPanel({
           </div>
         )}
 
-        {tab === "process" && <ProcessTimeline detail={detail} />}
-        {tab === "tools" && <ToolResultsPanel detail={detail} onOpenFinding={setActiveFinding} />}
+        {showDiagnostics && tab === "process" && <ProcessTimeline detail={detail} />}
+        {showDiagnostics && tab === "tools" && <ToolResultsPanel detail={detail} onOpenFinding={setActiveFinding} />}
       </div>
 
       <div className="detail-actions">
@@ -649,7 +658,7 @@ export function DetailPanel({
   );
 }
 
-export function ReviewProgressPanel({ detail, status }: { detail: Detail; status: string }) {
+export function ReviewProgressPanel({ detail, status, showDiagnostics }: { detail: Detail; status: string; showDiagnostics: boolean }) {
   const index = reviewStepIndex(status);
   const latestJob = detail.jobs?.[0] || {};
   const latestRun = detail.runs?.[0] || {};
@@ -680,15 +689,17 @@ export function ReviewProgressPanel({ detail, status }: { detail: Detail; status
           </div>
         ))}
       </div>
-      <div className="review-progress-meta">
-        <p><strong>Job</strong><span>{String(latestJob.id || "--")}</span></p>
-        <p><strong>Run</strong><span>{String(latestRun.id || "--")}</span></p>
-        <p><strong>工具调用</strong><span>{toolCount}</span></p>
-        <p><strong>LLM 调用</strong><span>{llmStats.total}</span></p>
-        <p><strong>LLM 成功率</strong><span>{llmStats.successRate === null ? "--" : `${llmStats.succeeded}/${llmStats.total} · ${llmStats.successRate}%`}</span></p>
-        <p><strong>Skill 调用</strong><span>{skillCalls.length}</span></p>
-        <p><strong>Agent 消息</strong><span>{agentMessages}</span></p>
-      </div>
+      {showDiagnostics && (
+        <div className="review-progress-meta">
+          <p><strong>Job</strong><span>{String(latestJob.id || "--")}</span></p>
+          <p><strong>Run</strong><span>{String(latestRun.id || "--")}</span></p>
+          <p><strong>工具调用</strong><span>{toolCount}</span></p>
+          <p><strong>LLM 调用</strong><span>{llmStats.total}</span></p>
+          <p><strong>LLM 成功率</strong><span>{llmStats.successRate === null ? "--" : `${llmStats.succeeded}/${llmStats.total} · ${llmStats.successRate}%`}</span></p>
+          <p><strong>Skill 调用</strong><span>{skillCalls.length}</span></p>
+          <p><strong>Agent 消息</strong><span>{agentMessages}</span></p>
+        </div>
+      )}
     </section>
   );
 }

@@ -14,7 +14,7 @@ export function AuthPage({
   currentUser: User | null;
   onContinue: () => void;
   onLogin: (username: string, password: string) => Promise<void>;
-  onRegister: (input: { username: string; password: string; display_name: string; email: string }) => Promise<void>;
+  onRegister: (input: { username: string; password: string; display_name: string; email: string; account_type: "user" | "project_admin" }) => Promise<void>;
   onChangePassword: (input: { current_password: string; new_password: string; confirm_password: string }) => Promise<void>;
   onLogout: () => Promise<void>;
   message: string;
@@ -28,6 +28,7 @@ export function AuthPage({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
+  const [accountType, setAccountType] = useState<"user" | "project_admin">("user");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [passwordBusy, setPasswordBusy] = useState(false);
@@ -44,7 +45,8 @@ export function AuthPage({
           username: username.trim(),
           password,
           display_name: displayName.trim() || username.trim(),
-          email: email.trim()
+          email: email.trim(),
+          account_type: accountType
         });
         setMode("login");
         setPassword("");
@@ -116,6 +118,18 @@ export function AuthPage({
               <label>
                 <span>邮箱</span>
                 <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="可选" />
+              </label>
+              <label>
+                <span>账号类型</span>
+                <select value={accountType} onChange={(event) => setAccountType(event.target.value as "user" | "project_admin")}>
+                  <option value="user">普通用户</option>
+                  <option value="project_admin">项目管理员</option>
+                </select>
+                <small>
+                  {accountType === "project_admin"
+                    ? "可以创建新项目并成为该项目管理员，但不会自动加入现有项目。"
+                    : "不能创建项目，可申请加入已有项目。"}
+                </small>
               </label>
             </>
           )}
@@ -191,4 +205,3 @@ export function PublishResultModal({ notice, onClose }: { notice: PublishResultN
     </div>
   );
 }
-

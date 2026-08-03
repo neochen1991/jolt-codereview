@@ -21,6 +21,7 @@ import {
   repoNameFromGitUrl,
   providerLabel,
   isRootUser,
+  canCreateProject,
   isProjectAdminRole,
   recordValue,
   clampLlmTimeout,
@@ -131,7 +132,7 @@ export function ProjectSelectionPage({
   const [joiningProjectId, setJoiningProjectId] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
-  const canCreateProject = isRootUser(user);
+  const canCreateNewProject = canCreateProject(user);
   const projectSearchText = projectSearch.trim().toLowerCase();
   const visibleProjects = projectSearchText
     ? projects.filter((project) => project.name.toLowerCase().includes(projectSearchText))
@@ -245,7 +246,7 @@ export function ProjectSelectionPage({
         </label>
       </section>
       <section className="project-card-grid">
-        {canCreateProject && (
+        {canCreateNewProject && (
           <button className="project-create-card" type="button" onClick={() => setCreateOpen(true)}>
             <span><Plus size={22} /></span>
             <strong>新建项目</strong>
@@ -287,7 +288,7 @@ export function ProjectSelectionPage({
           {!discoverProjects.filter((project) => !project.role).length && <div className="config-table-empty">暂无可申请项目</div>}
         </div>
       </section>}
-      {canCreateProject && createOpen && (
+      {canCreateNewProject && createOpen && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setCreateOpen(false)}>
           <section className="project-maintenance-modal project-create-modal" onClick={(event) => event.stopPropagation()}>
             <header>

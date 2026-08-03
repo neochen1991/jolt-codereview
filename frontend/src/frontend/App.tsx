@@ -746,7 +746,7 @@ export function App() {
     setMessage("登录成功");
   }
 
-  async function register(input: { username: string; password: string; display_name: string; email: string }) {
+  async function register(input: { username: string; password: string; display_name: string; email: string; account_type: "user" | "project_admin" }) {
     await api<{ user: User }>("/api/auth/register", {
       method: "POST",
       body: JSON.stringify(input)

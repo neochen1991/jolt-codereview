@@ -1040,6 +1040,10 @@ export function isRootUser(user: User | null) {
   return user?.global_role === "root";
 }
 
+export function canCreateProject(user: User | null) {
+  return isRootUser(user) || user?.global_role === "project_admin";
+}
+
 export function isProjectAdminRole(role: string, user: User | null) {
   return isRootUser(user) || ["project_admin", "system_admin"].includes(role);
 }

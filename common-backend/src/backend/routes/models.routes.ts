@@ -81,7 +81,8 @@ export function createModelRoutes(ctx: BackendRouteContext): Route[] {
         default_api_key: input.default_api_key,
         request_timeout_seconds: input.request_timeout_seconds,
         max_output_tokens: input.max_output_tokens,
-        enable_stream: input.enable_stream
+        enable_stream: input.enable_stream,
+        model_overrides: input.model_overrides
       });
       if (!String(value.default_provider ?? "").trim()) return badRequest("default_provider is required");
       if (!String(value.default_base_url ?? "").trim()) return badRequest("default_base_url is required");

@@ -2,11 +2,24 @@
   "llm": {
     "default_provider": "dashscope-openai-compatible",
     "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-    "default_model": "MiniMax-M2.7",
+    "default_model": "glm-5.2",
     "default_api_key_env": null,
     "default_api_key": "",
     "request_timeout_seconds": 120,
-    "max_output_tokens": 8192
+    "max_output_tokens": 32768,
+    "model_overrides": {
+      "glm-5.2": {
+        "recommended_output_tokens": 32768,
+        "max_output_tokens": 131072,
+        "thinking": { "type": "enabled" },
+        "supports_seed": false
+      },
+      "MiniMax-M2.7": {
+        "recommended_output_tokens": 8192,
+        "max_output_tokens": 32768,
+        "supports_seed": true
+      }
+    }
   },
   "server": {
     "host": "127.0.0.1",

@@ -10,6 +10,7 @@ export interface AppConfig {
     request_timeout_seconds?: number;
     max_output_tokens?: number;
     enable_stream?: boolean;
+    model_overrides?: Record<string, Record<string, unknown>>;
   };
   github?: {
     default_token_env?: string;

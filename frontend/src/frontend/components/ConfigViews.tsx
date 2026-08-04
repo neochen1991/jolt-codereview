@@ -1585,7 +1585,7 @@ export function ConfigWorkspace({
             <article className="setting-form-card">
               <div className="setting-form-head">
                 <strong>模型服务配置</strong>
-                <span>OpenAI-compatible 网关，默认用于 MiniMax-M2.7 代码检视。</span>
+                <span>OpenAI-compatible 网关，按模型能力自动适配 GLM 与 MiniMax 代码检视。</span>
               </div>
               <div className="setting-form-grid">
                 <SettingField label="Provider">
@@ -1601,7 +1601,7 @@ export function ConfigWorkspace({
                   <input type="number" min="1" max="600" value={llmForm.request_timeout_seconds} onChange={(event) => setLlmForm({ ...llmForm, request_timeout_seconds: event.target.value })} disabled={!canEdit} />
                 </SettingField>
                 <SettingField label="输出上限 Tokens">
-                  <input type="number" min="1024" max="12000" value={llmForm.max_output_tokens} onChange={(event) => setLlmForm({ ...llmForm, max_output_tokens: event.target.value })} disabled={!canEdit} />
+                  <input type="number" min="1024" max="131072" value={llmForm.max_output_tokens} onChange={(event) => setLlmForm({ ...llmForm, max_output_tokens: event.target.value })} disabled={!canEdit} />
                 </SettingField>
                 <SettingField label="流式调用">
                   <label className="setting-check">

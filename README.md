@@ -99,11 +99,24 @@ Copy-Item frontend/.env.example frontend/.env
   "llm": {
     "default_provider": "dashscope-openai-compatible",
     "default_base_url": "https://your-llm-gateway/v1",
-    "default_model": "your-model",
+    "default_model": "glm-5.2",
     "default_api_key_env": "JOLT_LLM_API_KEY",
     "request_timeout_seconds": 600,
-    "max_output_tokens": 8192,
-    "enable_stream": true
+    "max_output_tokens": 32768,
+    "enable_stream": true,
+    "model_overrides": {
+      "glm-5.2": {
+        "recommended_output_tokens": 32768,
+        "max_output_tokens": 131072,
+        "thinking": { "type": "enabled" },
+        "supports_seed": false
+      },
+      "MiniMax-M2.7": {
+        "recommended_output_tokens": 8192,
+        "max_output_tokens": 32768,
+        "supports_seed": true
+      }
+    }
   },
   "server": {
     "host": "127.0.0.1",
@@ -114,6 +127,23 @@ Copy-Item frontend/.env.example frontend/.env
   }
 }
 ```
+
+模型适配由 `default_model` 和 `model_overrides` 共同决定，`default_provider` 只是网关标识，因此通过统一 OpenAI-compatible 网关调用 GLM-5.2 时不需要把 provider 名改成 `glm`：
+
+- `glm-5.2`：显式发送 `thinking: {"type":"enabled"}`，使用 `response_format: {"type":"json_object"}`，不发送 `seed`；复杂多文件检视建议 `max_output_tokens` 使用 `32768`，可按网关能力提高到 `131072`。
+- `glm-5.1` / `glm-5`：使用 GLM Thinking 与 JSON Object 适配，但不发送仅更新模型支持的推理强度参数。
+- `MiniMax-M2.7`：保留确定性 `seed`，默认输出上限 `8192`，最大允许 `32768`，结构化结果由相同检视提示词约束。
+- 未识别的 OpenAI-compatible 模型：采用保守的 `8192` 默认值和 `32768` 安全上限。
+
+项目配置中的 `max_output_tokens` 优先于模型推荐值，但会按该模型的最大能力裁剪。界面允许配置到 `131072`，实际请求仍由模型能力档案校验。Skill、规范、ContextUnit 和 Judge 流程不随模型切换而变化。
+
+建议使用 `default_api_key_env`，不要把真实密钥提交到仓库。Windows PowerShell 可在启动前设置：
+
+```powershell
+$env:JOLT_LLM_API_KEY = "replace-with-your-key"
+```
+
+如果内网部署必须在未跟踪的 `config.json` 中保存 `default_api_key`，应限制文件权限并定期轮换密钥；`config.json` 已被 Git 忽略。
 
 `mr-backend/config.json` 建议放 VCS、PostgreSQL、Python 路径、队列配置：
 

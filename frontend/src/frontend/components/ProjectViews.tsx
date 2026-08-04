@@ -769,7 +769,7 @@ export function ProjectCard({
                   </label>
                   <label>
                     <span>输出上限 Tokens</span>
-                    <input type="number" min="1024" max="12000" value={llmForm.max_output_tokens} onChange={(event) => setLlmForm({ ...llmForm, max_output_tokens: event.target.value })} disabled={!canEdit || llmLoading} />
+                    <input type="number" min="1024" max="131072" value={llmForm.max_output_tokens} onChange={(event) => setLlmForm({ ...llmForm, max_output_tokens: event.target.value })} disabled={!canEdit || llmLoading} />
                   </label>
                   <label className="project-llm-stream">
                     <span>流式调用</span>

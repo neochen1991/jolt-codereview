@@ -601,7 +601,7 @@ export function clampLlmTimeout(value: string) {
 
 export function clampLlmOutputTokens(value: string) {
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(1024, Math.min(12000, parsed)) : 8192;
+  return Number.isFinite(parsed) ? Math.max(1024, Math.min(131072, parsed)) : 8192;
 }
 
 export function positiveNumber(value: string, fallback: number, max = Number.MAX_SAFE_INTEGER) {

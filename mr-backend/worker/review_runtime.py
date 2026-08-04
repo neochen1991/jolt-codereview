@@ -31,7 +31,7 @@ from context.semantic_graph import semantic_graph_from_tree_sitter
 from context.snapshot import build_code_context_snapshot
 from context.symbol_resolver import resolve_diff_symbols
 from diff.slicer import build_diff_slices, diff_hunks_by_file, extract_added_lines, source_snippet_loader_for_files
-from llm.client import build_chat_payload, call_llm, estimate_tokens, http_json as llm_http_json, invoke_with_parameter_fallback, llm_max_output_tokens, llm_request_timeout_seconds, llm_stream_enabled, normalize_confidence, normalize_line_number, parse_llm_findings, summarize_pr_with_llm
+from llm.client import build_chat_payload, call_llm, estimate_tokens, http_json as llm_http_json, invoke_with_parameter_fallback, llm_max_output_tokens, llm_request_timeout_seconds, llm_stream_enabled, normalize_confidence, normalize_line_number, parse_llm_findings, request_options_for_payload, summarize_pr_with_llm
 from llm.retry import call_with_retry
 from llm.exchange import execute_chat_exchange, invoke_openai_chat, replay_mode_from_config
 from llm_router import candidate_providers
@@ -4286,6 +4286,16 @@ def route_agents_with_llm(
         ]
         timeout_seconds = llm_request_timeout_seconds(llm, "router")
         stream_enabled = llm_stream_enabled(llm)
+        template_payload, _template_metadata = build_chat_payload(
+            provider=provider,
+            model=model,
+            llm=llm,
+            messages=messages,
+            temperature=0.0,
+            seed=None,
+            structured=False,
+            max_tokens=min(4096, llm_max_output_tokens(llm, provider, model)),
+        )
         try:
             def invoke_router(seed: int) -> dict[str, Any]:
                 payload, _metadata = build_chat_payload(
@@ -4319,6 +4329,7 @@ def route_agents_with_llm(
                 temperature=0.0,
                 replay_mode=replay_mode_from_config(project_config),
                 invoke=invoke_router,
+                request_options=request_options_for_payload(template_payload),
             )
             response = exchange.response
             duration_ms = int((time.time() - started) * 1000)

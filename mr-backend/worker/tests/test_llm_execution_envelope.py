@@ -117,8 +117,42 @@ def test_replay_without_record_is_explicit_failure() -> None:
         raise AssertionError("missing replay must fail")
 
 
+def test_request_options_are_part_of_replay_fingerprint() -> None:
+    recorder = Recorder()
+    common = {
+        "recorder": recorder,
+        "span_id": "span",
+        "operation": "expert",
+        "agent_id": "agent",
+        "context_unit_id": "unit",
+        "checkpoint_id": "cp",
+        "head_sha": "head",
+        "provider": "gateway",
+        "model": "glm-5.2",
+        "prompt": "prompt",
+        "messages": [{"role": "user", "content": "prompt"}],
+        "temperature": 0.1,
+        "replay_mode": "off",
+        "store": InMemoryExchangeStore(),
+        "invoke": lambda _seed: _response("ok"),
+    }
+
+    thinking = execute_chat_exchange(
+        **common,
+        request_options={"max_tokens": 32768, "thinking": {"type": "enabled"}, "response_format": {"type": "json_object"}},
+    )
+    non_thinking = execute_chat_exchange(
+        **common,
+        request_options={"max_tokens": 8192},
+    )
+
+    assert thinking.envelope.request_hash != non_thinking.envelope.request_hash
+    assert thinking.envelope.cache_key != non_thinking.envelope.cache_key
+
+
 if __name__ == "__main__":
     test_seed_is_stable_per_operation_and_context_unit()
     test_record_then_exact_replay_avoids_network()
     test_replay_without_record_is_explicit_failure()
+    test_request_options_are_part_of_replay_fingerprint()
     print("llm execution envelope tests passed")

@@ -215,6 +215,7 @@ def execute_chat_exchange(
     top_p: float | None = None,
     response_source: str = "",
     input_composition: dict[str, Any] | None = None,
+    request_options: dict[str, Any] | None = None,
 ) -> ExchangeResult:
     seed = derive_seed(head_sha, operation, agent_id, context_unit_id, checkpoint_id)
     normalized_mode = str(replay_mode or "off").strip().lower()
@@ -239,6 +240,7 @@ def execute_chat_exchange(
         "context_hash": context_hash,
         "prompt_version": prompt_version,
         "tool_result_hashes": tool_result_hashes,
+        "request_options": request_options or {},
     }
     request_hash = _sha256(_stable_json(request_payload))
     cache_key = _sha256(f"llm-exchange-v1:{request_hash}")

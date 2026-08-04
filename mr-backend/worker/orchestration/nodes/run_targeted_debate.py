@@ -5,7 +5,7 @@ import time
 import urllib.error
 from typing import Any
 
-from llm.client import build_chat_payload, estimate_tokens, http_json, invoke_with_parameter_fallback, llm_max_output_tokens, llm_request_timeout_seconds, llm_stream_enabled
+from llm.client import build_chat_payload, estimate_tokens, http_json, invoke_with_parameter_fallback, llm_max_output_tokens, llm_request_timeout_seconds, llm_stream_enabled, request_options_for_payload
 from llm.exchange import execute_chat_exchange, invoke_openai_chat, replay_mode_from_config
 from llm.retry import call_with_retry
 from llm_router import candidate_providers
@@ -251,6 +251,16 @@ def run_targeted_debate_with_llm(
                 ]
                 timeout_seconds = llm_request_timeout_seconds(llm, "debate")
                 stream_enabled = llm_stream_enabled(llm)
+                template_payload, _template_metadata = build_chat_payload(
+                    provider=provider,
+                    model=model,
+                    llm=llm,
+                    messages=messages,
+                    temperature=0.1,
+                    seed=None,
+                    structured=True,
+                    max_tokens=min(4096, llm_max_output_tokens(llm, provider, model)),
+                )
                 try:
                     def invoke_debate(seed: int) -> dict[str, Any]:
                         payload, _metadata = build_chat_payload(
@@ -284,6 +294,7 @@ def run_targeted_debate_with_llm(
                         temperature=0.1,
                         replay_mode=replay_mode_from_config(config),
                         invoke=invoke_debate,
+                        request_options=request_options_for_payload(template_payload),
                     )
                     response = exchange.response
                     duration_ms = int((time.time() - started) * 1000)

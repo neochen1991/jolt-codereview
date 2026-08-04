@@ -15,12 +15,6 @@ from llm.retry import call_with_retry
 from prompts.builder import build_context_unit_prompt_parts, build_context_units_prompt_parts, build_prompt
 from prompts.system import REVIEW_SYSTEM_PROMPT
 
-LLM_REVIEW_SEED = 13
-LLM_REVIEW_SCHEMA_NAME = "review_findings_v2"
-LLM_REVIEW_FALLBACK_SCHEMA_NAME = "review_findings_v2_unstructured"
-_SCHEMA_UNSUPPORTED_PROVIDERS: set[tuple[str, str]] = set()
-
-
 def sha1(value: str) -> str:
     return hashlib.sha1(value.encode("utf-8")).hexdigest()
 
@@ -324,6 +318,14 @@ def build_chat_payload(
     return payload, metadata
 
 
+def request_options_for_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: payload[key]
+        for key in ("max_tokens", "response_format", "thinking", "reasoning_effort", "seed", "tools", "tool_choice")
+        if key in payload
+    }
+
+
 def unsupported_request_parameter(exc: Exception, candidates: set[str]) -> str | None:
     detail = str(getattr(exc, "jolt_detail", "") or "")
     message = f"{exc} {detail}".lower()
@@ -355,90 +357,6 @@ def invoke_with_parameter_fallback(
             active_payload.pop(parameter, None)
             if on_downgrade:
                 on_downgrade(parameter)
-
-
-def review_findings_response_format() -> dict[str, Any]:
-    finding_schema = {
-        "type": "object",
-        "additionalProperties": True,
-        "required": [
-            "severity",
-            "confidence",
-            "file_path",
-            "line_start",
-            "line_end",
-            "title",
-            "problem_description",
-            "trigger_condition",
-            "impact",
-            "semantic_evidence",
-            "recommendation",
-            "suggested_code",
-            "evidence",
-            "covered_rules",
-            "skipped_rules",
-        ],
-        "properties": {
-            "severity": {"type": "string"},
-            "confidence": {"type": "number"},
-            "file_path": {"type": "string"},
-            "line_start": {"type": "integer"},
-            "line_end": {"type": "integer"},
-            "title": {"type": "string"},
-            "problem_description": {"type": "string"},
-            "trigger_condition": {"type": "string"},
-            "impact": {"type": "string"},
-            "causal_delta": {"type": "string"},
-            "semantic_evidence": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["symbol_id", "relation", "file_path"],
-                    "properties": {
-                        "symbol_id": {"type": "string"},
-                        "relation": {"type": "string"},
-                        "file_path": {"type": "string"},
-                    },
-                },
-            },
-            "recommendation": {"type": "string"},
-            "suggested_code": {"type": "string"},
-            "evidence": {"type": "string"},
-            "covered_rules": {"type": "array", "items": {"type": "string"}},
-            "skipped_rules": {"type": "array", "items": {"type": "string"}},
-        },
-    }
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": LLM_REVIEW_SCHEMA_NAME,
-            "strict": True,
-            "schema": {
-                "type": "array",
-                "items": finding_schema,
-            },
-        },
-    }
-
-
-def _schema_provider_key(provider: str, model: str) -> tuple[str, str]:
-    return (str(provider or ""), str(model or ""))
-
-
-def _schema_error_is_unsupported(exc: Exception) -> bool:
-    if isinstance(exc, urllib.error.HTTPError) and 400 <= int(getattr(exc, "code", 0) or 0) < 500:
-        return True
-    message = str(exc).lower()
-    return "response_format" in message or "json_schema" in message or "schema" in message
-
-
-def schema_strict_disabled(provider: str, model: str) -> bool:
-    return _schema_provider_key(provider, model) in _SCHEMA_UNSUPPORTED_PROVIDERS
-
-
-def mark_schema_strict_disabled(provider: str, model: str) -> None:
-    _SCHEMA_UNSUPPORTED_PROVIDERS.add(_schema_provider_key(provider, model))
 
 
 def llm_cache_key(provider: str, model: str, prompt: str, *, seed: int, schema_name: str, project_id: str) -> str:
@@ -908,6 +826,16 @@ def summarize_pr_with_llm(
         ]
         timeout_seconds = llm_request_timeout_seconds(llm, "summary")
         stream_enabled = llm_stream_enabled(llm)
+        summary_template_payload, _summary_metadata = build_chat_payload(
+            provider=provider,
+            model=model,
+            llm=llm,
+            messages=messages,
+            temperature=0.1,
+            seed=None,
+            structured=True,
+            max_tokens=min(8192, llm_max_output_tokens(llm, provider, model)),
+        )
         try:
             def invoke_summary(seed: int) -> dict[str, Any]:
                 payload, _metadata = build_chat_payload(
@@ -955,6 +883,7 @@ def summarize_pr_with_llm(
                 temperature=0.1,
                 replay_mode=exchange_mode,
                 invoke=invoke_summary,
+                request_options=request_options_for_payload(summary_template_payload),
             )
             response = exchange.response
             duration_ms = int((time.time() - started) * 1000)
@@ -1121,6 +1050,7 @@ def call_llm(
                 context_hash=context_hash,
                 response_source="legacy_response_cache",
                 input_composition=call_input_composition,
+                request_options=request_options_for_payload(payload),
             )
             content = exchange.response.get("choices", [{}])[0].get("message", {}).get("content", "[]")
             try:
@@ -1181,6 +1111,7 @@ def call_llm(
                 invoke=invoke_expert,
                 context_hash=context_hash,
                 input_composition=call_input_composition,
+                request_options=request_options_for_payload(payload),
             )
             response = exchange.response
             duration_ms = int((time.time() - started) * 1000)
@@ -1194,6 +1125,15 @@ def call_llm(
                     {"provider": provider, "model": model, "finish_reason": str(choice.get("finish_reason") or "")},
                 )
                 repair_messages = build_json_repair_messages(messages)
+                repair_template_payload, _repair_metadata = build_chat_payload(
+                    provider=provider,
+                    model=model,
+                    llm=llm,
+                    messages=repair_messages,
+                    temperature=0.0,
+                    seed=None,
+                    structured=True,
+                )
 
                 def invoke_repair(seed: int) -> dict[str, Any]:
                     repair_payload, _metadata = build_chat_payload(
@@ -1243,6 +1183,7 @@ def call_llm(
                         invoke=invoke_repair,
                         context_hash=context_hash,
                         input_composition={**call_input_composition, "json_repair_attempt": True},
+                        request_options=request_options_for_payload(repair_template_payload),
                     )
                     charged_responses.append(repair_exchange.response)
                     if not response_needs_json_repair(repair_exchange.response):

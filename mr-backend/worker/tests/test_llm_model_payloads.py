@@ -14,6 +14,7 @@ from llm.client import (  # noqa: E402
     build_chat_payload,
     invoke_with_parameter_fallback,
     llm_max_output_tokens,
+    request_options_for_payload,
     unsupported_request_parameter,
 )
 
@@ -40,6 +41,11 @@ def test_glm_52_payload_is_gateway_compatible() -> None:
     assert "seed" not in payload
     assert metadata["model_family"] == "glm"
     assert metadata["structured_output_mode"] == "json_object"
+    assert request_options_for_payload(payload) == {
+        "max_tokens": 32768,
+        "response_format": {"type": "json_object"},
+        "thinking": {"type": "enabled"},
+    }
 
 
 def test_minimax_payload_preserves_seed_without_unsupported_schema() -> None:

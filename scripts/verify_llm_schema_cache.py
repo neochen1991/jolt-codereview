@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sys
-import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -61,15 +60,13 @@ def main() -> None:
     original_http_json = client.http_json
     original_read_cache = client._read_cached_llm_response
     original_write_cache = client._write_cached_llm_response
-    client._SCHEMA_UNSUPPORTED_PROVIDERS.clear()
-
     cache: dict[str, dict[str, Any]] = {}
     http_bodies: list[dict[str, Any]] = []
 
     def fake_candidate_providers(_llm: dict[str, Any], required_context: int = 0) -> list[dict[str, Any]]:
         return [{
-            "provider": "fake-openai-compatible",
-            "model": "fake-review-model",
+            "provider": "gateway",
+            "model": "glm-5.2",
             "base_url": "https://llm.internal/v1",
             "api_key": "test-key",
         }]
@@ -87,17 +84,17 @@ def main() -> None:
     ) -> dict[str, Any]:
         assert method == "POST"
         assert body is not None
-        assert body.get("seed") == client.derive_seed("", "expert", "backend_agent", "", "")
-        http_bodies.append(body)
+        assert "seed" not in body
+        assert body.get("thinking") == {"type": "enabled"}
+        http_bodies.append(json.loads(json.dumps(body)))
         if "response_format" in body:
-            raise urllib.error.HTTPError(_url, 400, "unsupported response_format", hdrs=None, fp=None)
+            raise ValueError("unsupported parameter: response_format")
         return {
             "id": "fallback-response-1",
             "usage": {"prompt_tokens": 11, "completion_tokens": 7},
             "choices": [{
                 "message": {
-                    "content": json.dumps([
-                        {
+                    "content": json.dumps({"findings": [{
                             "severity": "high",
                             "confidence": 0.91,
                             "file_path": "src/App.java",
@@ -110,8 +107,7 @@ def main() -> None:
                             "evidence": "@RequestBody payload",
                             "covered_rules": ["BE-API-001"],
                             "skipped_rules": [],
-                        }
-                    ])
+                        }]})
                 }
             }],
         }
@@ -132,9 +128,9 @@ def main() -> None:
         response: dict[str, Any],
     ) -> None:
         assert project_id == "project_q02"
-        assert provider == "fake-openai-compatible"
-        assert model == "fake-review-model"
-        assert schema_name == client.LLM_REVIEW_FALLBACK_SCHEMA_NAME
+        assert provider == "gateway"
+        assert model == "glm-5.2"
+        assert schema_name == "review_findings_v3_json_object"
         assert seed == client.derive_seed("", "expert", "backend_agent", "", "")
         assert prompt
         cache[cache_key] = response
@@ -163,14 +159,14 @@ def main() -> None:
         assert first == second, (first, second)
         assert first == repeated_live, (first, repeated_live)
         assert first[0]["covered_rules"] == ["BE-API-001"], first
-        assert len(http_bodies) == 3, http_bodies
+        assert len(http_bodies) == 4, http_bodies
         assert "response_format" in http_bodies[0], http_bodies
         assert "response_format" not in http_bodies[1], http_bodies
-        assert "response_format" not in http_bodies[2], http_bodies
+        assert "response_format" in http_bodies[2], http_bodies
+        assert "response_format" not in http_bodies[3], http_bodies
         assert len(cache) == 1, cache
-        assert client.schema_strict_disabled("fake-openai-compatible", "fake-review-model")
         event_types = [event["event_type"] for event in recorder.events]
-        assert "schema_strict_disabled" in event_types, recorder.events
+        assert "llm_parameter_downgraded" in event_types, recorder.events
         statuses = [call["status"] for call in recorder.calls]
         assert "completed" in statuses, recorder.calls
         assert "cache_hit" in statuses, recorder.calls
@@ -180,7 +176,6 @@ def main() -> None:
         client.http_json = original_http_json
         client._read_cached_llm_response = original_read_cache
         client._write_cached_llm_response = original_write_cache
-        client._SCHEMA_UNSUPPORTED_PROVIDERS.clear()
 
     print(json.dumps({"ok": True, "verified": "llm_schema_cache", "http_calls": len(http_bodies), "cache_entries": len(cache)}))
 

@@ -4,7 +4,6 @@ import json
 import os
 import subprocess
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
@@ -14,11 +13,37 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
-from llm.client import collect_openai_sse_response, estimate_tokens, llm_request_timeout_seconds, llm_stream_enabled, parse_openai_response_text
+from llm.client import build_chat_payload, estimate_tokens, http_json, invoke_with_parameter_fallback, llm_request_timeout_seconds, llm_stream_enabled, request_options_for_payload
 from llm.retry import call_with_retry
 from llm.exchange import execute_chat_exchange, invoke_openai_chat, replay_mode_from_config
 from context.semantic_graph import SemanticGraph
 from context.source_tools import FrozenSourceTools
+
+
+def deepagent_request_payload(
+    *,
+    provider: str,
+    model: str,
+    llm_config: dict[str, Any],
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    seed: int | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    payload, metadata = build_chat_payload(
+        provider=provider,
+        model=model,
+        llm=llm_config,
+        messages=messages,
+        temperature=0.1,
+        seed=seed,
+        structured=False,
+    )
+    if metadata["model_family"] == "glm" and isinstance(payload.get("thinking"), dict):
+        payload["thinking"] = {**payload["thinking"], "clear_thinking": False}
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+    return payload, metadata
 
 
 class OpenAICompatibleToolChatModel(BaseChatModel):
@@ -35,6 +60,7 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
     agent_id: str = "deepagent"
     replay_mode: str = "record"
     exchange_span_id: str = "deepagent"
+    llm_config: dict[str, Any] = {}
 
     @property
     def _llm_type(self) -> str:
@@ -49,51 +75,39 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
         return self.model_copy(update={"bound_tools": schemas})
 
     def _generate(self, messages: list[BaseMessage], stop: Any = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
-        payload: dict[str, Any] = {
-            "model": self.model_name,
-            "messages": [_message_to_openai(message) for message in messages],
-            "temperature": 0.1,
-        }
-        if self.bound_tools:
-            payload["tools"] = self.bound_tools
-            payload["tool_choice"] = "auto"
+        openai_messages = [_message_to_openai(message) for message in messages]
+        payload, _metadata = deepagent_request_payload(
+            provider=self.provider,
+            model=self.model_name,
+            llm_config=self.llm_config,
+            messages=openai_messages,
+            tools=self.bound_tools,
+            seed=None,
+        )
         started = time.time()
-        prompt_text = json.dumps(payload["messages"], ensure_ascii=False)
+        prompt_text = json.dumps(openai_messages, ensure_ascii=False)
         prompt_tokens = estimate_tokens(prompt_text)
         try:
             def execute_request(seed: int) -> dict[str, Any]:
-                request_payload = {**payload, "seed": seed}
-                if self.enable_stream:
-                    request_payload["stream"] = True
-                    request_payload.setdefault("stream_options", {"include_usage": True})
-                def transport(endpoint: str, headers: dict[str, str], **request_options: Any) -> dict[str, Any]:
-                    request = urllib.request.Request(
-                        endpoint,
-                        data=json.dumps(request_options.get("body") or request_payload).encode("utf-8"),
-                        headers={
-                            **headers,
-                            "Content-Type": "application/json",
-                            "Accept": "application/json",
-                            "User-Agent": "Jolt-CodeReview-Worker/0.1",
-                        },
-                        method=str(request_options.get("method") or "POST"),
-                    )
-                    timeout = int(request_options.get("timeout_seconds") or self.request_timeout_seconds)
-                    with urllib.request.urlopen(request, timeout=timeout) as response:
-                        response_headers = getattr(response, "headers", {})
-                        content_type = str(response_headers.get("Content-Type") if hasattr(response_headers, "get") else "").lower()
-                        if self.enable_stream and "text/event-stream" in content_type:
-                            return collect_openai_sse_response(response, started)
-                        return parse_openai_response_text(response.read().decode("utf-8", errors="replace"), started)
-
-                return invoke_openai_chat(
-                    base_url=self.base_url,
-                    api_key=self.api_key,
-                    payload=request_payload,
-                    timeout_seconds=self.request_timeout_seconds,
-                    stream=self.enable_stream,
-                    transport=transport,
-                    retry=call_with_retry,
+                request_payload, _request_metadata = deepagent_request_payload(
+                    provider=self.provider,
+                    model=self.model_name,
+                    llm_config=self.llm_config,
+                    messages=openai_messages,
+                    tools=self.bound_tools,
+                    seed=seed,
+                )
+                return invoke_with_parameter_fallback(
+                    request_payload,
+                    lambda active: invoke_openai_chat(
+                        base_url=self.base_url,
+                        api_key=self.api_key,
+                        payload=active,
+                        timeout_seconds=self.request_timeout_seconds,
+                        stream=self.enable_stream,
+                        transport=http_json,
+                        retry=call_with_retry,
+                    ),
                 )
 
             if self.exchange_recorder is None:
@@ -113,6 +127,7 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
                 temperature=0.1,
                 replay_mode=self.replay_mode,
                 invoke=execute_request,
+                request_options=request_options_for_payload(payload),
             )
             data = exchange.response
         except Exception as exc:
@@ -149,7 +164,10 @@ class OpenAICompatibleToolChatModel(BaseChatModel):
             except json.JSONDecodeError:
                 args = {}
             tool_calls.append({"name": function.get("name"), "args": args, "id": call.get("id")})
-        message = AIMessage(content=raw_message.get("content") or "", tool_calls=tool_calls)
+        additional_kwargs = {}
+        if raw_message.get("reasoning_content"):
+            additional_kwargs["reasoning_content"] = raw_message.get("reasoning_content")
+        message = AIMessage(content=raw_message.get("content") or "", tool_calls=tool_calls, additional_kwargs=additional_kwargs)
         return ChatResult(generations=[ChatGeneration(message=message)])
 
     def _trace_llm_call(self, fields: dict[str, Any]) -> None:
@@ -390,6 +408,7 @@ def run_bounded_deepagent(
             agent_id=agent_id,
             replay_mode=replay_mode_from_config(llm_config),
             exchange_span_id=exchange_span_id,
+            llm_config=llm_config,
         ),
         tools=tools,
         system_prompt=(
@@ -480,4 +499,8 @@ def _message_to_openai(message: BaseMessage) -> dict[str, Any]:
             }
             for call in message.tool_calls
         ]
+    if message.type == "ai":
+        reasoning_content = (getattr(message, "additional_kwargs", {}) or {}).get("reasoning_content")
+        if reasoning_content:
+            item["reasoning_content"] = reasoning_content
     return item

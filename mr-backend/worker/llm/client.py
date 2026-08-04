@@ -10,6 +10,7 @@ from typing import Any
 from db_postgres import open_app_database
 from llm_router import candidate_providers
 from llm.exchange import derive_seed, execute_chat_exchange, replay_mode_from_config
+from llm.model_capabilities import resolve_model_capabilities
 from llm.retry import call_with_retry
 from prompts.builder import build_context_unit_prompt_parts, build_context_units_prompt_parts, build_prompt
 from prompts.system import REVIEW_SYSTEM_PROMPT
@@ -122,6 +123,7 @@ def llm_stream_enabled(llm: dict[str, Any] | None) -> bool:
 
 def collect_openai_sse_lines(raw_lines: Any, started: float) -> dict[str, Any]:
     content_parts: list[str] = []
+    reasoning_parts: list[str] = []
     tool_call_parts: dict[int, dict[str, Any]] = {}
     chunk_count = 0
     first_chunk_ms: int | None = None
@@ -154,6 +156,8 @@ def collect_openai_sse_lines(raw_lines: Any, started: float) -> dict[str, Any]:
         choice = (chunk.get("choices") or [{}])[0]
         finish_reason = choice.get("finish_reason") or finish_reason
         delta = choice.get("delta") or {}
+        if delta.get("reasoning_content"):
+            reasoning_parts.append(str(delta.get("reasoning_content")))
         if delta.get("content"):
             content_parts.append(str(delta.get("content")))
         for tool_call in delta.get("tool_calls") or []:
@@ -171,6 +175,8 @@ def collect_openai_sse_lines(raw_lines: Any, started: float) -> dict[str, Any]:
                 existing_function["arguments"] = str(existing_function.get("arguments") or "") + str(function.get("arguments"))
 
     message: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts)}
+    if reasoning_parts:
+        message["reasoning_content"] = "".join(reasoning_parts)
     if tool_call_parts:
         message["tool_calls"] = [tool_call_parts[index] for index in sorted(tool_call_parts)]
     return {
@@ -231,11 +237,19 @@ def http_json(
         request_headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, method=method, headers=request_headers)
     started = time.time()
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        content_type = str(response.headers.get("Content-Type") or "").lower()
-        if stream and "text/event-stream" in content_type:
-            return collect_openai_sse_response(response, started)
-        return parse_openai_response_text(response.read().decode("utf-8", errors="replace"), started)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            content_type = str(response.headers.get("Content-Type") or "").lower()
+            if stream and "text/event-stream" in content_type:
+                return collect_openai_sse_response(response, started)
+            return parse_openai_response_text(response.read().decode("utf-8", errors="replace"), started)
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")[:2000]
+        except Exception:
+            detail = ""
+        setattr(exc, "jolt_detail", detail)
+        raise
 
 
 def normalize_line_number(value: Any) -> int | None:
@@ -260,13 +274,87 @@ def normalize_confidence(value: Any, default: float = 0.75) -> float:
     return max(0.0, min(1.0, confidence))
 
 
-def llm_max_output_tokens(llm: dict[str, Any] | None) -> int:
+def llm_max_output_tokens(llm: dict[str, Any] | None, provider: str = "", model: str = "") -> int:
     config = llm or {}
-    configured = config.get("max_output_tokens") or config.get("default_max_output_tokens") or 8192
+    capabilities = resolve_model_capabilities(provider, model, config)
+    configured = config.get("max_output_tokens") or config.get("default_max_output_tokens") or capabilities.recommended_output_tokens
     try:
-        return max(1024, min(12000, int(configured)))
+        return max(1024, min(capabilities.max_output_tokens, int(configured)))
     except (TypeError, ValueError):
-        return 8192
+        return capabilities.recommended_output_tokens
+
+
+def build_chat_payload(
+    *,
+    provider: str,
+    model: str,
+    llm: dict[str, Any] | None,
+    messages: list[dict[str, Any]],
+    temperature: float,
+    seed: int | None,
+    structured: bool,
+    max_tokens: int | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    config = llm or {}
+    capabilities = resolve_model_capabilities(provider, model, config)
+    effective_max_tokens = max_tokens or llm_max_output_tokens(config, provider, model)
+    effective_max_tokens = max(1, min(int(effective_max_tokens), capabilities.max_output_tokens))
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": effective_max_tokens,
+    }
+    if capabilities.thinking:
+        payload["thinking"] = dict(capabilities.thinking)
+    if capabilities.reasoning_effort:
+        payload["reasoning_effort"] = capabilities.reasoning_effort
+    if capabilities.supports_seed and seed is not None:
+        payload["seed"] = int(seed)
+    if structured and capabilities.response_format:
+        payload["response_format"] = dict(capabilities.response_format)
+    response_format = payload.get("response_format") or {}
+    metadata = {
+        "model_family": capabilities.family,
+        "effective_max_output_tokens": effective_max_tokens,
+        "thinking_mode": str((payload.get("thinking") or {}).get("type") or "disabled"),
+        "structured_output_mode": str(response_format.get("type") or "prompt_json" if structured else "text"),
+        "seed_enabled": "seed" in payload,
+    }
+    return payload, metadata
+
+
+def unsupported_request_parameter(exc: Exception, candidates: set[str]) -> str | None:
+    detail = str(getattr(exc, "jolt_detail", "") or "")
+    message = f"{exc} {detail}".lower()
+    compatibility_markers = ("unsupported", "not supported", "unknown parameter", "unrecognized", "invalid parameter")
+    if not any(marker in message for marker in compatibility_markers):
+        return None
+    for parameter in sorted(candidates):
+        aliases = {parameter.lower(), parameter.lower().replace("_", " ")}
+        if any(alias in message for alias in aliases):
+            return parameter
+    return None
+
+
+def invoke_with_parameter_fallback(
+    payload: dict[str, Any],
+    invoke: Any,
+    *,
+    on_downgrade: Any | None = None,
+) -> dict[str, Any]:
+    active_payload = dict(payload)
+    optional_parameters = {"response_format", "thinking", "reasoning_effort", "seed"}
+    while True:
+        try:
+            return invoke(active_payload)
+        except Exception as exc:
+            parameter = unsupported_request_parameter(exc, optional_parameters.intersection(active_payload))
+            if not parameter:
+                raise
+            active_payload.pop(parameter, None)
+            if on_downgrade:
+                on_downgrade(parameter)
 
 
 def review_findings_response_format() -> dict[str, Any]:
@@ -502,30 +590,82 @@ def _extract_json_objects(content: str) -> list[dict[str, Any]]:
     return objects
 
 
-def parse_llm_findings(agent_id: str, content: str, files: list[Any], max_findings: int = 32) -> list[dict[str, Any]]:
+def response_needs_json_repair(response: dict[str, Any]) -> bool:
+    choice = (response.get("choices") or [{}])[0]
+    if str(choice.get("finish_reason") or "").lower() == "length":
+        return True
+    content = str((choice.get("message") or {}).get("content") or "")
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return True
+    return not isinstance(parsed, (list, dict))
+
+
+def build_json_repair_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        *messages,
+        {
+            "role": "user",
+            "content": (
+                "上一轮输出被截断或不是完整 JSON。请重新完成同一检视，只输出完整 JSON 对象 "
+                '{"findings": [...]}。保留高置信问题，精简每个字段，确保 JSON 完整闭合。'
+            ),
+        },
+    ]
+
+
+def parse_llm_findings(
+    agent_id: str,
+    content: str,
+    files: list[Any],
+    max_findings: int = 32,
+    *,
+    metrics: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    parse_status = "complete"
     try:
         start = content.find("[")
         end = content.rfind("]")
         parsed = json.loads(content[start : end + 1] if start >= 0 and end >= start else content)
     except json.JSONDecodeError:
         parsed = _extract_json_objects(content)
+        parse_status = "recovered_objects" if parsed else "invalid_json"
+    if isinstance(parsed, dict):
+        parsed = parsed.get("findings")
     if not isinstance(parsed, list):
         parsed = []
+        if parse_status == "complete":
+            parse_status = "invalid_shape"
+    counters = {
+        "parse_status": parse_status,
+        "candidate_count": len(parsed),
+        "accepted_count": 0,
+        "dropped_non_object": 0,
+        "dropped_invalid_file": 0,
+        "dropped_tool_echo": 0,
+        "dropped_invalid_line": 0,
+        "dropped_over_limit": 0,
+    }
     valid_files = {item.filename for item in files}
     findings: list[dict[str, Any]] = []
     for item in parsed:
         if not isinstance(item, dict):
+            counters["dropped_non_object"] += 1
             continue
         file_path = str(item.get("file_path") or "")
         if file_path not in valid_files:
+            counters["dropped_invalid_file"] += 1
             continue
         title = str(item.get("title") or "AI 检视问题")[:120]
         lowered_title = title.lower()
         if lowered_title.startswith(("semgrep 命中", "gitleaks 疑似", "ruff 命中", "eslint 命中", "bandit 命中")):
+            counters["dropped_tool_echo"] += 1
             continue
         line_start = normalize_line_number(item.get("line_start"))
         line_end = normalize_line_number(item.get("line_end")) or line_start
         if line_start is None:
+            counters["dropped_invalid_line"] += 1
             continue
         if line_end is not None and line_end < line_start:
             line_end = line_start
@@ -576,6 +716,11 @@ def parse_llm_findings(agent_id: str, content: str, files: list[Any], max_findin
         limit = max(1, min(int(max_findings), 48))
     except (TypeError, ValueError):
         limit = 32
+    counters["accepted_count"] = min(len(findings), limit)
+    counters["dropped_over_limit"] = max(0, len(findings) - limit)
+    if metrics is not None:
+        metrics.clear()
+        metrics.update(counters)
     return findings[:limit]
 
 
@@ -764,6 +909,37 @@ def summarize_pr_with_llm(
         timeout_seconds = llm_request_timeout_seconds(llm, "summary")
         stream_enabled = llm_stream_enabled(llm)
         try:
+            def invoke_summary(seed: int) -> dict[str, Any]:
+                payload, _metadata = build_chat_payload(
+                    provider=provider,
+                    model=model,
+                    llm=llm,
+                    messages=messages,
+                    temperature=0.1,
+                    seed=seed,
+                    structured=True,
+                    max_tokens=min(8192, llm_max_output_tokens(llm, provider, model)),
+                )
+                return invoke_with_parameter_fallback(
+                    payload,
+                    lambda active: call_with_retry(
+                        lambda: http_json(
+                            chat_completions_url(base_url),
+                            {"Authorization": f"Bearer {api_key}"},
+                            method="POST",
+                            body=active,
+                            timeout_seconds=timeout_seconds,
+                            stream=stream_enabled,
+                        )
+                    ),
+                    on_downgrade=lambda parameter: recorder.event(
+                        span_id,
+                        "llm_parameter_downgraded",
+                        f"{model} 摘要调用移除不兼容参数：{parameter}",
+                        {"provider": provider, "model": model, "parameter": parameter, "operation": "summary"},
+                    ),
+                )
+
             exchange = execute_chat_exchange(
                 recorder=recorder,
                 span_id=span_id,
@@ -778,22 +954,7 @@ def summarize_pr_with_llm(
                 messages=messages,
                 temperature=0.1,
                 replay_mode=exchange_mode,
-                invoke=lambda seed: call_with_retry(
-                    lambda: http_json(
-                        chat_completions_url(base_url),
-                        {"Authorization": f"Bearer {api_key}"},
-                        method="POST",
-                        body={
-                            "model": model,
-                            "messages": messages,
-                            "temperature": 0.1,
-                            "seed": seed,
-                            "max_tokens": min(2048, llm_max_output_tokens(llm)),
-                        },
-                        timeout_seconds=timeout_seconds,
-                        stream=stream_enabled,
-                    )
-                ),
+                invoke=invoke_summary,
             )
             response = exchange.response
             duration_ms = int((time.time() - started) * 1000)
@@ -920,24 +1081,25 @@ def call_llm(
             )
         else:
             messages.append({"role": "user", "content": prompt})
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": 0.1,
-            "max_tokens": llm_max_output_tokens(llm),
-            "seed": LLM_REVIEW_SEED,
-            "response_format": review_findings_response_format(),
-        }
-        schema_name = LLM_REVIEW_SCHEMA_NAME if not schema_strict_disabled(provider, model) else LLM_REVIEW_FALLBACK_SCHEMA_NAME
-        if schema_name == LLM_REVIEW_FALLBACK_SCHEMA_NAME:
-            payload = {key: value for key, value in payload.items() if key != "response_format"}
-            recorder.event(
-                span_id,
-                "schema_strict_disabled",
-                "provider/model 已标记为不支持 strict JSON schema，本次直接使用无 schema JSON 输出",
-                {"provider": provider, "model": model},
-            )
         operation_seed = derive_seed(head_sha, "expert", agent_id, context_unit_id, checkpoint_id)
+        payload, model_metadata = build_chat_payload(
+            provider=provider,
+            model=model,
+            llm=llm,
+            messages=messages,
+            temperature=0.1,
+            seed=operation_seed,
+            structured=True,
+        )
+        response_format_type = str((payload.get("response_format") or {}).get("type") or "prompt_json")
+        schema_name = f"review_findings_v3_{response_format_type}"
+        call_input_composition = {**input_composition, **model_metadata}
+        recorder.event(
+            span_id,
+            "llm_model_capabilities",
+            f"{model} 使用 {model_metadata['model_family']} 模型能力档案",
+            {"provider": provider, "model": model, **model_metadata},
+        )
         cache_key = llm_cache_key(provider, model, cache_prompt, seed=operation_seed, schema_name=schema_name, project_id=project_id)
         cached = None if exchange_mode in {"replay", "live_repeat"} else _read_cached_llm_response(config, cache_key, project_id)
         if cached is not None:
@@ -958,69 +1120,49 @@ def call_llm(
                 invoke=lambda _seed: cached,
                 context_hash=context_hash,
                 response_source="legacy_response_cache",
-                input_composition=input_composition,
+                input_composition=call_input_composition,
             )
             content = exchange.response.get("choices", [{}])[0].get("message", {}).get("content", "[]")
             try:
                 max_findings = int(agent.get("max_findings_per_mr") or agent.get("max_findings") or 32)
             except (TypeError, ValueError):
                 max_findings = 32
-            return parse_llm_findings(agent_id, str(content), files, max_findings=max_findings)
+            parse_metrics: dict[str, Any] = {}
+            findings = parse_llm_findings(agent_id, str(content), files, max_findings=max_findings, metrics=parse_metrics)
+            recorder.event(span_id, "llm_findings_parse_funnel", f"{agent_id} 缓存响应解析得到 {len(findings)} 条 finding", {"response_source": "cache", **parse_metrics})
+            return findings
         timeout_seconds = llm_request_timeout_seconds(llm, "expert")
         stream_enabled = llm_stream_enabled(llm)
         try:
             def invoke_expert(seed: int) -> dict[str, Any]:
-                nonlocal schema_name, cache_key
-                seeded_payload = {**payload, "seed": seed}
-                try:
-                    return call_with_retry(
+                active_payload, _metadata = build_chat_payload(
+                    provider=provider,
+                    model=model,
+                    llm=llm,
+                    messages=messages,
+                    temperature=0.1,
+                    seed=seed,
+                    structured=True,
+                )
+                return invoke_with_parameter_fallback(
+                    active_payload,
+                    lambda compatible_payload: call_with_retry(
                         lambda: http_json(
                             chat_completions_url(base_url),
                             {"Authorization": f"Bearer {api_key}"},
                             method="POST",
-                            body=seeded_payload,
+                            body=compatible_payload,
                             timeout_seconds=timeout_seconds,
                             stream=stream_enabled,
                         )
-                    )
-                except (urllib.error.HTTPError, json.JSONDecodeError) as schema_exc:
-                    if schema_name == LLM_REVIEW_FALLBACK_SCHEMA_NAME or not _schema_error_is_unsupported(schema_exc):
-                        raise
-                    fallback_payload = {key: value for key, value in seeded_payload.items() if key != "response_format"}
-                    fallback_schema_name = LLM_REVIEW_FALLBACK_SCHEMA_NAME
-                    fallback_cache_key = llm_cache_key(provider, model, cache_prompt, seed=seed, schema_name=fallback_schema_name, project_id=project_id)
-                    cached_fallback = _read_cached_llm_response(config, fallback_cache_key, project_id)
-                    if cached_fallback is not None and exchange_mode != "replay":
-                        mark_schema_strict_disabled(provider, model)
-                        schema_name = fallback_schema_name
-                        cache_key = fallback_cache_key
-                        recorder.event(
-                            span_id,
-                            "llm_schema_cache_fallback",
-                            "strict JSON schema 响应不可用，命中无 schema 降级缓存",
-                            {"provider": provider, "model": model, "error": type(schema_exc).__name__},
-                        )
-                        return cached_fallback
-                    mark_schema_strict_disabled(provider, model)
-                    recorder.event(
+                    ),
+                    on_downgrade=lambda parameter: recorder.event(
                         span_id,
-                        "schema_strict_disabled",
-                        "provider 不支持 strict JSON schema，本次调用降级为普通 JSON 输出",
-                        {"provider": provider, "model": model, "error": str(schema_exc)[:300]},
-                    )
-                    response = call_with_retry(
-                        lambda: http_json(
-                            chat_completions_url(base_url),
-                            {"Authorization": f"Bearer {api_key}"},
-                            method="POST",
-                            body=fallback_payload,
-                            timeout_seconds=timeout_seconds,
-                            stream=stream_enabled,
-                        )
-                    )
-                    schema_name = fallback_schema_name
-                    cache_key = fallback_cache_key
-                    return response
+                        "llm_parameter_downgraded",
+                        f"{model} 专家调用移除不兼容参数：{parameter}",
+                        {"provider": provider, "model": model, "parameter": parameter, "operation": "expert"},
+                    ),
+                )
 
             exchange = execute_chat_exchange(
                 recorder=recorder,
@@ -1038,10 +1180,78 @@ def call_llm(
                 replay_mode=exchange_mode,
                 invoke=invoke_expert,
                 context_hash=context_hash,
-                input_composition=input_composition,
+                input_composition=call_input_composition,
             )
             response = exchange.response
             duration_ms = int((time.time() - started) * 1000)
+            charged_responses = [response]
+            if response_needs_json_repair(response):
+                choice = (response.get("choices") or [{}])[0]
+                recorder.event(
+                    span_id,
+                    "llm_json_repair_started",
+                    f"{model} 输出被截断或 JSON 不完整，执行一次完整 JSON 重试",
+                    {"provider": provider, "model": model, "finish_reason": str(choice.get("finish_reason") or "")},
+                )
+                repair_messages = build_json_repair_messages(messages)
+
+                def invoke_repair(seed: int) -> dict[str, Any]:
+                    repair_payload, _metadata = build_chat_payload(
+                        provider=provider,
+                        model=model,
+                        llm=llm,
+                        messages=repair_messages,
+                        temperature=0.0,
+                        seed=seed,
+                        structured=True,
+                    )
+                    return invoke_with_parameter_fallback(
+                        repair_payload,
+                        lambda compatible_payload: call_with_retry(
+                            lambda: http_json(
+                                chat_completions_url(base_url),
+                                {"Authorization": f"Bearer {api_key}"},
+                                method="POST",
+                                body=compatible_payload,
+                                timeout_seconds=timeout_seconds,
+                                stream=stream_enabled,
+                            )
+                        ),
+                        on_downgrade=lambda parameter: recorder.event(
+                            span_id,
+                            "llm_parameter_downgraded",
+                            f"{model} JSON 重试移除不兼容参数：{parameter}",
+                            {"provider": provider, "model": model, "parameter": parameter, "operation": "expert_json_repair"},
+                        ),
+                    )
+
+                try:
+                    repair_exchange = execute_chat_exchange(
+                        recorder=recorder,
+                        span_id=span_id,
+                        operation="expert_json_repair",
+                        agent_id=agent_id,
+                        context_unit_id=context_unit_id,
+                        checkpoint_id=checkpoint_id,
+                        head_sha=head_sha,
+                        provider=provider,
+                        model=model,
+                        prompt=f"{cache_prompt}\njson_repair_v1",
+                        messages=repair_messages,
+                        temperature=0.0,
+                        replay_mode=exchange_mode,
+                        invoke=invoke_repair,
+                        context_hash=context_hash,
+                        input_composition={**call_input_composition, "json_repair_attempt": True},
+                    )
+                    charged_responses.append(repair_exchange.response)
+                    if not response_needs_json_repair(repair_exchange.response):
+                        response = repair_exchange.response
+                        recorder.event(span_id, "llm_json_repair_completed", f"{model} JSON 重试已返回完整响应")
+                    else:
+                        recorder.event(span_id, "llm_json_repair_failed", f"{model} JSON 重试仍不完整，保留首轮可恢复内容")
+                except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as repair_exc:
+                    recorder.event(span_id, "llm_json_repair_failed", f"{model} JSON 重试失败，保留首轮可恢复内容", {"error": str(repair_exc)[:300]})
             usage = response.get("usage") or {}
             input_tokens = int(usage.get("prompt_tokens", prompt_tokens))
             output_tokens = int(usage.get("completion_tokens", 0))
@@ -1058,14 +1268,24 @@ def call_llm(
                 response=response,
             )
             if budget_tracker:
-                budget_tracker.charge_llm(model, input_tokens, output_tokens)
+                for charged_response in charged_responses:
+                    charged_usage = charged_response.get("usage") or {}
+                    budget_tracker.charge_llm(model, int(charged_usage.get("prompt_tokens", prompt_tokens)), int(charged_usage.get("completion_tokens", 0)))
                 if budget_tracker.truncated_reason:
                     recorder.event(span_id, "budget_truncated", f"LLM 调用后预算触发熔断：{budget_tracker.truncated_reason}", budget_tracker.snapshot())
             try:
                 max_findings = int(agent.get("max_findings_per_mr") or agent.get("max_findings") or 32)
             except (TypeError, ValueError):
                 max_findings = 32
-            return parse_llm_findings(agent_id, content, files, max_findings=max_findings)
+            parse_metrics = {}
+            findings = parse_llm_findings(agent_id, content, files, max_findings=max_findings, metrics=parse_metrics)
+            recorder.event(
+                span_id,
+                "llm_findings_parse_funnel",
+                f"{agent_id} 模型候选 {parse_metrics.get('candidate_count', 0)} 条，接受 {len(findings)} 条",
+                {"provider": provider, "model": model, **parse_metrics},
+            )
+            return findings
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = exc
             duration_ms = int((time.time() - started) * 1000)

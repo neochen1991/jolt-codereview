@@ -300,7 +300,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
                 "如果 skill_checkpoints 非空，只允许围绕当前批次 skill_checkpoints 逐条检查；"
                 "禁止执行专家自由检视，禁止输出 Skill 未要求的通用安全/编码/性能/架构问题。"
             ),
-            "no_hit": "如果当前 MR 没有命中该 Skill 的检查点，返回空 JSON 数组，不要为了凑数输出相邻问题。",
+            'no_hit': '如果当前 MR 没有命中该 Skill 的检查点，返回 {"findings": []}，不要为了凑数输出相邻问题。',
             "traceability": (
                 "命中 Skill 时 covered_rules/skipped_rules 必须使用 skill_checkpoints 中定义的 checkpoint_id/rule_id 原值；"
                 "禁止替换成规范、专家画像或通用规则中的其他 rule_id。"
@@ -360,11 +360,11 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
         },
         "static_tool_scan_findings": static_tool_scan_findings,
         "task": (
-            "请只找高置信代码问题，输出 JSON 数组。字段：severity, confidence, file_path, "
+            '请只找高置信代码问题，输出 JSON 对象 {"findings": [...]}。finding 字段：severity, confidence, file_path, '
             "line_start, line_end, title, problem_description, trigger_condition, impact, causal_delta, semantic_evidence, evidence_path, recommendation, suggested_code, evidence, covered_rules, skipped_rules。"
             "除 file_path、rule_id、类名、方法名、代码片段和必要技术专有名词外，"
             "title、problem_description、recommendation、evidence 必须使用中文回答。"
-            f"每个专家最多输出 {max_agent_findings} 个最高置信 finding，必须保证 JSON 数组完整闭合；"
+            f"每个专家最多输出 {max_agent_findings} 个最高置信 finding，必须保证 JSON 对象和 findings 数组完整闭合；"
             "line_start 和 line_end 必须是当前 MR diff 中触发问题的精确文件行号；"
             "trigger_condition 必须说明问题在什么输入、状态或调用路径下会发生；impact 必须说明可观察的业务、安全、数据或性能后果；"
             "跨文件结论必须在 semantic_evidence 中逐项引用 structured_diff.items.dependencies 里真实存在的 symbol_id、relation、file_path；"
@@ -383,7 +383,7 @@ def build_prompt(agent: dict[str, Any], files: list[Any], skill_summary: str = "
             "当 Skill、绑定规范、专家画像描述相同问题时，以 Skill 的 rule_id/checkpoint_id 为准；"
             "Skill 规则命中时 covered_rules、skipped_rules、rule_id 必须保留 Skill 定义的原始规则 ID，不能改写为绑定规范或专家画像中的 rule_id；"
             "当绑定规范和专家画像描述相同问题时，以绑定规范 rule_id 为准。"
-            "如果 coverage_retry.enabled=true，本次是低覆盖补检视，只复核 coverage_retry.target_id；没有新证据时返回空 JSON 数组。"
+            '如果 coverage_retry.enabled=true，本次是低覆盖补检视，只复核 coverage_retry.target_id；没有新证据时返回 {"findings": []}。'
             "如果 review_rules.skill_checkpoints 非空，必须逐条检查当前批次的每个 checkpoint，满足 required_evidence 才能输出；"
             "命中 false_positive_patterns、negative_examples 或 skip_conditions 必须跳过，除非当前 diff 中有新源码证据明确推翻反例。"
             "C. 如果 agent_profile.custom_prompt 不为空，必须按该自定义 Agent Prompt 执行补充检视。"

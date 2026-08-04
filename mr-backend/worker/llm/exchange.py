@@ -286,9 +286,16 @@ def execute_chat_exchange(
     prompt_details = usage.get("prompt_tokens_details") if isinstance(usage.get("prompt_tokens_details"), dict) else {}
     input_details = usage.get("input_tokens_details") if isinstance(usage.get("input_tokens_details"), dict) else {}
     provider_cached_tokens = int(prompt_details.get("cached_tokens") or input_details.get("cached_tokens") or 0)
+    choice = (response.get("choices") or [{}])[0] if isinstance(response, dict) else {}
+    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+    response_content = str(message.get("content") or "")
+    reasoning_content = str(message.get("reasoning_content") or "")
     logged_composition = {
         **(input_composition or {}),
         "provider_cached_input_tokens": provider_cached_tokens,
+        "finish_reason": str(choice.get("finish_reason") or ""),
+        "response_content_chars": len(response_content),
+        "reasoning_content_chars": len(reasoning_content),
     }
     recorder.llm_call(
         span_id,

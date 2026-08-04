@@ -5,7 +5,7 @@ import time
 import urllib.error
 from typing import Any, Callable
 
-from llm.client import estimate_tokens, http_json, llm_request_timeout_seconds, llm_stream_enabled
+from llm.client import build_chat_payload, estimate_tokens, http_json, invoke_with_parameter_fallback, llm_max_output_tokens, llm_request_timeout_seconds, llm_stream_enabled
 from llm.exchange import execute_chat_exchange, invoke_openai_chat, replay_mode_from_config
 from llm.retry import call_with_retry
 from llm_router import candidate_providers
@@ -197,6 +197,23 @@ def run_critic_pass(
                     started = time.time()
                     messages = [{"role": "system", "content": "你是严格的代码检视 Critic，只输出 JSON。"}, {"role": "user", "content": prompt}]
                     try:
+                        def invoke_critic(seed: int) -> dict[str, Any]:
+                            payload, _metadata = build_chat_payload(
+                                provider=provider,
+                                model=model,
+                                llm=llm,
+                                messages=messages,
+                                temperature=0.0,
+                                seed=seed,
+                                structured=True,
+                                max_tokens=min(4096, llm_max_output_tokens(llm, provider, model)),
+                            )
+                            return invoke_with_parameter_fallback(
+                                payload,
+                                lambda active: invoke_openai_chat(base_url=base_url, api_key=str(api_key), payload=active, timeout_seconds=llm_request_timeout_seconds(llm, "critic"), stream=llm_stream_enabled(llm), transport=http_json, retry=call_with_retry),
+                                on_downgrade=lambda parameter: recorder.event(span_id, "llm_parameter_downgraded", f"{model} Critic 调用移除不兼容参数：{parameter}", {"provider": provider, "model": model, "parameter": parameter, "operation": "critic"}),
+                            )
+
                         exchange = execute_chat_exchange(
                             recorder=recorder,
                             span_id=span_id,
@@ -211,7 +228,7 @@ def run_critic_pass(
                             messages=messages,
                             temperature=0.0,
                             replay_mode=replay_mode_from_config(config),
-                            invoke=lambda seed: invoke_openai_chat(base_url=base_url, api_key=str(api_key), payload={"model": model, "messages": messages, "temperature": 0.0, "seed": seed}, timeout_seconds=llm_request_timeout_seconds(llm, "critic"), stream=llm_stream_enabled(llm), transport=http_json, retry=call_with_retry),
+                            invoke=invoke_critic,
                         )
                         response = exchange.response
                         usage = response.get("usage") or {}

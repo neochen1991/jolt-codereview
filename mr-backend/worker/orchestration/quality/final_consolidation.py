@@ -243,6 +243,8 @@ def _merge_group(
         "primary_member_hash": str(primary_source.get("dedupe_hash") or ""),
         "reason": reason,
         "merged_count": len(members),
+        "merged_agent_ids": merged_agents,
+        "related_locations": primary["related_locations"],
         **model_metadata,
     }
     primary["quality_trace"] = trace
@@ -518,7 +520,10 @@ def consolidate_final_findings(
     consolidation_llm: Callable[[str], Any] | None = None,
 ) -> ConsolidationResult:
     started = time.time()
-    settings = _settings(config)
+    try:
+        settings = _settings(config)
+    except (TypeError, ValueError) as exc:
+        return _fallback(findings, reason="invariant_violation", detail=f"invalid_config:{type(exc).__name__}", started=started)
     if not settings["enabled"]:
         return _fallback(findings, reason="disabled", started=started)
     if len(findings) < settings["min_findings"]:
@@ -536,18 +541,23 @@ def consolidate_final_findings(
     group_count = 0
     model_metadata: dict[str, Any] = {}
     for batch in _candidate_batches(findings, settings["max_findings"]):
-        compact, lookup = compact_findings(batch)
-        prompt = build_consolidation_prompt(compact)
-        content, current_metadata, invocation_failure = _invoke_consolidation_model(
-            prompt=prompt,
-            config=config,
-            settings=settings,
-            recorder=recorder,
-            span_id=span_id,
-            head_sha=head_sha,
-            budget_tracker=budget_tracker,
-            consolidation_llm=consolidation_llm,
-        )
+        try:
+            compact, lookup = compact_findings(batch)
+            prompt = build_consolidation_prompt(compact)
+            content, current_metadata, invocation_failure = _invoke_consolidation_model(
+                prompt=prompt,
+                config=config,
+                settings=settings,
+                recorder=recorder,
+                span_id=span_id,
+                head_sha=head_sha,
+                budget_tracker=budget_tracker,
+                consolidation_llm=consolidation_llm,
+            )
+        except TimeoutError as exc:
+            return _fallback(findings, reason="timeout", detail=str(exc), started=started)
+        except Exception as exc:
+            return _fallback(findings, reason="provider_unavailable", detail=type(exc).__name__, started=started)
         if invocation_failure:
             return _fallback(findings, reason=invocation_failure.reason, detail=invocation_failure.detail, started=started)
         groups, parse_failure = parse_consolidation_response(content, set(lookup))
@@ -565,14 +575,16 @@ def consolidate_final_findings(
     if len(consolidated) > len(findings):
         return _fallback(findings, reason="invariant_violation", detail="finding count increased", started=started)
     metadata = {
+        **model_metadata,
         "operation": "final_consolidation",
         "input_finding_count": len(findings),
         "output_finding_count": len(consolidated),
         "merged_group_count": group_count,
         "merged_finding_count": len(rejections),
+        "duplicate_rate_before": round(len(rejections) / max(1, len(findings)), 4),
+        "duplicate_rate_after": 0.0,
         "duration_ms": int((time.time() - started) * 1000),
         "fallback_reason": None,
-        **model_metadata,
     }
     return ConsolidationResult(
         findings=consolidated,

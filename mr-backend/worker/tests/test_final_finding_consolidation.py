@@ -6,6 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from config import DEFAULT_CONFIG, normalize_review_quality_config
+import orchestration.quality.final_consolidation as final_consolidation_module
 from orchestration.quality.final_consolidation import (
     CONTRACT_VERSION,
     build_consolidation_prompt,
@@ -172,6 +173,8 @@ def test_merge_consolidation_groups_preserves_trusted_fields_and_provenance() ->
     assert trace["reason"] == "same idempotency root cause"
     assert trace["merged_count"] == 2
     assert trace["model"] == "semantic-model"
+    assert trace["merged_agent_ids"] == ["backend_agent", "security_agent"]
+    assert trace["related_locations"] == primary["related_locations"]
     assert rejected == [
         {
             **first,
@@ -269,6 +272,8 @@ def test_consolidate_final_findings_applies_valid_model_groups() -> None:
     assert result.metadata["operation"] == "final_consolidation"
     assert result.metadata["input_finding_count"] == 2
     assert result.metadata["output_finding_count"] == 1
+    assert result.metadata["duplicate_rate_before"] == 0.5
+    assert result.metadata["duplicate_rate_after"] == 0.0
 
 
 def test_consolidate_final_findings_skips_disabled_small_or_budget_stopped_inputs() -> None:
@@ -319,6 +324,36 @@ def test_consolidate_final_findings_fails_open_on_invalid_output_or_exception() 
         assert result.findings == findings
         assert result.rejections == []
         assert result.fallback_reason == reason
+
+
+def test_consolidate_final_findings_fails_open_on_invalid_config_and_router_exception() -> None:
+    findings = _findings()
+    invalid_config = _enabled_config(timeout_seconds="not-a-number")
+    result = consolidate_final_findings(
+        findings=findings,
+        config=invalid_config,
+        recorder=_Recorder(),
+        span_id="judge-span",
+        head_sha="head-1",
+        consolidation_llm=lambda _prompt: {},
+    )
+    assert result.findings == findings
+    assert result.fallback_reason == "invariant_violation"
+
+    original_router = final_consolidation_module.candidate_providers
+    try:
+        final_consolidation_module.candidate_providers = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("router failed"))
+        result = consolidate_final_findings(
+            findings=findings,
+            config={**_enabled_config(), "llm": {"providers": []}},
+            recorder=_Recorder(),
+            span_id="judge-span",
+            head_sha="head-1",
+        )
+    finally:
+        final_consolidation_module.candidate_providers = original_router
+    assert result.findings == findings
+    assert result.fallback_reason == "provider_unavailable"
 
 
 def test_judge_pipeline_runs_final_consolidation_after_critic_and_before_persistence() -> None:
@@ -374,6 +409,7 @@ if __name__ == "__main__":
     test_consolidate_final_findings_applies_valid_model_groups()
     test_consolidate_final_findings_skips_disabled_small_or_budget_stopped_inputs()
     test_consolidate_final_findings_fails_open_on_invalid_output_or_exception()
+    test_consolidate_final_findings_fails_open_on_invalid_config_and_router_exception()
     test_judge_pipeline_runs_final_consolidation_after_critic_and_before_persistence()
     test_final_consolidation_defaults_are_enabled_and_bounded()
     test_precision_verification_executes_final_consolidation_contract_tests()

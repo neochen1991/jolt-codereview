@@ -7,6 +7,7 @@ from skill_debug import production_side_effects_allowed
 
 from context.context_executor import call_llm_for_context_units
 from orchestration.deepagents_runner import run_bounded_deepagent
+from orchestration.quality.issue_identity import cluster_canonical_issues
 from prompts.example_retriever import retrieve_examples
 from rules.skill_checkpoint_parser import parse_skill_checkpoints
 from orchestration.skill_runtime_facts import checkpoint_applies_to_files
@@ -1743,15 +1744,37 @@ def make_run_experts_node(
                 "status": "partial" if unique_unresolved else context_health.get("status", "full"),
             }
         )
+        all_findings, cross_agent_duplicates = cluster_canonical_issues(all_findings)
+        if cross_agent_duplicates:
+            dedupe_span = recorder.span("cross_agent_dedupe", "quality_audit")
+            recorder.event(
+                dedupe_span,
+                "finding_deduped",
+                f"跨 Agent Canonical Issue 聚类合并 {len(cross_agent_duplicates)} 个重复候选",
+                {
+                    "deduped_count": len(cross_agent_duplicates),
+                    "reason": "deduped_canonical_issue_v2",
+                    "fingerprints": sorted(
+                        {
+                            str(item.get("merged_into_dedupe_hash") or "")
+                            for item in cross_agent_duplicates
+                            if item.get("merged_into_dedupe_hash")
+                        }
+                    ),
+                },
+            )
+            recorder.finish(dedupe_span)
         return {
             **state,
             "all_findings": all_findings,
+            "expert_dedupe_rejections": cross_agent_duplicates,
             "executed_context_unit_ids": sorted(executed_context_unit_ids),
             "unresolved_context_units": list(unique_unresolved.values()),
             "context_health": context_health,
             "candidate_quality": {
                 **(state.get("candidate_quality") or {}),
                 "bound_review_coverage": bound_review_coverage,
+                "cross_agent_duplicate_count": len(cross_agent_duplicates),
             },
         }
 

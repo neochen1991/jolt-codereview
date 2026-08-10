@@ -8,6 +8,7 @@ from calibration.precision_history import calibrate_findings_with_history, load_
 from diff.slicer import extract_added_lines
 from orchestration.judging.evidence_score import apply_evidence_score_policy, changed_line_index, score as score_evidence
 from orchestration.nodes.critic_pass import run_critic_pass
+from orchestration.quality.diff_scope import DiffScope
 from rules.registry import (
     external_tool_rule_map,
     load_registry,
@@ -1313,51 +1314,37 @@ def _diff_anchor_result(finding: dict[str, Any], added_lines: dict[str, set[int]
     file_path = str(finding.get("file_path") or "")
     line = _as_int(finding.get("line_start"))
     if not file_path or line is None:
-        return finding, None
+        return None, "missing_diff_line"
     file_added_lines = added_lines.get(file_path)
     if file_added_lines is None:
-        return finding, None
+        return None, "file_not_changed_by_diff"
     if not file_added_lines:
         return None, "not_on_added_or_modified_line"
     if line in file_added_lines:
         return finding, None
-    nearest = _best_semantic_added_line(finding, file_path, line, file_added_lines, added_text)
-    if nearest is None:
-        nearest = _nearest_added_line(file_path, line, file_added_lines)
-    if nearest is None:
-        return None, "not_on_added_or_modified_line"
-    nearest_text = (added_text.get(file_path) or {}).get(nearest, "")
-    if not _can_reanchor_to_added_line(finding, nearest_text):
-        return None, "context_line_not_semantically_tied_to_added_line"
-    anchored = dict(finding)
-    anchored["line_start"] = nearest
-    anchored["line_end"] = nearest
-    anchored["verification_flags"] = [*(anchored.get("verification_flags") or []), "diff_anchor_relocated"]
-    anchored["quality_trace"] = {
-        **(anchored.get("quality_trace") if isinstance(anchored.get("quality_trace"), dict) else {}),
-        "original_line_start": line,
-        "diff_anchor_line": nearest,
-        "diff_anchor_reason": "semantic_nearby_added_line",
-    }
-    return anchored, None
+    return None, "not_on_added_or_modified_line"
 
 
 def filter_to_diff_introduced_findings(
     findings: list[dict[str, Any]],
     files: list[Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    added_lines = _added_line_index(files)
-    added_text = _added_line_text_index(files)
-    if not added_lines:
-        return findings, []
+    scope = DiffScope.from_files(files)
     kept: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
-    for finding in findings:
-        anchored, reason = _diff_anchor_result(finding, added_lines, added_text)
-        if anchored is None:
-            rejected.append({**finding, "rejected_reasons": [reason or "not_introduced_by_diff"]})
+    for raw_finding in findings:
+        finding = scope.normalize_item(raw_finding)
+        line = _as_int(finding.get("line_start"))
+        reason = scope.line_scope_reason(
+            str(finding.get("file_path") or ""),
+            line,
+            scope_kind=str(finding.get("scope_kind") or "line"),
+        )
+        if reason:
+            legacy_reason = "not_on_added_or_modified_line" if reason == "line_not_added_by_diff" else reason
+            rejected.append({**finding, "rejected_reasons": [legacy_reason]})
             continue
-        kept.append(anchored)
+        kept.append(finding)
     return kept, rejected
 
 
@@ -1365,48 +1352,24 @@ def filter_tool_observations_to_added_lines(
     tool_observations: list[dict[str, Any]],
     files: list[Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    added_lines = _added_line_index(files)
-    added_text = _added_line_text_index(files)
-    if not added_lines:
-        return tool_observations, []
+    scope = DiffScope.from_files(files)
     kept: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
-    for observation in tool_observations:
+    for raw_observation in tool_observations:
+        observation = scope.normalize_item(raw_observation)
         file_path = str(observation.get("file_path") or "")
         line = _as_int(observation.get("line_start"))
-        if not file_path or line is None or file_path not in added_lines:
-            kept.append(observation)
+        reason = scope.line_scope_reason(file_path, line, scope_kind=str(observation.get("scope_kind") or "line"))
+        if reason:
+            mapped_reason = {
+                "file_not_changed_by_diff": "tool_observation_file_not_changed",
+                "diff_patch_unavailable": "tool_observation_diff_patch_unavailable",
+                "missing_diff_line": "tool_observation_missing_diff_line",
+                "line_not_added_by_diff": "tool_observation_not_on_added_line",
+            }.get(reason, reason)
+            rejected.append({**observation, "rejected_reasons": [mapped_reason]})
             continue
-        if line in added_lines[file_path]:
-            kept.append(observation)
-            continue
-        rule_id = str(observation.get("rule_id") or "")
-        fake_finding = normalize_tool_finding(
-            {
-                "agent_id": _agent_for_rule(CATEGORY_PRIMARY_RULE.get(normalized_rule_category(rule_id, observation.get("message")), rule_id)),
-                "file_path": file_path,
-                "line_start": line,
-                "line_end": observation.get("line_end"),
-                "title": observation.get("message") or rule_id,
-                "problem_description": observation.get("message") or rule_id,
-                "evidence": observation.get("message") or rule_id,
-                "covered_rules": [CATEGORY_PRIMARY_RULE.get(normalized_rule_category(rule_id, observation.get("message")), rule_id)],
-                "tool_rule_id": rule_id,
-            }
-        )
-        relocated = _best_semantic_added_line(fake_finding, file_path, line, added_lines[file_path], added_text)
-        if relocated is not None:
-            kept.append(
-                {
-                    **observation,
-                    "line_start": relocated,
-                    "line_end": relocated,
-                    "original_line_start": line,
-                    "adoption_state": observation.get("adoption_state") or "candidate_reanchored",
-                }
-            )
-            continue
-        rejected.append({**observation, "rejected_reasons": ["tool_observation_not_on_added_line"]})
+        kept.append(observation)
     return kept, rejected
 
 AUXILIARY_TITLE_MARKERS = [

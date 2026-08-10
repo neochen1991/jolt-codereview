@@ -36,6 +36,7 @@ from llm.retry import call_with_retry
 from llm.exchange import execute_chat_exchange, invoke_openai_chat, replay_mode_from_config
 from llm_router import candidate_providers
 from orchestration.graph import invoke_review_graph
+from orchestration.quality.diff_scope import DiffScope
 from orchestration.nodes.build_context import make_build_context_node
 from orchestration.nodes.choose_effort import make_choose_effort_node
 from orchestration.nodes.detect_conflicts import detect_conflicts, make_detect_conflicts_node
@@ -4674,6 +4675,7 @@ def verify_findings_detailed(
         known_rule_registry(agent_config_by_id),
         source_loader,
         tool_observations or [],
+        diff_scope=DiffScope.from_files(files),
     )
     if rejected:
         recorder.event(

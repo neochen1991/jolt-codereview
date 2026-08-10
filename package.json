@@ -55,6 +55,7 @@
     "verify:review-visibility-policy": "npm --prefix mr-backend run build && node scripts/test-review-visibility-policy.mjs",
     "verify:review-diagnostic-authorization": "npm run verify:review-visibility-policy && node scripts/verify-review-diagnostic-authorization.mjs",
     "verify:reviewer-detail-ui": "node scripts/verify-reviewer-detail-ui.mjs",
+    "verify:review-location-grouping": "npm --prefix mr-backend run build && node scripts/verify-review-location-grouping.mjs && npm --prefix frontend run build",
     "verify:runtime-cleanup": "node scripts/verify-runtime-cleanup.mjs",
     "verify:learned-examples": "python3 scripts/verify_learned_examples.py",
     "verify:llm-schema-cache": "python3 scripts/verify_llm_schema_cache.py",

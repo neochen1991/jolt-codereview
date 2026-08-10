@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import unittest
+from copy import deepcopy
 
 from orchestration.quality.final_consolidation import (
     CONTRACT_VERSION,
     compact_findings,
+    merge_consolidation_groups,
     parse_consolidation_response,
 )
 
@@ -107,9 +109,93 @@ def test_parse_consolidation_response_rejects_invalid_json() -> None:
     assert failure.reason == "invalid_json"
 
 
+def test_merge_consolidation_groups_preserves_trusted_fields_and_provenance() -> None:
+    first, second = _findings()
+    first.update(
+        {
+            "severity": "medium",
+            "confidence": 0.91,
+            "suggested_code": "first-fix",
+            "source_observations": [{"tool_name": "semgrep", "rule_id": "rule-a"}],
+            "tool_provenance": [{"tool_name": "semgrep", "rule_id": "rule-a"}],
+            "quality_trace": {"existing": "first"},
+        }
+    )
+    second.update(
+        {
+            "severity": "high",
+            "confidence": 0.87,
+            "suggested_code": "second-fix",
+            "verification_flags": ["tool_promoted"],
+            "source_observations": [
+                {"tool_name": "semgrep", "rule_id": "rule-a"},
+                {"tool_name": "java_web_static", "rule_id": "rule-b"},
+            ],
+            "tool_provenance": [{"tool_name": "java_web_static", "rule_id": "rule-b"}],
+            "quality_trace": {"existing": "second"},
+        }
+    )
+    original = deepcopy([first, second])
+
+    merged, rejected = merge_consolidation_groups(
+        [first, second],
+        [{"member_ids": ["f_01", "f_02"], "reason": "same idempotency root cause"}],
+        model_metadata={"provider": "test", "model": "semantic-model", "duration_ms": 17},
+    )
+
+    assert [first, second] == original
+    assert len(merged) == 1
+    primary = merged[0]
+    assert primary["title"] == second["title"]
+    assert primary["problem_description"] == second["problem_description"]
+    assert primary["recommendation"] == second["recommendation"]
+    assert primary["suggested_code"] == "second-fix"
+    assert primary["severity"] == "high"
+    assert primary["confidence"] == 0.91
+    assert primary["covered_rules"] == ["BE-IDEMPOTENCY-001", "SEC-RISK-006"]
+    assert primary["merged_agent_ids"] == ["backend_agent", "security_agent"]
+    assert primary["related_locations"] == [
+        {"file_path": "src/RefundService.java", "line_start": 10, "line_end": 10}
+    ]
+    assert "refund(request)" in primary["evidence"]
+    assert "gateway.refund" in primary["evidence"]
+    assert len(primary["source_observations"]) == 2
+    assert len(primary["tool_provenance"]) == 2
+    assert primary["dedupe_hash"].startswith("issue_v2_")
+    trace = primary["quality_trace"]["final_consolidation"]
+    assert trace["member_hashes"] == ["finding-a", "finding-b"]
+    assert trace["primary_member_hash"] == "finding-b"
+    assert trace["reason"] == "same idempotency root cause"
+    assert trace["merged_count"] == 2
+    assert trace["model"] == "semantic-model"
+    assert rejected == [
+        {
+            **first,
+            "rejected_reasons": ["deduped_final_llm_consolidation"],
+            "merged_into_dedupe_hash": primary["dedupe_hash"],
+        }
+    ]
+
+
+def test_merge_consolidation_groups_never_increases_count_and_keeps_ungrouped_findings() -> None:
+    findings = [*_findings(), {**_findings()[0], "dedupe_hash": "finding-c", "title": "独立问题"}]
+
+    merged, rejected = merge_consolidation_groups(
+        findings,
+        [{"member_ids": ["f_01", "f_02"], "reason": "same root cause"}],
+    )
+
+    assert len(merged) == 2
+    assert len(merged) <= len(findings)
+    assert any(item["title"] == "独立问题" for item in merged)
+    assert len(rejected) == 1
+
+
 if __name__ == "__main__":
     test_compact_findings_assigns_stable_request_local_ids()
     test_parse_consolidation_response_accepts_valid_groups()
     test_parse_consolidation_response_rejects_invalid_groups_atomically()
     test_parse_consolidation_response_rejects_invalid_json()
+    test_merge_consolidation_groups_preserves_trusted_fields_and_provenance()
+    test_merge_consolidation_groups_never_increases_count_and_keeps_ungrouped_findings()
     print("final finding consolidation contract tests passed")

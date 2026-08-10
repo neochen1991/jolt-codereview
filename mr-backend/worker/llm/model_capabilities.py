@@ -32,7 +32,7 @@ _GLM_PROFILE = ModelCapabilities(
     recommended_output_tokens=32768,
     max_output_tokens=131072,
     response_format={"type": "json_object"},
-    thinking={"type": "enabled"},
+    thinking={"type": "disabled"},
     supports_seed=False,
 )
 
@@ -71,15 +71,13 @@ def resolve_model_capabilities(provider: str, model: str, llm_config: dict[str, 
         _safe_positive_int(merged.get("recommended_output_tokens"), profile.recommended_output_tokens),
     )
     response_format = merged.get("response_format", profile.response_format)
-    thinking = merged.get("thinking", profile.thinking)
-    reasoning_effort = merged.get("reasoning_effort", profile.reasoning_effort)
     supports_seed = merged.get("supports_seed", profile.supports_seed)
     return replace(
         profile,
         recommended_output_tokens=recommended_output_tokens,
         max_output_tokens=max_output_tokens,
         response_format=dict(response_format) if isinstance(response_format, dict) else None,
-        thinking=dict(thinking) if isinstance(thinking, dict) else None,
-        reasoning_effort=str(reasoning_effort) if reasoning_effort else None,
+        thinking=dict(profile.thinking) if isinstance(profile.thinking, dict) else None,
+        reasoning_effort=None,
         supports_seed=bool(supports_seed),
     )

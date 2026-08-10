@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage  # noqa: E402
 from orchestration.deepagents_runner import _message_to_openai, deepagent_request_payload  # noqa: E402
 
 
-def test_glm_deepagent_payload_uses_thinking_without_seed() -> None:
+def test_glm_deepagent_payload_disables_thinking_without_seed() -> None:
     payload, metadata = deepagent_request_payload(
         provider="gateway",
         model="glm-5.2",
@@ -21,7 +21,7 @@ def test_glm_deepagent_payload_uses_thinking_without_seed() -> None:
         seed=13,
     )
 
-    assert payload["thinking"] == {"type": "enabled", "clear_thinking": False}
+    assert payload["thinking"] == {"type": "disabled"}
     assert payload["max_tokens"] == 32768
     assert "seed" not in payload
     assert payload["tool_choice"] == "auto"
@@ -56,7 +56,7 @@ def test_reasoning_content_is_preserved_between_tool_rounds() -> None:
 
 
 if __name__ == "__main__":
-    test_glm_deepagent_payload_uses_thinking_without_seed()
+    test_glm_deepagent_payload_disables_thinking_without_seed()
     test_minimax_deepagent_payload_keeps_seed()
     test_reasoning_content_is_preserved_between_tool_rounds()
     print("deepagent model adaptation tests passed")

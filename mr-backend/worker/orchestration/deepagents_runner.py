@@ -38,7 +38,11 @@ def deepagent_request_payload(
         seed=seed,
         structured=False,
     )
-    if metadata["model_family"] == "glm" and isinstance(payload.get("thinking"), dict):
+    if (
+        metadata["model_family"] == "glm"
+        and isinstance(payload.get("thinking"), dict)
+        and payload["thinking"].get("type") == "enabled"
+    ):
         payload["thinking"] = {**payload["thinking"], "clear_thinking": False}
     if tools:
         payload["tools"] = tools

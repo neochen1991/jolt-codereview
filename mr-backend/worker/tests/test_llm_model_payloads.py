@@ -36,7 +36,7 @@ def test_glm_52_payload_is_gateway_compatible() -> None:
     )
 
     assert payload["max_tokens"] == 32768
-    assert payload["thinking"] == {"type": "enabled"}
+    assert payload["thinking"] == {"type": "disabled"}
     assert payload["response_format"] == {"type": "json_object"}
     assert "seed" not in payload
     assert metadata["model_family"] == "glm"
@@ -44,7 +44,7 @@ def test_glm_52_payload_is_gateway_compatible() -> None:
     assert request_options_for_payload(payload) == {
         "max_tokens": 32768,
         "response_format": {"type": "json_object"},
-        "thinking": {"type": "enabled"},
+        "thinking": {"type": "disabled"},
     }
 
 
@@ -84,7 +84,7 @@ def test_unstructured_call_does_not_request_json_mode() -> None:
     )
 
     assert "response_format" not in payload
-    assert payload["thinking"] == {"type": "enabled"}
+    assert payload["thinking"] == {"type": "disabled"}
 
 
 def test_only_explicit_parameter_errors_trigger_compatibility_fallback() -> None:

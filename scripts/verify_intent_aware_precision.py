@@ -17,12 +17,68 @@ from orchestration.nodes.judge_findings import (  # noqa: E402
     judge_candidate_findings,
 )
 from orchestration.nodes.verify_findings import verify_candidate_findings  # noqa: E402
+from orchestration.quality.diff_scope import DiffScope  # noqa: E402
+from orchestration.quality.issue_identity import canonical_issue_fingerprint  # noqa: E402
 
 
 PUBLISHABLE_SEVERITIES = {"critical", "high", "medium", "low"}
 
 
-def score_labeled_cases(cases: list[dict[str, Any]], duplicate_groups: list[list[str]] | None = None) -> dict[str, Any]:
+def _finding_identity(item: dict[str, Any], index: int) -> str:
+    return str(item.get("finding_id") or item.get("id") or item.get("dedupe_hash") or f"finding-{index}")
+
+
+def derive_duplicate_groups(findings: list[dict[str, Any]]) -> list[list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for index, item in enumerate(findings):
+        grouped.setdefault(canonical_issue_fingerprint(item), []).append(_finding_identity(item, index))
+    return [sorted(group) for _, group in sorted(grouped.items()) if len(group) > 1]
+
+
+def _is_publishable_finding(item: dict[str, Any]) -> bool:
+    return (
+        int(item.get("selected", 1) or 0) == 1
+        and str(item.get("severity") or "medium").lower() in PUBLISHABLE_SEVERITIES
+    )
+
+
+def score_scope_violations(findings: list[dict[str, Any]], files: list[Any]) -> dict[str, int]:
+    scope = DiffScope.from_files(files)
+    off_diff = 0
+    unchanged_file = 0
+    missing_patch = 0
+    relocated = 0
+    for raw_item in findings:
+        if not _is_publishable_finding(raw_item):
+            continue
+        item = scope.normalize_item(raw_item)
+        try:
+            line = int(item.get("line_start") or 0) or None
+        except (TypeError, ValueError):
+            line = None
+        reason = scope.line_scope_reason(
+            str(item.get("file_path") or ""),
+            line,
+            scope_kind=str(item.get("scope_kind") or "line"),
+        )
+        if reason == "file_not_changed_by_diff":
+            unchanged_file += 1
+        elif reason == "diff_patch_unavailable":
+            missing_patch += 1
+        elif reason in {"line_not_added_by_diff", "missing_diff_line"}:
+            off_diff += 1
+        trace = item.get("quality_trace") if isinstance(item.get("quality_trace"), dict) else {}
+        if "diff_anchor_relocated" in (item.get("verification_flags") or []) or trace.get("diff_anchor_reason"):
+            relocated += 1
+    return {
+        "off_diff_published_count": off_diff,
+        "unchanged_file_published_count": unchanged_file,
+        "missing_patch_published_count": missing_patch,
+        "automatic_relocation_count": relocated,
+    }
+
+
+def score_labeled_cases(cases: list[dict[str, Any]], *, findings: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     true_positive = sum(1 for item in cases if item["expected"] and item["published"])
     false_positive = sum(1 for item in cases if not item["expected"] and item["published"])
     false_negative = sum(1 for item in cases if item["expected"] and not item["published"])
@@ -30,7 +86,8 @@ def score_labeled_cases(cases: list[dict[str, Any]], duplicate_groups: list[list
     expected_high = [item for item in cases if item["expected"] and item.get("severity") in {"critical", "high"}]
     recalled_high = [item for item in expected_high if item["published"]]
     false_positives = [item for item in cases if not item["expected"] and item["published"]]
-    groups = duplicate_groups or []
+    final_findings = findings or []
+    groups = derive_duplicate_groups(final_findings)
     return {
         "case_count": len(cases),
         "tp": true_positive,
@@ -43,7 +100,7 @@ def score_labeled_cases(cases: list[dict[str, Any]], duplicate_groups: list[list
         "false_positives_by_intent": dict(sorted(Counter(str(item["intent"]) for item in false_positives).items())),
         "false_positives_by_category": dict(sorted(Counter(str(item["category"]) for item in false_positives).items())),
         "duplicate_group_count": len(groups),
-        "duplicate_rate": round(sum(max(0, len(group) - 1) for group in groups) / max(1, len(cases)), 4),
+        "duplicate_rate": round(sum(max(0, len(group) - 1) for group in groups) / max(1, len(final_findings)), 4),
     }
 
 
@@ -219,7 +276,7 @@ def run_quality_fixture() -> dict[str, Any]:
         "category": "JAVA_NAMING",
     })
 
-    report = score_labeled_cases(cases, duplicate_groups=[])
+    report = score_labeled_cases(cases, findings=naming_merged)
     report["aggregated_duplicate_count"] = len(naming_rejected)
     report["post_aggregation_finding_count"] = len(naming_merged)
     report["cases"] = cases

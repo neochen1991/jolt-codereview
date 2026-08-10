@@ -85,6 +85,15 @@ export interface AppConfig {
     semantic_index?: "regex" | "tree_sitter" | "typed";
     llm_replay?: "off" | "record" | "replay" | "live_repeat";
     gold_dataset_path?: string;
+    final_consolidation?: {
+      enabled?: boolean;
+      min_findings?: number;
+      max_findings?: number;
+      timeout_seconds?: number;
+      max_output_tokens?: number;
+      temperature?: number;
+      fail_open?: boolean;
+    };
   };
 }
 

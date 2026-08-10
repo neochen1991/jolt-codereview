@@ -202,11 +202,32 @@ def test_review_quality_normalization_ignores_removed_dual_engine_fields() -> No
                 "gold_dataset_path": "old-gold.jsonl",
                 "semantic_index": "typed",
                 "llm_replay": "replay",
+                "final_consolidation": {
+                    "enabled": False,
+                    "min_findings": 3,
+                    "max_findings": 25,
+                    "timeout_seconds": 30,
+                    "max_output_tokens": 2048,
+                    "temperature": 0.0,
+                    "fail_open": True,
+                },
             }
         }
     )
 
-    assert quality == {"semantic_index": "typed", "llm_replay": "replay"}
+    assert quality == {
+        "semantic_index": "typed",
+        "llm_replay": "replay",
+        "final_consolidation": {
+            "enabled": False,
+            "min_findings": 3,
+            "max_findings": 25,
+            "timeout_seconds": 30,
+            "max_output_tokens": 2048,
+            "temperature": 0.0,
+            "fail_open": True,
+        },
+    }
 
 
 if __name__ == "__main__":

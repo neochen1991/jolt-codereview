@@ -56,6 +56,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "review_quality": {
         "semantic_index": "tree_sitter",
         "llm_replay": "record",
+        "final_consolidation": {
+            "enabled": True,
+            "min_findings": 2,
+            "max_findings": 30,
+            "timeout_seconds": 45,
+            "max_output_tokens": 4096,
+            "temperature": 0.0,
+            "fail_open": True,
+        },
     },
     "agent_policy": {
         "deepagents": {
@@ -123,9 +132,20 @@ def load_config() -> dict[str, Any]:
 
 def normalize_review_quality_config(config: dict[str, Any]) -> dict[str, Any]:
     raw = config.get("review_quality") if isinstance(config.get("review_quality"), dict) else {}
+    default_consolidation = DEFAULT_CONFIG["review_quality"]["final_consolidation"]
+    consolidation = raw.get("final_consolidation") if isinstance(raw.get("final_consolidation"), dict) else {}
     result = {
         "semantic_index": str(raw.get("semantic_index") or "tree_sitter"),
         "llm_replay": str(raw.get("llm_replay") or "record"),
+        "final_consolidation": {
+            "enabled": bool(consolidation.get("enabled", default_consolidation["enabled"])),
+            "min_findings": max(2, int(consolidation.get("min_findings") or default_consolidation["min_findings"])),
+            "max_findings": max(2, int(consolidation.get("max_findings") or default_consolidation["max_findings"])),
+            "timeout_seconds": max(1, int(consolidation.get("timeout_seconds") or default_consolidation["timeout_seconds"])),
+            "max_output_tokens": max(256, int(consolidation.get("max_output_tokens") or default_consolidation["max_output_tokens"])),
+            "temperature": float(consolidation.get("temperature") or default_consolidation["temperature"]),
+            "fail_open": bool(consolidation.get("fail_open", default_consolidation["fail_open"])),
+        },
     }
     allowed = {
         "semantic_index": {"regex", "tree_sitter", "typed"},

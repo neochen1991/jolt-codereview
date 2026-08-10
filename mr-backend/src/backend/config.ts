@@ -59,7 +59,16 @@ const DEFAULT_CONFIG: AppConfig = {
   review_quality: {
     semantic_index: "tree_sitter",
     llm_replay: "record",
-    gold_dataset_path: "evaluation/production_review_quality_gold.jsonl"
+    gold_dataset_path: "evaluation/production_review_quality_gold.jsonl",
+    final_consolidation: {
+      enabled: true,
+      min_findings: 2,
+      max_findings: 30,
+      timeout_seconds: 45,
+      max_output_tokens: 4096,
+      temperature: 0,
+      fail_open: true
+    }
   },
   agent_policy: {
     deepagents: {

@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import unittest
 from copy import deepcopy
+from pathlib import Path
 
+from config import DEFAULT_CONFIG, normalize_review_quality_config
 from orchestration.quality.final_consolidation import (
     CONTRACT_VERSION,
     build_consolidation_prompt,
@@ -338,6 +340,29 @@ def test_judge_pipeline_runs_final_consolidation_after_critic_and_before_persist
     assert "cluster_canonical_issues(final_findings)" in source[consolidation_index:accountability_index]
 
 
+def test_final_consolidation_defaults_are_enabled_and_bounded() -> None:
+    expected = {
+        "enabled": True,
+        "min_findings": 2,
+        "max_findings": 30,
+        "timeout_seconds": 45,
+        "max_output_tokens": 4096,
+        "temperature": 0.0,
+        "fail_open": True,
+    }
+
+    assert DEFAULT_CONFIG["review_quality"]["final_consolidation"] == expected
+    normalized = normalize_review_quality_config({"review_quality": {}})
+    assert normalized["final_consolidation"] == expected
+
+
+def test_precision_verification_executes_final_consolidation_contract_tests() -> None:
+    package = json.loads((Path(__file__).resolve().parents[3] / "package.json").read_text(encoding="utf-8"))
+    command = package["scripts"]["verify:review-precision-hardening"]
+
+    assert "test_final_finding_consolidation.py" in command
+
+
 if __name__ == "__main__":
     test_compact_findings_assigns_stable_request_local_ids()
     test_parse_consolidation_response_accepts_valid_groups()
@@ -350,4 +375,6 @@ if __name__ == "__main__":
     test_consolidate_final_findings_skips_disabled_small_or_budget_stopped_inputs()
     test_consolidate_final_findings_fails_open_on_invalid_output_or_exception()
     test_judge_pipeline_runs_final_consolidation_after_critic_and_before_persistence()
+    test_final_consolidation_defaults_are_enabled_and_bounded()
+    test_precision_verification_executes_final_consolidation_contract_tests()
     print("final finding consolidation contract tests passed")

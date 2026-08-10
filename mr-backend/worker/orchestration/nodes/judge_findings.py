@@ -9,6 +9,7 @@ from diff.slicer import extract_added_lines
 from orchestration.judging.evidence_score import apply_evidence_score_policy, changed_line_index, score as score_evidence
 from orchestration.nodes.critic_pass import run_critic_pass
 from orchestration.quality.diff_scope import DiffScope
+from orchestration.quality.issue_identity import cluster_canonical_issues
 from rules.registry import (
     external_tool_rule_map,
     load_registry,
@@ -3783,7 +3784,8 @@ def judge_candidate_findings(
         for value in conflict.get("finding_hashes", [])
     }
     by_key: dict[tuple[str, str, int], dict[str, Any]] = {}
-    rejected: list[dict[str, Any]] = []
+    findings, canonical_rejected = cluster_canonical_issues(findings)
+    rejected: list[dict[str, Any]] = list(canonical_rejected)
     findings, debate_rejected = apply_debate_verdicts(findings, debate_results or [])
     rejected.extend(debate_rejected)
 
@@ -4053,6 +4055,18 @@ def make_judge_findings_node(
                 {
                     "filled_count": len(final_findings) - before_fill_count,
                     "rules": sorted({rule for item in final_findings[before_fill_count:] for rule in item.get("covered_rules", [])}),
+                },
+            )
+        final_findings, post_tool_duplicates = cluster_canonical_issues(final_findings)
+        if post_tool_duplicates:
+            judge_rejections.extend(post_tool_duplicates)
+            recorder.event(
+                judge_span,
+                "finding_deduped",
+                f"工具合流后 Canonical Issue 聚类合并 {len(post_tool_duplicates)} 个重复问题",
+                {
+                    "deduped_count": len(post_tool_duplicates),
+                    "reason": "deduped_canonical_issue_v2",
                 },
             )
         for rejected in judge_rejections:

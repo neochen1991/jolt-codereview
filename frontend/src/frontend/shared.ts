@@ -852,6 +852,23 @@ export function sortFindingsBySeverity(findings: Finding[]) {
   });
 }
 
+export type FindingLocationGroup = {
+  key: string;
+  location: string;
+  findings: Finding[];
+};
+
+export function groupFindingsByLocation(findings: Finding[]): FindingLocationGroup[] {
+  const groups = new Map<string, FindingLocationGroup>();
+  for (const finding of findings) {
+    const location = formatFindingLocation(finding);
+    const existing = groups.get(location);
+    if (existing) existing.findings.push(finding);
+    else groups.set(location, { key: location, location, findings: [finding] });
+  }
+  return [...groups.values()];
+}
+
 function sharedSafeJson(value: string) {
   try {
     return JSON.parse(value || "{}") as Record<string, unknown>;

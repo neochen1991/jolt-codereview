@@ -24,6 +24,7 @@ import { SkillDebugPolicyService } from "../services/SkillDebugPolicyService.js"
 import { SkillDebugDiagnosticService } from "../services/SkillDebugDiagnosticService.js";
 import { SkillDebugValidityService } from "../services/SkillDebugValidityService.js";
 import { SensitiveDataRedactionService } from "../services/SensitiveDataRedactionService.js";
+import { formatLocationGroupBody } from "../reviewLocationGrouping.js";
 import { CommonBackendClient } from "../services/CommonBackendClient.js";
 import { queuedReviewWorkerCapacity } from "../services/WorkerLaunchPolicy.js";
 import { spawnWorkerOnce as launchWorkerOnce, type WorkerProcessLogger } from "../services/WorkerProcessLauncher.js";
@@ -337,20 +338,14 @@ function createRouteGroup(config: AppConfig, db: Db, logger?: WorkerProcessLogge
   }
 
   function formatPublishBody(mr: MergeRequestRow, findings: FindingRow[], provider = "github") {
+    const locationCount = new Set(findings.map((finding) => formatFindingLocation(finding))).size;
     const lines = [
       "## Jolt AI Code Review",
       "",
-      `本次人工确认提交 ${findings.length} 条 AI 检视意见。`,
+      `本次人工确认提交 ${findings.length} 条 AI 检视意见，共 ${locationCount} 个代码位置。`,
       ""
     ];
-    for (const finding of findings) {
-      const location = formatFindingLocation(finding);
-      lines.push(`- [${finding.severity}] ${finding.title}`);
-      lines.push(`  - 位置：${location}`);
-      lines.push(`  - 说明：${finding.problem_description}`);
-      lines.push(`  - 建议：${finding.recommendation}`);
-      appendSuggestedCode(lines, finding, provider);
-    }
+    lines.push(formatLocationGroupBody(findings, provider, appendSuggestedCode));
     lines.push("", `关联 head_sha: ${mr.latest_head_sha}`);
     return lines.join("\n");
   }

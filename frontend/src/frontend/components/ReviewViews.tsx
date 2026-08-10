@@ -45,6 +45,7 @@ import {
   publishStateLabel,
   isAlreadyPublishedFinding,
   sortFindingsBySeverity,
+  groupFindingsByLocation,
   findingSource,
   recordTimestamp,
   participatingAgentIds,
@@ -549,6 +550,7 @@ export function DetailPanel({
   const terminal = isTerminalMrStatus(currentStatus);
   const terminalReason = currentStatus === "merged" ? "该 MR 已合入，不能再重新检视或提交检视意见。" : currentStatus === "closed" ? "该 MR 已关闭，不能再重新检视或提交检视意见。" : "";
   const sortedFindings = sortFindingsBySeverity(detail.findings);
+  const findingGroups = groupFindingsByLocation(sortedFindings);
 
   return (
     <section className="detail-panel">
@@ -593,15 +595,23 @@ export function DetailPanel({
 
         {tab === "findings" && (
           <div className="findings-list">
-            {sortedFindings.map((finding) => (
-              <FindingRow
-                key={finding.id}
-                finding={finding}
-                showDiagnostics={showDiagnostics}
-                onToggle={() => onToggleFinding(finding)}
-                onFalsePositive={() => onFalsePositive(finding)}
-                onOpen={() => setActiveFinding(finding)}
-              />
+            {findingGroups.map((group) => (
+              <section className="finding-location-group" key={group.key}>
+                <header>
+                  <code>{group.location}</code>
+                  <span>{group.findings.length} 个问题</span>
+                </header>
+                {group.findings.map((finding) => (
+                  <FindingRow
+                    key={finding.id}
+                    finding={finding}
+                    showDiagnostics={showDiagnostics}
+                    onToggle={() => onToggleFinding(finding)}
+                    onFalsePositive={() => onFalsePositive(finding)}
+                    onOpen={() => setActiveFinding(finding)}
+                  />
+                ))}
+              </section>
             ))}
             {showDiagnostics && hasRun && <CoverageCard run={detail.runs[0]} />}
             {showDiagnostics && hasRun && <ReviewQualityCard quality={detail.quality} />}

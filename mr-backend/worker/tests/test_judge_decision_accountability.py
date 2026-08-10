@@ -28,7 +28,19 @@ def test_known_reason_has_explicit_human_message() -> None:
 
 def test_deduplicated_candidate_is_recorded_as_merged() -> None:
     assert decision_status_for_rejection(["deduped_lower_rank"]) == "merged"
+    assert decision_status_for_rejection(["deduped_final_llm_consolidation"]) == "merged"
     assert decision_status_for_rejection(["critic_rejected"]) == "rejected"
+
+
+def test_final_consolidation_reason_has_explicit_human_message() -> None:
+    details = build_decision_reason_details(["deduped_final_llm_consolidation"], status="merged", stage="judge")
+    assert details == [
+        {
+            "code": "deduped_final_llm_consolidation",
+            "message": "最终全局语义归并判定该候选与主问题重复，已合并。",
+            "stage": "judge",
+        }
+    ]
 
 
 def test_every_judge_input_gets_a_terminal_decision() -> None:
@@ -92,6 +104,7 @@ if __name__ == "__main__":
     test_empty_rejection_reason_is_never_persisted_silently()
     test_known_reason_has_explicit_human_message()
     test_deduplicated_candidate_is_recorded_as_merged()
+    test_final_consolidation_reason_has_explicit_human_message()
     test_every_judge_input_gets_a_terminal_decision()
     test_existing_empty_rejection_is_upgraded_to_explicit_anomaly()
     test_candidate_store_persists_reason_details_and_terminal_timestamp()

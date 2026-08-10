@@ -19,6 +19,7 @@ JUDGE_REASON_MESSAGES = {
     "deduped_lower_rank": "候选与更高优先级问题重复，已合并。",
     "deduped_same_business_issue": "候选描述同一业务问题，已合并。",
     "deduped_after_rule_reconciliation": "规则归一化后候选重复，已合并。",
+    "deduped_final_llm_consolidation": "最终全局语义归并判定该候选与主问题重复，已合并。",
     "not_selected_final_issue": "候选未达到最终问题选择门槛。",
     "not_selected_after_quality_calibration": "质量校准后候选未达到保留门槛。",
     "max_findings_exceeded": "候选超过本次 Review 的最大问题数量限制。",
@@ -36,6 +37,7 @@ MERGED_REASON_CODES = {
     "deduped_lower_rank",
     "deduped_same_business_issue",
     "deduped_after_rule_reconciliation",
+    "deduped_final_llm_consolidation",
     "auxiliary_overlap_core_issue",
     "nearby_sensitive_duplicate",
 }

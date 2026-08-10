@@ -319,6 +319,25 @@ def test_consolidate_final_findings_fails_open_on_invalid_output_or_exception() 
         assert result.fallback_reason == reason
 
 
+def test_judge_pipeline_runs_final_consolidation_after_critic_and_before_persistence() -> None:
+    source = (
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "orchestration"
+        / "nodes"
+        / "judge_findings.py"
+    ).read_text(encoding="utf-8")
+
+    critic_index = source.index("final_findings = run_critic_pass(")
+    selection_index = source.index("final_findings = quality_selected_findings", critic_index)
+    consolidation_index = source.index("consolidate_final_findings(", selection_index)
+    accountability_index = source.index("ensure_judge_decision_accountability(", consolidation_index)
+    persistence_index = source.index("INSERT INTO review_findings", consolidation_index)
+
+    assert critic_index < selection_index < consolidation_index < accountability_index < persistence_index
+    assert "judge_rejections.extend(consolidation.rejections)" in source[consolidation_index:accountability_index]
+    assert "cluster_canonical_issues(final_findings)" in source[consolidation_index:accountability_index]
+
+
 if __name__ == "__main__":
     test_compact_findings_assigns_stable_request_local_ids()
     test_parse_consolidation_response_accepts_valid_groups()
@@ -330,4 +349,5 @@ if __name__ == "__main__":
     test_consolidate_final_findings_applies_valid_model_groups()
     test_consolidate_final_findings_skips_disabled_small_or_budget_stopped_inputs()
     test_consolidate_final_findings_fails_open_on_invalid_output_or_exception()
+    test_judge_pipeline_runs_final_consolidation_after_critic_and_before_persistence()
     print("final finding consolidation contract tests passed")

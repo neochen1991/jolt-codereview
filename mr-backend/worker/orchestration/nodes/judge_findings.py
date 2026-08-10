@@ -9,6 +9,7 @@ from diff.slicer import extract_added_lines
 from orchestration.judging.evidence_score import apply_evidence_score_policy, changed_line_index, score as score_evidence
 from orchestration.nodes.critic_pass import run_critic_pass
 from orchestration.quality.diff_scope import DiffScope
+from orchestration.quality.final_consolidation import consolidate_final_findings
 from orchestration.quality.issue_identity import cluster_canonical_issues
 from rules.registry import (
     external_tool_rule_map,
@@ -4347,6 +4348,36 @@ def make_judge_findings_node(
                 {"dedupe_hash": finding.get("dedupe_hash"), "severity": finding.get("severity")},
             )
         final_findings = quality_selected_findings
+        consolidation = consolidate_final_findings(
+            findings=final_findings,
+            config=project_config or {},
+            recorder=recorder,
+            span_id=judge_span,
+            head_sha=str(job.get("head_sha") or ""),
+            budget_tracker=state.get("budget_tracker"),
+        )
+        final_findings = consolidation.findings
+        judge_rejections.extend(consolidation.rejections)
+        consolidation_event = "final_consolidation_fallback" if consolidation.fallback_reason else "final_consolidation_completed"
+        consolidation_message = (
+            f"最终全局语义归并降级：{consolidation.fallback_reason}"
+            if consolidation.fallback_reason
+            else f"最终全局语义归并完成：{consolidation.metadata.get('input_finding_count', 0)} -> {consolidation.metadata.get('output_finding_count', 0)}"
+        )
+        recorder.event(judge_span, consolidation_event, consolidation_message, consolidation.metadata)
+        final_findings, final_guard_duplicates = cluster_canonical_issues(final_findings)
+        if final_guard_duplicates:
+            judge_rejections.extend(final_guard_duplicates)
+            recorder.event(
+                judge_span,
+                "finding_deduped",
+                f"最终语义归并后确定性去重合并 {len(final_guard_duplicates)} 个重复问题",
+                {
+                    "deduped_count": len(final_guard_duplicates),
+                    "reason": "deduped_canonical_issue_v2",
+                    "stage": "post_final_consolidation_guard",
+                },
+            )
         judge_rejections, unclassified_decision_count = ensure_judge_decision_accountability(
             judge_input_findings,
             final_findings,

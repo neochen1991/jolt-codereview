@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 from typing import Any
+
+from orchestration.quality.diff_scope import DiffScope
 from skill_debug import production_side_effects_allowed
 
 from tools.candidate_store import upsert_candidate_finding
@@ -661,6 +663,7 @@ def verify_candidate_findings(
     tool_observations: list[dict[str, Any]] | None = None,
     line_tolerance: int = 3,
     min_evidence_jaccard: float = 0.5,
+    diff_scope: DiffScope | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
@@ -668,13 +671,22 @@ def verify_candidate_findings(
     rule_registry = rule_registry or set()
     tool_observations = tool_observations or []
 
-    for finding in findings:
+    for raw_finding in findings:
+        finding = diff_scope.normalize_item(raw_finding) if diff_scope else raw_finding
         reasons: list[str] = []
         file_path = str(finding.get("file_path") or "")
-        if file_path not in valid_files:
-            reasons.append("file_not_found")
         line_no = _line_value(finding)
-        if file_path in valid_files and line_no > 0 and diff_hunks:
+        if diff_scope:
+            scope_reason = diff_scope.line_scope_reason(
+                file_path,
+                line_no if line_no > 0 else None,
+                scope_kind=str(finding.get("scope_kind") or "line"),
+            )
+            if scope_reason:
+                reasons.append(scope_reason)
+        elif file_path not in valid_files:
+            reasons.append("file_not_found")
+        if not diff_scope and file_path in valid_files and line_no > 0 and diff_hunks:
             hunks = diff_hunks.get(file_path, [])
             if hunks and not any(start - line_tolerance <= line_no <= end + line_tolerance for start, end in hunks):
                 reasons.append("line_out_of_diff")

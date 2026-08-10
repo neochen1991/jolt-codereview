@@ -6,7 +6,9 @@ from copy import deepcopy
 
 from orchestration.quality.final_consolidation import (
     CONTRACT_VERSION,
+    build_consolidation_prompt,
     compact_findings,
+    consolidate_final_findings,
     merge_consolidation_groups,
     parse_consolidation_response,
 )
@@ -191,6 +193,132 @@ def test_merge_consolidation_groups_never_increases_count_and_keeps_ungrouped_fi
     assert len(rejected) == 1
 
 
+class _Recorder:
+    def __init__(self) -> None:
+        self.events: list[tuple] = []
+        self.calls: list[dict] = []
+        self.run_id = "run-final-consolidation"
+
+    def event(self, *args, **kwargs) -> None:
+        self.events.append((*args, kwargs))
+
+    def llm_call(self, *args, **kwargs) -> None:
+        self.calls.append({"args": args, "kwargs": kwargs})
+
+
+class _StoppedBudget:
+    truncated_reason = "max_llm_calls"
+
+    def should_stop(self) -> bool:
+        return True
+
+
+def _enabled_config(**overrides) -> dict:
+    return {
+        "review_quality": {
+            "final_consolidation": {
+                "enabled": True,
+                "min_findings": 2,
+                "max_findings": 30,
+                "timeout_seconds": 45,
+                "max_output_tokens": 4096,
+                "temperature": 0,
+                "fail_open": True,
+                **overrides,
+            }
+        }
+    }
+
+
+def test_build_consolidation_prompt_forbids_new_or_rewritten_findings() -> None:
+    compact, _ = compact_findings(_findings())
+
+    prompt = build_consolidation_prompt(compact)
+
+    assert "只能合并" in prompt
+    assert "不能新增" in prompt
+    assert "不能删除" in prompt
+    assert "不能改写" in prompt
+    assert "SQL 注入" in prompt
+    assert "无界查询" in prompt
+    assert "缺少测试" in prompt
+
+
+def test_consolidate_final_findings_applies_valid_model_groups() -> None:
+    prompts: list[str] = []
+
+    result = consolidate_final_findings(
+        findings=_findings(),
+        config=_enabled_config(),
+        recorder=_Recorder(),
+        span_id="judge-span",
+        head_sha="head-1",
+        consolidation_llm=lambda prompt: prompts.append(prompt)
+        or {
+            "version": CONTRACT_VERSION,
+            "groups": [{"member_ids": ["f_01", "f_02"], "reason": "same idempotency issue"}],
+        },
+    )
+
+    assert len(prompts) == 1
+    assert len(result.findings) == 1
+    assert len(result.rejections) == 1
+    assert result.fallback_reason is None
+    assert result.metadata["operation"] == "final_consolidation"
+    assert result.metadata["input_finding_count"] == 2
+    assert result.metadata["output_finding_count"] == 1
+
+
+def test_consolidate_final_findings_skips_disabled_small_or_budget_stopped_inputs() -> None:
+    calls: list[str] = []
+    cases = [
+        ({"review_quality": {"final_consolidation": {"enabled": False}}}, _findings(), None, "disabled"),
+        (_enabled_config(), [_findings()[0]], None, "below_min_findings"),
+        (_enabled_config(), _findings(), _StoppedBudget(), "budget_exhausted"),
+    ]
+    for config, findings, budget, reason in cases:
+        result = consolidate_final_findings(
+            findings=findings,
+            config=config,
+            recorder=_Recorder(),
+            span_id="judge-span",
+            head_sha="head-1",
+            budget_tracker=budget,
+            consolidation_llm=lambda prompt: calls.append(prompt) or {},
+        )
+        assert result.findings == findings
+        assert result.rejections == []
+        assert result.fallback_reason == reason
+    assert calls == []
+
+
+def test_consolidate_final_findings_fails_open_on_invalid_output_or_exception() -> None:
+    for llm, reason in [
+        (lambda _prompt: "not-json", "invalid_json"),
+        (
+            lambda _prompt: {
+                "version": CONTRACT_VERSION,
+                "groups": [{"member_ids": ["f_01", "f_99"], "reason": "unknown"}],
+            },
+            "unknown_member",
+        ),
+        (lambda _prompt: (_ for _ in ()).throw(TimeoutError("slow")), "timeout"),
+        (lambda _prompt: (_ for _ in ()).throw(RuntimeError("offline")), "provider_unavailable"),
+    ]:
+        findings = _findings()
+        result = consolidate_final_findings(
+            findings=findings,
+            config=_enabled_config(),
+            recorder=_Recorder(),
+            span_id="judge-span",
+            head_sha="head-1",
+            consolidation_llm=llm,
+        )
+        assert result.findings == findings
+        assert result.rejections == []
+        assert result.fallback_reason == reason
+
+
 if __name__ == "__main__":
     test_compact_findings_assigns_stable_request_local_ids()
     test_parse_consolidation_response_accepts_valid_groups()
@@ -198,4 +326,8 @@ if __name__ == "__main__":
     test_parse_consolidation_response_rejects_invalid_json()
     test_merge_consolidation_groups_preserves_trusted_fields_and_provenance()
     test_merge_consolidation_groups_never_increases_count_and_keeps_ungrouped_findings()
+    test_build_consolidation_prompt_forbids_new_or_rewritten_findings()
+    test_consolidate_final_findings_applies_valid_model_groups()
+    test_consolidate_final_findings_skips_disabled_small_or_budget_stopped_inputs()
+    test_consolidate_final_findings_fails_open_on_invalid_output_or_exception()
     print("final finding consolidation contract tests passed")

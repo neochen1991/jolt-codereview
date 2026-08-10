@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 import json
+import time
+import urllib.error
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
+from llm.client import (
+    build_chat_payload,
+    estimate_tokens,
+    http_json,
+    invoke_with_parameter_fallback,
+    llm_max_output_tokens,
+    request_options_for_payload,
+)
+from llm.exchange import execute_chat_exchange, invoke_openai_chat, replay_mode_from_config
+from llm.retry import call_with_retry
+from llm_router import candidate_providers
 from orchestration.quality.issue_identity import canonical_issue_fingerprint
 
 
@@ -18,6 +31,14 @@ SEVERITY_RANK = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}
 class ConsolidationFailure:
     reason: str
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class ConsolidationResult:
+    findings: list[dict[str, Any]]
+    rejections: list[dict[str, Any]]
+    fallback_reason: str | None
+    metadata: dict[str, Any]
 
 
 def _bounded_text(value: Any, limit: int = TEXT_LIMIT) -> str:
@@ -263,3 +284,299 @@ def merge_consolidation_groups(
     if len(merged) > len(findings):
         raise ValueError("final consolidation increased finding count")
     return merged, rejected
+
+
+def build_consolidation_prompt(compact: list[dict[str, Any]]) -> str:
+    return json.dumps(
+        {
+            "task": (
+                "对全部最终代码检视问题做一次全局语义归并。只能合并已有问题，不能新增问题，"
+                "不能删除未分组问题，不能改写任何问题内容。只返回已有 id 的合并分组。"
+            ),
+            "contract": {
+                "version": CONTRACT_VERSION,
+                "output": {
+                    "version": CONTRACT_VERSION,
+                    "groups": [{"member_ids": ["f_01", "f_02"], "reason": "same root cause, impact, and remediation"}],
+                },
+            },
+            "merge_only_when": [
+                "根因实质相同",
+                "风险影响实质相同",
+                "核心修复动作相同",
+                "位置相同或邻近，或属于同一条明确的跨文件因果链",
+            ],
+            "never_merge": [
+                "同一 SQL 语句上的 SQL 注入与无界查询是两个独立问题",
+                "生产代码缺陷与缺少测试是两个独立问题",
+                "鉴权、幂等、事务等不同根因不能因为位置接近而合并",
+                "无法明确证明同根因时必须保留为独立问题",
+            ],
+            "findings": compact,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def _settings(config: dict[str, Any]) -> dict[str, Any]:
+    quality = config.get("review_quality") if isinstance(config.get("review_quality"), dict) else {}
+    review = config.get("review") if isinstance(config.get("review"), dict) else {}
+    raw = quality.get("final_consolidation") if isinstance(quality.get("final_consolidation"), dict) else review.get("final_consolidation")
+    raw = raw if isinstance(raw, dict) else {}
+    return {
+        "enabled": bool(raw.get("enabled", True)),
+        "min_findings": max(2, int(raw.get("min_findings") or 2)),
+        "max_findings": max(2, int(raw.get("max_findings") or 30)),
+        "timeout_seconds": max(1, int(raw.get("timeout_seconds") or 45)),
+        "max_output_tokens": max(256, int(raw.get("max_output_tokens") or 4096)),
+        "temperature": float(raw.get("temperature") or 0),
+        "fail_open": bool(raw.get("fail_open", True)),
+    }
+
+
+def _fallback(
+    findings: list[dict[str, Any]],
+    *,
+    reason: str,
+    started: float,
+    detail: str = "",
+) -> ConsolidationResult:
+    return ConsolidationResult(
+        findings=[dict(item) for item in findings],
+        rejections=[],
+        fallback_reason=reason,
+        metadata={
+            "operation": "final_consolidation",
+            "input_finding_count": len(findings),
+            "output_finding_count": len(findings),
+            "merged_group_count": 0,
+            "merged_finding_count": 0,
+            "duration_ms": int((time.time() - started) * 1000),
+            "fallback_reason": reason,
+            "fallback_detail": detail[:500],
+        },
+    )
+
+
+def _model_content(response: Any) -> str:
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict) and "choices" in response:
+        return str(response.get("choices", [{}])[0].get("message", {}).get("content", ""))
+    return json.dumps(response, ensure_ascii=False)
+
+
+def _invoke_consolidation_model(
+    *,
+    prompt: str,
+    config: dict[str, Any],
+    settings: dict[str, Any],
+    recorder: Any,
+    span_id: str,
+    head_sha: str,
+    budget_tracker: Any | None,
+    consolidation_llm: Callable[[str], Any] | None,
+) -> tuple[str, dict[str, Any], ConsolidationFailure | None]:
+    if consolidation_llm is not None:
+        started = time.time()
+        try:
+            response = consolidation_llm(prompt)
+        except TimeoutError as exc:
+            return "", {}, ConsolidationFailure("timeout", str(exc))
+        except Exception as exc:  # injected adapters must also fail open
+            return "", {}, ConsolidationFailure("provider_unavailable", type(exc).__name__)
+        return _model_content(response), {
+            "provider": "injected",
+            "model": "injected",
+            "duration_ms": int((time.time() - started) * 1000),
+        }, None
+
+    llm = config.get("llm") if isinstance(config.get("llm"), dict) else {}
+    prompt_tokens = estimate_tokens(prompt)
+    providers = candidate_providers(llm, required_context=prompt_tokens)
+    if not providers:
+        return "", {}, ConsolidationFailure("provider_unavailable", "no compatible provider")
+    messages = [
+        {"role": "system", "content": "你是最终 Finding 语义归并器，只输出 JSON，不发现或改写问题。"},
+        {"role": "user", "content": prompt},
+    ]
+    last_failure = ConsolidationFailure("provider_unavailable")
+    for index, candidate in enumerate(providers):
+        provider = str(candidate.get("provider") or "")
+        model = str(candidate.get("model") or "")
+        base_url = str(candidate.get("base_url") or "").rstrip("/")
+        api_key = candidate.get("api_key")
+        if not base_url or not api_key:
+            continue
+        max_tokens = min(settings["max_output_tokens"], llm_max_output_tokens(llm, provider, model))
+        template_payload, _ = build_chat_payload(
+            provider=provider,
+            model=model,
+            llm=llm,
+            messages=messages,
+            temperature=settings["temperature"],
+            seed=None,
+            structured=True,
+            max_tokens=max_tokens,
+        )
+        started = time.time()
+        try:
+            def invoke(seed: int) -> dict[str, Any]:
+                payload, _ = build_chat_payload(
+                    provider=provider,
+                    model=model,
+                    llm=llm,
+                    messages=messages,
+                    temperature=settings["temperature"],
+                    seed=seed,
+                    structured=True,
+                    max_tokens=max_tokens,
+                )
+                return invoke_with_parameter_fallback(
+                    payload,
+                    lambda active: invoke_openai_chat(
+                        base_url=base_url,
+                        api_key=str(api_key),
+                        payload=active,
+                        timeout_seconds=settings["timeout_seconds"],
+                        stream=False,
+                        transport=http_json,
+                        retry=call_with_retry,
+                    ),
+                    on_downgrade=lambda parameter: recorder.event(
+                        span_id,
+                        "llm_parameter_downgraded",
+                        f"{model} 最终归并调用移除不兼容参数：{parameter}",
+                        {"provider": provider, "model": model, "parameter": parameter, "operation": "final_consolidation"},
+                    ),
+                )
+
+            exchange = execute_chat_exchange(
+                recorder=recorder,
+                span_id=span_id,
+                operation="final_consolidation",
+                agent_id="final_finding_consolidator",
+                context_unit_id="",
+                checkpoint_id="",
+                head_sha=head_sha,
+                provider=provider,
+                model=model,
+                prompt=prompt,
+                messages=messages,
+                temperature=settings["temperature"],
+                replay_mode=replay_mode_from_config(config),
+                invoke=invoke,
+                request_options=request_options_for_payload(template_payload),
+            )
+            response = exchange.response
+            usage = response.get("usage") or {}
+            if budget_tracker:
+                budget_tracker.charge_llm(
+                    model,
+                    int(usage.get("prompt_tokens", prompt_tokens)),
+                    int(usage.get("completion_tokens", 0)),
+                )
+            return _model_content(response), {
+                "provider": provider,
+                "model": model,
+                "duration_ms": int((time.time() - started) * 1000),
+                "input_tokens": int(usage.get("prompt_tokens", prompt_tokens)),
+                "output_tokens": int(usage.get("completion_tokens", 0)),
+            }, None
+        except TimeoutError as exc:
+            last_failure = ConsolidationFailure("timeout", str(exc))
+        except (urllib.error.URLError, urllib.error.HTTPError, LookupError, ValueError, json.JSONDecodeError) as exc:
+            last_failure = ConsolidationFailure("provider_unavailable", type(exc).__name__)
+        if index == len(providers) - 1:
+            break
+    return "", {}, last_failure
+
+
+def _candidate_batches(findings: list[dict[str, Any]], max_findings: int) -> list[list[dict[str, Any]]]:
+    if len(findings) <= max_findings:
+        return [findings]
+    ordered = sorted(
+        (dict(item) for item in findings),
+        key=lambda item: (
+            str(item.get("file_path") or ""),
+            int(item.get("line_start") or 0),
+            str(item.get("dedupe_hash") or ""),
+        ),
+    )
+    return [ordered[index : index + max_findings] for index in range(0, len(ordered), max_findings)]
+
+
+def consolidate_final_findings(
+    *,
+    findings: list[dict[str, Any]],
+    config: dict[str, Any],
+    recorder: Any,
+    span_id: str,
+    head_sha: str,
+    budget_tracker: Any | None = None,
+    consolidation_llm: Callable[[str], Any] | None = None,
+) -> ConsolidationResult:
+    started = time.time()
+    settings = _settings(config)
+    if not settings["enabled"]:
+        return _fallback(findings, reason="disabled", started=started)
+    if len(findings) < settings["min_findings"]:
+        return _fallback(findings, reason="below_min_findings", started=started)
+    if budget_tracker and budget_tracker.should_stop():
+        return _fallback(
+            findings,
+            reason="budget_exhausted",
+            detail=str(getattr(budget_tracker, "truncated_reason", "")),
+            started=started,
+        )
+
+    consolidated: list[dict[str, Any]] = []
+    rejections: list[dict[str, Any]] = []
+    group_count = 0
+    model_metadata: dict[str, Any] = {}
+    for batch in _candidate_batches(findings, settings["max_findings"]):
+        compact, lookup = compact_findings(batch)
+        prompt = build_consolidation_prompt(compact)
+        content, current_metadata, invocation_failure = _invoke_consolidation_model(
+            prompt=prompt,
+            config=config,
+            settings=settings,
+            recorder=recorder,
+            span_id=span_id,
+            head_sha=head_sha,
+            budget_tracker=budget_tracker,
+            consolidation_llm=consolidation_llm,
+        )
+        if invocation_failure:
+            return _fallback(findings, reason=invocation_failure.reason, detail=invocation_failure.detail, started=started)
+        groups, parse_failure = parse_consolidation_response(content, set(lookup))
+        if parse_failure:
+            return _fallback(findings, reason=parse_failure.reason, detail=parse_failure.detail, started=started)
+        try:
+            merged, batch_rejections = merge_consolidation_groups(batch, groups, model_metadata=current_metadata)
+        except (KeyError, TypeError, ValueError) as exc:
+            return _fallback(findings, reason="invariant_violation", detail=type(exc).__name__, started=started)
+        consolidated.extend(merged)
+        rejections.extend(batch_rejections)
+        group_count += len(groups)
+        model_metadata = current_metadata
+
+    if len(consolidated) > len(findings):
+        return _fallback(findings, reason="invariant_violation", detail="finding count increased", started=started)
+    metadata = {
+        "operation": "final_consolidation",
+        "input_finding_count": len(findings),
+        "output_finding_count": len(consolidated),
+        "merged_group_count": group_count,
+        "merged_finding_count": len(rejections),
+        "duration_ms": int((time.time() - started) * 1000),
+        "fallback_reason": None,
+        **model_metadata,
+    }
+    return ConsolidationResult(
+        findings=consolidated,
+        rejections=rejections,
+        fallback_reason=None,
+        metadata=metadata,
+    )

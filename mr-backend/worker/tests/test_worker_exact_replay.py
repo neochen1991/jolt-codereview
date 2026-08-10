@@ -79,6 +79,28 @@ def _run(mode: str, store: InMemoryExchangeStore, network_calls: list[str]) -> t
         invoke=lambda _seed: network_calls.append("judge") or _response(candidates, "judge-1"),
     )
     findings = json.loads(judge.response["choices"][0]["message"]["content"])
+    consolidation_messages = [{"role": "user", "content": "consolidate final findings"}]
+    consolidation = execute_chat_exchange(
+        recorder=recorder,
+        span_id="final-consolidation-span",
+        operation="final_consolidation",
+        agent_id="final_finding_consolidator",
+        context_unit_id="",
+        checkpoint_id="",
+        context_hash="ctx-123",
+        head_sha="head-abc",
+        provider="test",
+        model="deterministic",
+        prompt="consolidate final findings",
+        messages=consolidation_messages,
+        temperature=0.0,
+        replay_mode=mode,
+        store=store,
+        invoke=lambda _seed: network_calls.append("final_consolidation")
+        or _response({"version": "final_finding_consolidation_v1", "groups": []}, "consolidation-1"),
+    )
+    consolidation_result = json.loads(consolidation.response["choices"][0]["message"]["content"])
+    assert consolidation_result == {"version": "final_finding_consolidation_v1", "groups": []}
     assert all(call["kwargs"]["request_hash"] for call in recorder.calls)
     assert all(call["kwargs"]["response_hash"] for call in recorder.calls)
     assert all(call["kwargs"]["seed"] is not None for call in recorder.calls)
@@ -90,9 +112,9 @@ def test_worker_record_and_exact_replay() -> None:
     store = InMemoryExchangeStore()
     network_calls: list[str] = []
     recorded = _run("record", store, network_calls)
-    assert network_calls == ["expert", "judge"]
+    assert network_calls == ["expert", "judge", "final_consolidation"]
     replayed = _run("replay", store, network_calls)
-    assert network_calls == ["expert", "judge"]
+    assert network_calls == ["expert", "judge", "final_consolidation"]
     assert recorded == replayed
 
 
@@ -101,6 +123,7 @@ def test_orchestration_nodes_do_not_build_chat_endpoints() -> None:
         WORKER_ROOT / "orchestration" / "nodes" / "critic_pass.py",
         WORKER_ROOT / "orchestration" / "nodes" / "run_targeted_debate.py",
         WORKER_ROOT / "orchestration" / "deepagents_runner.py",
+        WORKER_ROOT / "orchestration" / "quality" / "final_consolidation.py",
     ]
     for path in files:
         source = path.read_text(encoding="utf-8")
